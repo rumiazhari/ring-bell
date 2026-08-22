@@ -1,0 +1,78 @@
+extends Node
+## Aggregates save/load for all persistent systems.
+##
+## CONTRACT: every savable system exposes save_state() -> Dictionary and
+## load_state(data: Dictionary). SaveManager only serializes and orders them.
+## The live world (actors, crates) registers itself as the "world provider"
+## from world/main.gd; it is saved last and loaded last (it spawns actors).
+##
+## File format: JSON at user://saves/save_01.json
+
+const SAVE_PATH := "user://saves/save_01.json"
+const SAVE_VERSION := 1
+
+var _world_provider: Object = null
+
+
+## Called by world/main.gd at startup.
+func register_world_provider(provider: Object) -> void:
+	_world_provider = provider
+
+
+func has_save() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
+
+
+func save_game() -> bool:
+	var data := {
+		"meta": {
+			"version": SAVE_VERSION,
+			"day": GameClock.get_day(),
+			"time": GameClock.time_string(),
+		},
+		"clock": GameClock.save_state(),
+		"world_state": WorldState.save_state(),
+		"quests": QuestManager.save_state(),
+	}
+	if _world_provider != null and is_instance_valid(_world_provider):
+		data["world"] = _world_provider.call("save_state")
+
+	var dir := SAVE_PATH.get_base_dir()
+	DirAccess.make_dir_recursive_absolute(dir)
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file == null:
+		push_error("SaveManager: cannot open %s for writing" % SAVE_PATH)
+		return false
+	file.store_string(JSON.stringify(data, "\t"))
+	file.close()
+	print("[SaveManager] game saved -> %s (day %d, %s)" % [SAVE_PATH, GameClock.get_day(), GameClock.time_string()])
+	return true
+
+
+func load_game() -> bool:
+	if not has_save():
+		push_warning("SaveManager: no save file at %s" % SAVE_PATH)
+		return false
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if file == null:
+		return false
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	if parsed == null or not parsed is Dictionary:
+		push_error("SaveManager: corrupted save file")
+		return false
+	var data: Dictionary = parsed
+
+	# Order matters: facts first, then the world that spawns actors.
+	GameClock.load_state(data.get("clock", {}))
+	WorldState.load_state(data.get("world_state", {}))
+	QuestManager.load_state(data.get("quests", {}))
+	if _world_provider != null and is_instance_valid(_world_provider) and data.has("world"):
+		_world_provider.call("load_state", data["world"])
+	print("[SaveManager] game loaded <- %s" % SAVE_PATH)
+	return true
+
+
+func delete_save() -> void:
+	if has_save():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
