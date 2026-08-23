@@ -27,11 +27,16 @@ WorldState="*res://core/autoload/world_state.gd"
 QuestManager="*res://core/autoload/quest_manager.gd"
 SaveManager="*res://core/autoload/save_manager.gd"
 DebugOverlay="*res://core/autoload/debug_overlay.gd"
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
 
 [layer_names]
 

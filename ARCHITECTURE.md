@@ -1,8 +1,8 @@
 # Ring Bell - Architecture
 
 3D top-down open-world zombie survival RPG centered on realistic survivor
-simulation. This document maps the Prototype 0 codebase: what owns what,
-how data flows, and where new systems plug in. Read this before editing.
+simulation. This document maps the codebase: what owns what, how data flows,
+and where new systems plug in. Read this before editing.
 
 **Golden rules**
 
@@ -11,6 +11,11 @@ how data flows, and where new systems plug in. Read this before editing.
 3. Quests and dialogue query world state - they never fake or copy NPCs.
 4. No giant scripts, no hidden behavior, no hard-coded actor IDs in logic.
 5. Death is permanent for NPCs. Stories branch around the dead.
+6. City generation is deterministic: same seed + same coords => same result,
+   regardless of chunk visit order. Never mutate the plan from materialization.
+7. Chunks materialize geometry; they never own buildings conceptually. A
+   building has a global ID and belongs to exactly one chunk (its footprint
+   center) so streaming can never duplicate or tear it.
 
 ---
 
@@ -55,17 +60,71 @@ narrative/
   dialogue/dialogue_ui.gd      Bottom-panel presentation only
 
 world/
-  main.gd/.tscn          Entry scene; SaveManager "world provider"
-  level_builder.gd       Deterministic test block from code (boxes)
+  main.gd/.tscn          Entry scene; SaveManager "world provider";
+                         picks world mode: legacy block vs streamed city
+  level_builder.gd       LEGACY P0 test block (smoke tests still use it)
   population.gd          Spawn manifest: survivors, zombies, positions
   food_crate.gd          Lootable container; also feeds NPC brains
   day_night_controller.g Sun energy/color, ambient, streetlamps vs clock
 
+  generation/          P0.5 deterministic city plan (pure functions of seed+coords)
+    world_seed.gd        WorldSeed: seed storage, GENERATOR_VERSION, splitmix
+                         RNG helpers - every random choice flows through here
+    city_plan.gd         Hierarchical macro plan: districts -> road grid ->
+                         urban blocks -> plazas -> parcels/building specs.
+                         Cached per instance; queries are order-independent
+    building_builder.gd  One building spec -> batched geometry ops (shell,
+                         floors, stairs, roof, balconies, windows)
+    chunk_builder.gd     Materializes ONE chunk: ground, roads, blocks,
+                         buildings via BuildingBuilder, props; MeshBatcher out
+
+  streaming/           P0.5 chunk lifecycle
+    chunk_manager.gd     Tracks player chunk; budgeted load/unload queues;
+                         ACTIVE/WARM/COLD rings; stats for F3 overlay
+    mesh_batcher.gd      Collects (box,color,collide) tuples during build,
+                         flushes to ONE merged vertex-colored ArrayMesh +
+                         one StaticBody3D per chunk
+
 ui/hud.gd             Clock, vitals bars, quest tracker, prompts, banners,
                       death screen (all code-built)
 debug/smoke_test.gd   Headless regression harness (--smoke / --soak modes)
+debug/world_test.gd   Headless city determinism harness (--citytest)
 camera/follow_camera.gd Elevated rotatable rig; group "camera_rig"
 ```
+
+## World architecture (P0.5)
+
+Two strictly separated layers:
+
+```
+PLAN LAYER (pure, immutable, cheap)          MATERIAL LAYER (scene nodes)
+CityPlan(world_seed)                          ChunkManager
+  .district_at(cell)                 reads     .load_chunk(coord)
+  .roads_near(rect)                  ---->       ChunkBuilder.build(...)
+  .blocks_in(rect)                               -> MeshBatcher/MultiMesh
+  .buildings_in(rect)                            -> StaticBody3D collision
+  .building_by_id(id)                        unload => queue_free subtree
+```
+
+- The plan NEVER touches the scene tree; chunks NEVER make random choices -
+  all randomness comes from WorldSeed.rng([seed, purpose_hash, coords...]).
+- Determinism contract: any two chunk builds for the same coord under the
+  same seed produce identical node trees and identical collision shapes,
+  regardless of which neighbors were built first. `--citytest` enforces this.
+- Chunk size is 64 m (`WorldSeed.CHUNK_SIZE`). Active ring = chebyshev <= 1
+  (geometry + physics), warm ring <= 2 (kept resident, future throttling),
+  beyond = unloaded. Buildings are owned by the chunk containing their
+  footprint center; with a 64 m grid and <= 20 m deep lots this keeps every
+  visible building resident while its chunk is active or warm.
+- Persistence = deterministic regeneration + deltas. Saves store the seed,
+  generator version, discovered-chunk set and per-chunk modification dicts.
+  Raw generated geometry is NEVER serialized.
+- Generator versioning: saves carry `generator_version`; on mismatch the
+  loader warns and regenerates baseline geometry (migration tooling later).
+
+Planned next layers (do not implement early): interiors/furniture passes,
+apocalypse damage pass, survivor modification pass, traversal graph records,
+parkour controller under actors/traversal/.
 
 ## Autoload contracts (order matters)
 
@@ -113,6 +172,9 @@ and Kenji's dialogue switches to grief because his tree checks death first.
 
 - **Components created in `_ready()` from a config dict** (`Survivor.configure`)
   so spawning works identically for new game, load, and tests. No .tscn wiring.
+- **Two world modes.** `main.gd` picks LEGACY (LevelBuilder test block, used by
+  `--smoke`/`--soak`/`--legacy-block`) or CITY (ChunkManager streams the
+  procedural city). Legacy stays until the P0 cast migrates into the city.
 - **No NavigationServer yet.** Steering + wall sliding + stuck sidestep is
   enough for one block; navmesh baking is a planned upgrade (TODO).
 - **Melee hits use direct-space sphere queries**, not Area3D bookkeeping:
@@ -128,6 +190,9 @@ and Kenji's dialogue switches to grief because his tree checks death first.
   world fact (recoverable via F9).
 - **UI is built in code** (HUD, DialogueUI, DebugOverlay): nothing breaks when
   scripts change; scenes stay trivial (`main.tscn` is one node + script).
+- **City geometry is batched**: all boxes of a chunk merge into ONE
+  vertex-colored ArrayMesh + one StaticBody3D via MeshBatcher (~2 nodes per
+  chunk regardless of prop density). Decorative objects get NO scripted nodes.
 
 ## Extension points (already wired)
 

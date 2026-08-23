@@ -9,9 +9,9 @@ extends Node3D
 ##   so movement stays camera-relative.
 
 const PITCH_DEG := -52.0
-const MIN_DISTANCE := 6.0
-const MAX_DISTANCE := 17.0
-const DEFAULT_DISTANCE := 11.0
+const MIN_DISTANCE := 8.0
+const MAX_DISTANCE := 26.0
+const DEFAULT_DISTANCE := 16.0
 const FOLLOW_SPEED := 7.0          # higher = snappier follow
 const KEY_ROTATE_SPEED := 2.4      # rad/s with Q/R
 const DRAG_SENSITIVITY := 0.0055

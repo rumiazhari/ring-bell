@@ -103,9 +103,22 @@ func _build_stats_text() -> String:
 		ActorRegistry.count_alive_in_group(&"zombies"),
 	])
 	lines.append(_player_line())
+	for line in _chunk_lines():
+		lines.append(line)
 	for quest_id: StringName in QuestManager.QUEST_DEFS:
 		lines.append("quest '%s': %s" % [quest_id, _quest_state_text(quest_id)])
 	return "\n".join(lines)
+
+
+## Streaming stats from the ChunkManager, when a streamed city is running.
+func _chunk_lines() -> PackedStringArray:
+	var out := PackedStringArray()
+	var managers := get_tree().get_nodes_in_group(&"chunk_manager")
+	if managers.is_empty():
+		return out
+	for line in (managers[0] as ChunkManager).debug_lines():
+		out.append("world | " + line)
+	return out
 
 
 func _player_line() -> String:

@@ -52,15 +52,36 @@ $P = "C:\Godot Enginer\Project\ring-bell"
 # 2) Short stability run (~10 s of simulation)
 & $G --headless --path $P --quit-after 600
 
-# 3) Functional regression suite (exits 0 on success)
+# 3) Functional regression suite (exits 0 on success; runs on the legacy block)
 & $G --headless --path $P -- --smoke
 
-# 4) Day/night + sleep AI + zombie wandering soak
+# 4) Day/night + sleep AI + zombie wandering soak (legacy block)
 & $G --headless --path $P -- --soak
+
+# 5) Procedural city determinism suite
+& $G --headless --path $P -- --citytest
 ```
 
 Note when launching via `Start-Process`: quote the `--path` argument; prefer
 plain `&` invocation so output streams live.
+
+## World modes
+
+| Mode | When | Content |
+|---|---|---|
+| CITY (default) | normal launch | streamed procedural city: ChunkManager loads 64 m chunks (ACTIVE ring <= 1, WARM <= 2) from the deterministic CityPlan; player spawns at the plaza anchor, ambient zombies scatter on streets |
+| LEGACY | `--smoke`, `--soak`, `--legacy-block` | hand-built Prototype 0 test block with the full narrative cast |
+
+Extra dev flag: `--shot` captures screenshots (gameplay + top-down overview +
+street level + far teleport) to `%TEMP%\opencode\rb_*.png` and prints F3-style
+streaming stats, then quits.
+
+### What `--citytest` verifies
+
+Same world seed -> identical plan data and chunk geometry manifests regardless
+of query/build order; a different seed produces a materially different city;
+spawn anchors exist; multi-storey buildings generate near the center; chunk
+discovery records survive a save/load round-trip.
 
 ### What `--smoke` verifies
 

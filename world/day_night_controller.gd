@@ -46,11 +46,12 @@ func _process(_delta: float) -> void:
 
 	_sun.light_energy = lerpf(0.04, 1.25, day_factor)
 	# Warm at low sun, neutral white at noon, cold blue at night.
-	var dusk_color := Color(1.0, 0.62, 0.38)
+	var dusk_color := Color(1.0, 0.74, 0.52)
 	var noon_color := Color(1.0, 0.97, 0.92)
 	var night_color := Color(0.45, 0.55, 0.85)
 	if day_factor > 0.02:
-		var noonness := clampf((day_factor - 0.5) * 2.0, 0.0, 1.0)
+		# Reach neutral light early in the morning ramp for readability.
+		var noonness := clampf((day_factor - 0.3) * 1.8, 0.0, 1.0)
 		_sun.light_color = dusk_color.lerp(noon_color, noonness)
 	else:
 		_sun.light_color = night_color

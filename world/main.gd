@@ -1,14 +1,23 @@
 extends Node3D
-## Prototype 0 entry scene and SaveManager "world provider".
+## Entry scene and SaveManager "world provider".
 ##
-## Responsibilities:
-##   - build the test block (LevelBuilder)
+## WORLD MODES:
+##   LEGACY - the P0 hand-built test block (LevelBuilder). Used by --smoke,
+##            --soak and --legacy-block; keeps every Prototype 0 assertion
+##            valid until the narrative cast migrates into the city.
+##   CITY   - the streamed procedural city (ChunkManager + CityPlan). Default
+##            mode. Spawns the player on a plaza/street anchor plus ambient
+##            zombies; NPC cast migration is a pending roadmap item.
+##
+## Responsibilities (both modes):
 ##   - create UI, camera, day/night controller
-##   - spawn population from world/population.gd (or restore from a save)
-##   - wire player controls, dialogue opening, roof hiding
-##   - implement save_state()/load_state() for live actors + crates
-##
-## Everything else lives in autoloads and components.
+##   - spawn population (or restore from a save)
+##   - wire player controls, dialogue opening
+##   - implement save_state()/load_state() as SaveManager's world provider
+
+enum WorldMode { LEGACY_BLOCK, STREAMED_CITY }
+
+const ZOMBIE_COUNT_CITY := 16
 
 var hud: HUD
 var dialogue_ui: DialogueUI
@@ -17,17 +26,26 @@ var day_night: DayNightController
 var player: Survivor
 
 var _player_controller: PlayerController
-var _buildings: Array = []
+var _buildings: Array = []             # legacy roof hiding
 var _crates: Array[FoodCrate] = []
+var _mode := WorldMode.LEGACY_BLOCK
+
+var city_plan: CityPlan
+var chunk_manager: ChunkManager
 
 
 func _ready() -> void:
 	SaveManager.register_world_provider(self)
 
-	var built: Dictionary = LevelBuilder.build(self)
-	_buildings = built["buildings"]
-	for crate in built["crates"]:
-		_crates.append(crate)
+	var args := OS.get_cmdline_user_args()
+	_mode = WorldMode.STREAMED_CITY
+	if args.has("--smoke") or args.has("--soak") or args.has("--legacy-block"):
+		_mode = WorldMode.LEGACY_BLOCK
+
+	if _mode == WorldMode.LEGACY_BLOCK:
+		_build_legacy_block()
+	else:
+		_build_streamed_city()
 
 	hud = HUD.new()
 	add_child(hud)
@@ -43,23 +61,43 @@ func _ready() -> void:
 	camera_rig = FollowCamera.new()
 	add_child(camera_rig)
 
-	_spawn_from_manifest()
+	if _mode == WorldMode.LEGACY_BLOCK:
+		_spawn_from_manifest()
+	else:
+		_spawn_city_population()
 
 	# Optional automated regression passes (see DEVELOPMENT.md):
-	#   godot --headless --path . -- --smoke   functional checks
-	#   godot --headless --path . -- --soak    day/night + AI stability
+	#   godot --headless --path . -- --smoke     functional checks (legacy block)
+	#   godot --headless --path . -- --soak      day/night + AI stability
+	#   godot --headless --path . -- --citytest  city determinism checks
 	var user_args := OS.get_cmdline_user_args()
 	if user_args.has("--smoke") or user_args.has("--soak"):
 		var tester: Node = load("res://debug/smoke_test.gd").new()
 		tester.name = "SmokeTest"
 		add_child(tester)
+	elif user_args.has("--citytest"):
+		var tester2: Node = load("res://debug/world_test.gd").new()
+		tester2.name = "WorldTest"
+		add_child(tester2)
+	elif user_args.has("--shot"):
+		var probe: Node = load("res://debug/shot_probe.gd").new()
+		probe.name = "ShotProbe"
+		add_child(probe)
 
 
 func _process(_delta: float) -> void:
-	_update_roof_visibility()
+	if _mode == WorldMode.LEGACY_BLOCK:
+		_update_roof_visibility()
 
 
-# --- Spawning ---------------------------------------------------------------
+# --- Legacy block ------------------------------------------------------------
+
+func _build_legacy_block() -> void:
+	var built: Dictionary = LevelBuilder.build(self)
+	_buildings = built["buildings"]
+	for crate in built["crates"]:
+		_crates.append(crate)
+
 
 func _spawn_from_manifest() -> void:
 	_spawn_survivor(Population.PLAYER_ENTRY.duplicate(true), {})
@@ -98,6 +136,60 @@ func _spawn_survivor(entry: Dictionary, saved_state: Dictionary) -> Survivor:
 	return survivor
 
 
+# --- Streamed city -----------------------------------------------------------
+
+func _build_streamed_city() -> void:
+	city_plan = CityPlan.new()
+	chunk_manager = ChunkManager.new()
+	chunk_manager.name = "Chunks"
+	add_child(chunk_manager)
+	chunk_manager.setup(city_plan)
+
+
+func _spawn_city_population() -> void:
+	var entry: Dictionary = Population.PLAYER_ENTRY.duplicate(true)
+	var spawn := city_plan.find_spawn_point() if city_plan != null \
+			else Vector2.ZERO
+	entry["position"] = Vector3(spawn.x, 0.15, spawn.y)
+	_spawn_survivor(entry, {})
+	player = ActorRegistry.get_actor(&"player")
+	if player != null:
+		chunk_manager.set_player(player)
+		_wire_player(player)
+	else:
+		chunk_manager.set_player(null)
+
+	for p in _city_zombie_positions():
+		var zombie := Zombie.new()
+		add_child(zombie)
+		zombie.position = Vector3(p.x, 0.1, p.y)
+
+
+## Deterministic zombie scatter: grid intersections ringed around spawn,
+## jittered along streets. Pure plan queries + seeded rng -> identical runs.
+func _city_zombie_positions() -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	var rng := WorldSeed.rng_for("city_zombies", [])
+	var center := city_plan.find_spawn_point()
+	var candidates: Array[Vector2] = []
+	for i in range(-4, 5):
+		for j in range(-4, 5):
+			var p := Vector2(city_plan.line_pos(0, i), city_plan.line_pos(1, j))
+			var d := p.distance_to(center)
+			if d > 24.0 and d < 130.0:
+				candidates.append(p)
+	# Seeded Fisher-Yates so zombie placement never depends on global RNG.
+	for i in range(candidates.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp := candidates[i]
+		candidates[i] = candidates[j]
+		candidates[j] = tmp
+	while out.size() < ZOMBIE_COUNT_CITY and not candidates.is_empty():
+		var base: Vector2 = candidates.pop_back()
+		out.append(base + Vector2(rng.randf_range(-6, 6), rng.randf_range(-6, 6)))
+	return out
+
+
 func _wire_player(p: Survivor) -> void:
 	player = p
 	p.died.connect(_on_player_died)
@@ -127,7 +219,7 @@ func _on_dialogue_closed() -> void:
 		_player_controller.input_enabled = true
 
 
-# --- Roof hiding ------------------------------------------------------------
+# --- Roof hiding (legacy block only) -----------------------------------------
 
 ## Hide building roofs while the player stands inside the footprint so
 ## interiors stay readable from the elevated camera.
@@ -149,14 +241,15 @@ func _update_roof_visibility() -> void:
 # --- World provider contract (see core/autoload/save_manager.gd) -------------
 
 func save_state() -> Dictionary:
-	var survivor_states: Array = []
+	var data := {"survivors": [], "crates": []}
 	for node in get_tree().get_nodes_in_group(&"survivors"):
-		survivor_states.append(node.save_state())
-	var crate_states: Array = []
+		data["survivors"].append(node.save_state())
 	for crate in _crates:
 		if is_instance_valid(crate):
-			crate_states.append(crate.save_state())
-	return {"survivors": survivor_states, "crates": crate_states}
+			data["crates"].append(crate.save_state())
+	if _mode == WorldMode.STREAMED_CITY and chunk_manager != null:
+		data["chunks"] = chunk_manager.save_state()
+	return data
 
 
 func load_state(data: Dictionary) -> void:
@@ -176,26 +269,33 @@ func _respawn_after_load(data: Dictionary) -> void:
 	for state in data.get("survivors", []):
 		saved_by_id[state.get("id", "")] = state
 
-	var entries: Array = [Population.PLAYER_ENTRY]
-	entries.append_array(Population.SURVIVORS)
-	for entry in entries:
-		# Death persistence: NPCs recorded dead in WorldState never respawn.
-		if WorldState.is_dead(entry["id"]):
-			continue
-		_spawn_survivor(entry.duplicate(true), saved_by_id.get(str(entry["id"]), {}))
+	match _mode:
+		WorldMode.LEGACY_BLOCK:
+			var entries: Array = [Population.PLAYER_ENTRY]
+			entries.append_array(Population.SURVIVORS)
+			for entry in entries:
+				# Death persistence: NPCs recorded dead in WorldState never respawn.
+				if WorldState.is_dead(entry["id"]):
+					continue
+				_spawn_survivor(entry.duplicate(true), saved_by_id.get(str(entry["id"]), {}))
+
+			for pos in Population.ZOMBIE_POSITIONS:
+				var zombie := Zombie.new()
+				add_child(zombie)
+				zombie.position = pos
+
+			var crate_states: Array = data.get("crates", [])
+			for i in mini(crate_states.size(), _crates.size()):
+				_crates[i].load_state(crate_states[i])
+
+		WorldMode.STREAMED_CITY:
+			_spawn_city_population()
+			if chunk_manager != null and data.has("chunks"):
+				chunk_manager.load_state(data["chunks"])
 
 	player = ActorRegistry.get_actor(&"player")
 	if player != null:
 		_wire_player(player)
-
-	for pos in Population.ZOMBIE_POSITIONS:
-		var zombie := Zombie.new()
-		add_child(zombie)
-		zombie.position = pos
-
-	var crate_states: Array = data.get("crates", [])
-	for i in mini(crate_states.size(), _crates.size()):
-		_crates[i].load_state(crate_states[i])
 
 	hud.hide_death_screen()
 	hud.refresh_quest_tracker()
