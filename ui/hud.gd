@@ -16,6 +16,7 @@ const BAR_DEFS := [
 ]
 
 var _clock_label: Label
+var _weapon_label: Label
 var _bars := {}                # String key -> ProgressBar
 var _quest_tracker: RichTextLabel
 var _prompt_label: Label
@@ -35,11 +36,25 @@ func _ready() -> void:
 
 func _build_ui() -> void:
 	_build_clock()
+	_build_weapon_label()
 	_build_vitals()
 	_build_quest_tracker()
 	_build_prompt_and_notice()
 	_build_banner()
 	_build_death_screen()
+
+
+func set_weapon_label(text: String) -> void:
+	_weapon_label.text = "Weapon: %s   [1-4]" % text
+
+
+func _build_weapon_label() -> void:
+	_weapon_label = _make_label(16, Color(0.9, 0.9, 0.82))
+	_weapon_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_weapon_label.offset_left = 14.0
+	_weapon_label.offset_top = 10.0
+	add_child(_weapon_label)
+	set_weapon_label("Fists")
 
 
 func _make_label(font_size: int, color := Color.WHITE) -> Label:

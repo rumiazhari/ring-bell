@@ -10,6 +10,7 @@ var contents := {}  # StringName item id -> int count
 
 var _interactable: InteractableComponent
 var _mesh: MeshInstance3D
+var _destructible: DestructibleComponent
 
 
 func _ready() -> void:
@@ -33,6 +34,14 @@ func _ready() -> void:
 	shape.position = Vector3(0, 0.45, 0)
 	add_child(shape)
 
+	var destructible := DestructibleComponent.new()
+	destructible.material_id = &"wood"
+	destructible.integrity = 34.0
+	destructible.debris_size = Vector3(1.0, 0.9, 1.0)
+	destructible.destroyed.connect(_on_destroyed)
+	add_child(destructible)
+	_destructible = destructible
+
 	_interactable = InteractableComponent.new()
 	_interactable.interacted.connect(_on_interacted)
 	add_child(_interactable)
@@ -40,6 +49,20 @@ func _ready() -> void:
 	add_to_group(&"interactables")
 	add_to_group(&"food_storage")
 	_update_prompt()
+
+
+## Blasting a crate splinters it - the stock is lost with it.
+func take_structural_damage(amount: float, source_id: StringName = &"") -> void:
+	if _destructible != null:
+		_destructible.apply_damage(amount, source_id)
+
+
+func _on_destroyed() -> void:
+	if _interactable != null:
+		_interactable.enabled = false
+	remove_from_group(&"interactables")
+	remove_from_group(&"food_storage")
+	queue_free()
 
 
 func _on_interacted(player: Node3D) -> void:

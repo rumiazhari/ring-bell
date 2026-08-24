@@ -110,14 +110,16 @@ func _build_stats_text() -> String:
 	return "\n".join(lines)
 
 
-## Streaming stats from the ChunkManager, when a streamed city is running.
+## Streaming + population stats from the streamed city, when running.
 func _chunk_lines() -> PackedStringArray:
 	var out := PackedStringArray()
-	var managers := get_tree().get_nodes_in_group(&"chunk_manager")
-	if managers.is_empty():
-		return out
-	for line in (managers[0] as ChunkManager).debug_lines():
-		out.append("world | " + line)
+	for manager in get_tree().get_nodes_in_group(&"chunk_manager"):
+		for line in (manager as ChunkManager).debug_lines():
+			out.append("world | " + line)
+	for spawner in get_tree().get_nodes_in_group(&"city_spawner"):
+		if spawner.has_method("debug_lines"):
+			for line in spawner.call("debug_lines"):
+				out.append("world | " + str(line))
 	return out
 
 

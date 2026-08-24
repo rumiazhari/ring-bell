@@ -17,6 +17,10 @@ func _enter_tree() -> void:
 	_add_action(&"camera_rotate_right", [_key(KEY_R)])
 	_add_action(&"eat", [_key(KEY_F)])
 	_add_action(&"use_medical", [_key(KEY_G)])
+	_add_action(&"weapon_1", [_key(KEY_1)])
+	_add_action(&"weapon_2", [_key(KEY_2)])
+	_add_action(&"weapon_3", [_key(KEY_3)])
+	_add_action(&"weapon_4", [_key(KEY_4)])
 
 
 func _add_action(action: StringName, events: Array) -> void:

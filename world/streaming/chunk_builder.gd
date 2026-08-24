@@ -66,17 +66,48 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 
 
 ## Builds the chunk node under `parent` and returns generation stats.
-static func build(parent: Node3D, plan: CityPlan, coord: Vector2i) -> Dictionary:
-	var t0 := Time.get_ticks_usec()
-	var b := MeshBatcher.new()
-	fill_batcher(b, plan, coord)
+## SPLIT COSTS HERE: fill_batcher() is pure data (run it on worker threads
+## with a PRIVATE CityPlan copy - see ChunkManager._fill_job); build()
+## materializes on the main thread only.
+static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
+		batcher: MeshBatcher = null) -> Dictionary:
+	if batcher == null:
+		batcher = MeshBatcher.new()
+		fill_batcher(batcher, plan, coord)
 
+	var t0 := Time.get_ticks_usec()
 	var chunk := Node3D.new()
 	chunk.name = "Chunk_%d_%d" % [coord.x, coord.y]
 	parent.add_child(chunk)
-	var stats := b.flush_into(chunk)
-	stats["boxes"] = b.box_count()
-	stats["gen_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0
+	var stats := batcher.flush_into(chunk)
+	# Dynamic door entities from the deterministic manifests.
+	var rect := WorldSeed.chunk_rect(coord)
+	var doors := 0
+	var buildings := 0
+	for spec in _owned_buildings(plan, rect, coord):
+		buildings += 1
+		for dm: Dictionary in spec.get("doors", []):
+			var door := Door.new()
+			door.name = String(dm["id"])
+			door.setup(dm)
+			chunk.add_child(door)
+			doors += 1
+
+	stats["doors"] = doors
+	stats["buildings"] = buildings
+
+	# Dynamic destructible props from the deterministic manifests.
+	var props := 0
+	for def: Dictionary in batcher.props():
+		var prop := DestructibleProp.new()
+		prop.name = "Prop_%d" % props
+		prop.setup(def)
+		chunk.add_child(prop)
+		props += 1
+	stats["props"] = props
+	stats["boxes"] = batcher.box_count()
+	stats["colliders"] = batcher.collider_count()
+	stats["mat_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0
 	return stats
 
 
@@ -97,8 +128,8 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 	var s := float(WorldSeed.CHUNK_SIZE)
 	# Subtle per-chunk tone variation keeps large surfaces from reading flat.
 	var tint := 0.94 + 0.06 * WorldSeed.unit_float("ground", [coord.x, coord.y])
-	b.add_box(Vector3((coord.x + 0.5) * s, -0.25, (coord.y + 0.5) * s),
-			Vector3(s, 0.5, s), GROUND_COLOR * tint, true)
+	b.add_structural_box(Vector3((coord.x + 0.5) * s, -0.25, (coord.y + 0.5) * s),
+			Vector3(s, 0.5, s), GROUND_COLOR * tint)
 
 
 # --- Roads -------------------------------------------------------------------
@@ -120,7 +151,8 @@ static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2) -> void:
 			if clipped.size.x <= 0.01 or clipped.size.y <= 0.01:
 				continue
 			var avenue := plan.is_avenue(axis, i)
-			b.add_box(Vector3(clipped.get_center().x, 0.04, clipped.get_center().y),
+			b.add_visual_box(Vector3(clipped.get_center().x, 0.04,
+					clipped.get_center().y),
 					Vector3(clipped.size.x, 0.08, clipped.size.y),
 					ASPHALT_AVENUE if avenue else ASPHALT)
 			if avenue:
@@ -138,7 +170,7 @@ static func _center_dashes(b: MeshBatcher, axis: int, center: float,
 				else Vector3(center, 0.09, p)
 		var size := Vector3(2.6, 0.02, 0.34) if axis == 0 \
 				else Vector3(0.34, 0.02, 2.6)
-		b.add_box(pos, size, DASH_COLOR)
+		b.add_visual_box(pos, size, DASH_COLOR)
 
 
 # --- Blocks ------------------------------------------------------------------
@@ -148,7 +180,7 @@ static func _pavement(b: MeshBatcher, block_rect: Rect2, chunk_rect: Rect2,
 	var r := block_rect.intersection(chunk_rect)
 	if r.size.x <= 0.01 or r.size.y <= 0.01:
 		return
-	b.add_box(Vector3(r.get_center().x, 0.03, r.get_center().y),
+	b.add_visual_box(Vector3(r.get_center().x, 0.03, r.get_center().y),
 			Vector3(r.size.x, 0.06, r.size.y), color)
 
 
@@ -177,10 +209,10 @@ static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 		b.add_box_rotated(
 				Vector3(center.x + dir.x * 2.3, 0.28, center.y + dir.y * 2.3),
 				Vector3(1.95, 0.56, 0.42), basis, FOUNTAIN_RIM, true)
-	b.add_box(Vector3(center.x, 0.16, center.y), Vector3(4.0, 0.32, 4.0),
+	b.add_visual_box(Vector3(center.x, 0.16, center.y), Vector3(4.0, 0.32, 4.0),
 			FOUNTAIN_WATER)
-	b.add_box(Vector3(center.x, 0.62, center.y), Vector3(0.9, 0.92, 0.9),
-			FOUNTAIN_RIM, true)
+	b.add_structural_box(Vector3(center.x, 0.62, center.y),
+			Vector3(0.9, 0.92, 0.9), FOUNTAIN_RIM)
 	# Market stalls in the four quadrants (abandoned market area).
 	var rng := WorldSeed.rng_for("market", [coord.x, coord.y])
 	var stall_count := rng.randi_range(3, 6)
@@ -204,14 +236,35 @@ static func _market_stall(b: MeshBatcher, p: Vector2,
 			+ rng.randf_range(-0.08, 0.08)
 	var basis := Basis(Vector3.UP, -yaw)
 	var canopy_c: Color = STALL_COLORS[rng.randi_range(0, STALL_COLORS.size() - 1)]
+	var parts: Array = []
 	for corner in [Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)]:
 		var off := basis * Vector3(corner.x * 1.15, 0, corner.y * 1.05)
-		b.add_box(Vector3(p.x + off.x, 1.1, p.y + off.z),
-				Vector3(0.12, 2.2, 0.12), Color("5c5148"), true)
-	b.add_box_rotated(Vector3(p.x, 2.28, p.y), Vector3(2.7, 0.16, 2.5),
-			basis, canopy_c)
-	b.add_box_rotated(Vector3(p.x, 0.45, p.y), Vector3(2.3, 0.9, 1.0),
-			basis, Color("6b5a41"), true)
+		parts.append({
+			"offset": Vector3(off.x, 1.1, off.z),
+			"size": Vector3(0.12, 2.2, 0.12),
+			"color": Color("5c5148"),
+			"collide": true,
+		})
+	parts.append({
+		"offset": Vector3(0, 0.45, 0),
+		"size": Vector3(2.3, 0.9, 1.0),
+		"color": Color("6b5a41"),
+		"collide": true,
+	})
+	# Canopy rides along visually (no collision) so nothing floats when the
+	# stall is blasted apart.
+	parts.append({
+		"offset": Vector3(0, 2.28, 0),
+		"size": Vector3(2.7, 0.16, 2.5),
+		"color": canopy_c,
+		"collide": false,
+	})
+	b.add_prop_def({
+		"position": Vector3(p.x, 0.0, p.y),
+		"yaw": yaw,
+		"material": &"wood",
+		"parts": parts,
+	})
 	# Scattered wares under the canopy.
 	for j in rng.randi_range(1, 3):
 		var off := basis * Vector3(rng.randf_range(-0.9, 0.9), 0,
@@ -236,11 +289,20 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 		if WorldSeed.chunk_coord(p.x, p.y) != coord:
 			continue
 		var h := rng.randf_range(1.9, 2.6)
-		b.add_box(Vector3(p.x, h * 0.5, p.y), Vector3(0.42, h, 0.42),
-				TRUNK_COLOR, true)
-		b.add_box(Vector3(p.x, h + 0.7, p.y),
-				Vector3(rng.randf_range(1.9, 2.6), 1.6,
-						rng.randf_range(1.9, 2.6)), CANOPY_COLOR)
+		# One destructible wood prop: trunk (collides) + canopy (visual).
+		b.add_prop_def({
+			"position": Vector3(p.x, 0.0, p.y),
+			"material": &"wood",
+			"parts": [
+				{"offset": Vector3(0, h * 0.5, 0),
+						"size": Vector3(0.42, h, 0.42),
+						"color": TRUNK_COLOR, "collide": true},
+				{"offset": Vector3(0, h + 0.7, 0),
+						"size": Vector3(rng.randf_range(1.9, 2.6), 1.6,
+								rng.randf_range(1.9, 2.6)),
+						"color": CANOPY_COLOR, "collide": false},
+			],
+		})
 
 
 # --- Props / apocalypse decoration pass v0 ------------------------------------
@@ -248,6 +310,14 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		coord: Vector2i) -> void:
 	var rng := WorldSeed.rng_for("props", [coord.x, coord.y])
+
+	# Colliding props must never spawn inside a door's swing arc - the
+	# physical door leaf would jam against them.
+	var door_pts: Array[Vector2] = []
+	for spec in plan.buildings_in_rect(rect.grow(8.0)):
+		for dm in spec.get("doors", []):
+			var dp: Vector3 = dm["position"]
+			door_pts.append(Vector2(dp.x, dp.z))
 
 	# Wrecked cars parked along street edges.
 	var car_count := rng.randi_range(0, 3)
@@ -267,7 +337,7 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		var t := rng.randf_range(along_lo + 4.0, maxf(along_lo + 4.1, along_hi - 4.0))
 		var p := Vector2(center + lateral, t) if axis == 0 \
 				else Vector2(t, center + lateral)
-		if _inside_any_building(plan, p):
+		if _inside_any_building(plan, p) or _near_door(door_pts, p):
 			continue
 		_car(b, p, rng, CAR_COLORS[rng.randi_range(0, CAR_COLORS.size() - 1)])
 
@@ -297,10 +367,20 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		var side := int(spec["door_edge"])
 		var p := _front_of(lr, side, rng.randf_range(0.25, 0.75))
 		p += Vector2(rng.randf_range(-1.2, 1.2), rng.randf_range(-1.2, 1.2))
-		b.add_box(Vector3(p.x, rng.randf_range(0.22, 0.3), p.y),
-				Vector3(rng.randf_range(0.5, 0.8), rng.randf_range(0.45, 0.6),
+		if _near_door(door_pts, p):
+			continue
+		b.add_prop_def({
+			"position": Vector3(p.x, 0.0, p.y),
+			"yaw": rng.randf_range(0.0, TAU),
+			"material": &"steel",
+			"parts": [{
+				"offset": Vector3(0, 0.28, 0),
+				"size": Vector3(rng.randf_range(0.5, 0.8), 0.56,
 						rng.randf_range(0.5, 0.8)),
-				Color("30332e").lightened(rng.randf() * 0.2), true)
+				"color": Color("30332e").lightened(rng.randf() * 0.2),
+				"collide": true,
+			}],
+		})
 
 	# Street lamps along avenues only (posts now; real lights come later).
 	for axis in 2:
@@ -327,17 +407,34 @@ static func _car(b: MeshBatcher, p: Vector2, rng: RandomNumberGenerator,
 	var yaw := rng.randf_range(-0.12, 0.12) + (PI * 0.5 if rng.randf() < 0.5 else 0.0)
 	# Cars align across streets: orient perpendicular to nearest street line.
 	var basis := Basis(Vector3.UP, yaw)
-	b.add_box_rotated(Vector3(p.x, 0.45, p.y), Vector3(1.85, 0.7, 4.2),
-			basis, color, true)
-	b.add_box_rotated(Vector3(p.x, 1.05, p.y), Vector3(1.65, 0.55, 2.1),
-			basis, color.darkened(0.25), true)
+	# One destructible steel prop: body + cabin. Explosions bounce surviving
+	# debris off the blast center; sustained fire wrecks it in place.
+	var body_off: Vector3 = basis * Vector3(0, 0.45, 0)
+	var cabin_off: Vector3 = basis * Vector3(0, 1.05, 0)
+	b.add_prop_def({
+		"position": Vector3(p.x, 0.0, p.y),
+		"yaw": yaw,
+		"material": &"steel",
+		"parts": [
+			{"offset": body_off, "size": Vector3(1.85, 0.7, 4.2),
+					"color": color, "collide": true},
+			{"offset": cabin_off, "size": Vector3(1.65, 0.55, 2.1),
+					"color": color.darkened(0.25), "collide": true},
+		],
+	})
 
 
 static func _lamp_post(b: MeshBatcher, p: Vector2) -> void:
-	b.add_box(Vector3(p.x, 2.3, p.y), Vector3(0.16, 4.6, 0.16),
-			Color("33363a"), true)
-	b.add_box(Vector3(p.x, 4.65, p.y), Vector3(0.5, 0.18, 0.5),
-			Color("d8cf9f"))
+	b.add_prop_def({
+		"position": Vector3(p.x, 0.0, p.y),
+		"material": &"steel",
+		"parts": [
+			{"offset": Vector3(0, 2.3, 0), "size": Vector3(0.16, 4.6, 0.16),
+					"color": Color("33363a"), "collide": true},
+			{"offset": Vector3(0, 4.65, 0), "size": Vector3(0.5, 0.18, 0.5),
+					"color": Color("d8cf9f"), "collide": false},
+		],
+	})
 
 
 static func _inside_any_building(plan: CityPlan, p: Vector2) -> bool:
@@ -354,3 +451,11 @@ static func _front_of(lr: Rect2, door_edge: int, t: float) -> Vector2:
 		1: return Vector2(lr.end.x + 1.4, lerpf(lr.position.y, lr.end.y, t))
 		2: return Vector2(lerpf(lr.position.x, lr.end.x, t), lr.end.y + 1.4)
 		_: return Vector2(lr.position.x - 1.4, lerpf(lr.position.y, lr.end.y, t))
+
+
+## True when `p` sits inside any door's swing clearance.
+static func _near_door(door_pts: Array[Vector2], p: Vector2) -> bool:
+	for d in door_pts:
+		if p.distance_to(d) < 2.4:
+			return true
+	return false

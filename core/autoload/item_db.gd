@@ -7,6 +7,7 @@ extends Node
 const KIND_FOOD := &"food"
 const KIND_MEDICAL := &"medical"
 const KIND_WEAPON_MELEE := &"weapon_melee"
+const KIND_WEAPON_GUN := &"weapon_gun"
 
 const ITEMS := {
 	&"canned_food": {
@@ -43,6 +44,45 @@ const ITEMS := {
 		"reach": 1.4,
 		"cooldown": 0.55,
 	},
+
+	# --- Firearms (hitscan unless "projectile" set) ---------------------------
+	# damage applies to living AND structures; structures convert it through
+	# MaterialDB strength (steel shrugs off bullets that shred wood).
+	&"smg": {
+		"name": "Scrap SMG",
+		"kind": KIND_WEAPON_GUN,
+		"damage": 9.0,             # per bullet
+		"cooldown": 0.11,          # ~9 rounds/s, automatic
+		"auto": true,
+		"pellets": 1,
+		"spread_deg": 2.2,
+		"range": 60.0,
+		"knockback": 0.8,
+		"tracer_color": Color(1.0, 0.92, 0.55),
+	},
+	&"shotgun": {
+		"name": "Pump Shotgun",
+		"kind": KIND_WEAPON_GUN,
+		"damage": 8.0,             # per pellet
+		"cooldown": 0.95,
+		"auto": false,
+		"pellets": 7,
+		"spread_deg": 11.0,
+		"range": 26.0,
+		"knockback": 2.4,
+		"structural_scale": 1.6,   # heavy shot chews wood
+		"tracer_color": Color(1.0, 0.75, 0.45),
+	},
+	&"rocket_launcher": {
+		"name": "Rocket Launcher",
+		"kind": KIND_WEAPON_GUN,
+		"projectile": &"rocket",
+		"speed": 24.0,
+		"damage": 130.0,           # at blast center
+		"explosion_radius": 5.5,
+		"cooldown": 1.7,
+		"auto": false,
+	},
 }
 
 # Implicit weapon used when nothing is equipped.
@@ -69,6 +109,15 @@ func get_weapon_def(id: StringName) -> Dictionary:
 	if def.get("kind", &"") != KIND_WEAPON_MELEE:
 		return FISTS
 	return def
+
+
+## Gun defs pass through only for KIND_WEAPON_GUN items; "" otherwise.
+func get_gun_def(id: StringName) -> Dictionary:
+	if id != &"" and ITEMS.has(id):
+		var def: Dictionary = ITEMS[id]
+		if def.get("kind", &"") == KIND_WEAPON_GUN:
+			return def
+	return {}
 
 
 func item_name(id: StringName) -> String:

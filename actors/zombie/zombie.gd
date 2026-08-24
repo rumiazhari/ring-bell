@@ -3,8 +3,12 @@ extends CharacterBody3D
 ## Slow shambler. Individual danger is low; the threat is numbers and noise.
 ##
 ## States: WANDER -> CHASE (sees a survivor) / INVESTIGATE (heard a noise).
-## Zombies are transient actors: not persisted in saves during Prototype 0,
-## they respawn fresh from the population manifest on load.
+## In the streamed city, WANDER targets are ROAD points sampled from the
+## CityPlan so idle zombies roam streets instead of grinding into walls.
+## Zombies are transient actors: not persisted in saves; the CitySpawner
+## recreates deterministic per-chunk populations when chunks go ACTIVE.
+##
+## SPAWN CONTRACT (city): set requested_id + city_plan BEFORE add_child().
 
 signal died(zombie: Zombie)
 
@@ -21,15 +25,22 @@ const ATTACK_COOLDOWN := 1.5
 const ATTACK_DAMAGE := 12.0
 
 const MAX_HEALTH := 45.0
+const GRAVITY := 18.0
+const KNOCKBACK_MAX := 9.0             # clamp so blasts shove, not launch
+const ROAM_MIN_DIST := 6.0         # road-roam annulus around current spot
+const ROAM_MAX_DIST := 24.0
+const STUCK_TIME := 2.0            # seconds without progress -> new target
 
 enum State { WANDER, CHASE, INVESTIGATE }
 
 static var _spawn_counter := 0
 
 var zombie_id: StringName
+var requested_id: StringName = &"" # deterministic city id ("z_1_-2_004")
 var anchor := Vector3.ZERO         # home point it shambles around
 var state := State.WANDER
 var target: Node3D = null          # chased survivor (live node reference)
+var city_plan: CityPlan = null     # when set, WANDER follows road space
 
 var health: HealthComponent
 
@@ -37,13 +48,24 @@ var _attack_cooldown := 0.0
 var _retarget_cooldown := 0.0
 var _wander_target := Vector3.ZERO
 var _wander_pause := randf_range(1.0, 5.0)
+var _roam_rng := RandomNumberGenerator.new()
+var _stuck_timer := 0.0
+var _knockback := Vector3.ZERO         # havoc impulses (explosions, shots)
+var _death_impulse := Vector3.ZERO     # snapshot of the killing blow's push
+var _model_root: Node3D
+var _animator: HumanoidAnimator
+var _visual_yaw := 0.0                 # smoothed facing from movement
 
 
 func _ready() -> void:
 	_spawn_counter += 1
-	zombie_id = StringName("zombie_%03d" % _spawn_counter)
+	zombie_id = requested_id if requested_id != &"" \
+			else StringName("zombie_%03d" % _spawn_counter)
 	anchor = global_position
 	_wander_target = global_position
+	if city_plan != null:
+		_roam_rng.seed = WorldSeed.combine([
+				WorldSeed.str_hash("zroam"), WorldSeed.str_hash(str(zombie_id))])
 
 	collision_layer = LAYER_ZOMBIES
 	collision_mask = LAYER_ENVIRONMENT | LAYER_SURVIVORS | LAYER_ZOMBIES
@@ -56,18 +78,21 @@ func _ready() -> void:
 	shape.position = Vector3(0, 0.85, 0)
 	add_child(shape)
 
-	var mesh_instance := MeshInstance3D.new()
-	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.38
-	mesh.height = 1.65
-	mesh_instance.mesh = mesh
-	mesh_instance.position = Vector3(0, 0.8, 0)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.42, 0.52, 0.38)
-	mat.roughness = 1.0
-	mesh_instance.material_override = mat
-	mesh_instance.rotation_degrees.x = 12.0  # hunched silhouette
-	add_child(mesh_instance)
+	# Bloody rotten human body - variation seeded per zombie id so the city
+	# crowd is deterministic (same id -> same rot).
+	var look_rng := RandomNumberGenerator.new()
+	if requested_id != &"":
+		look_rng.seed = WorldSeed.combine([
+				WorldSeed.str_hash("zlook"),
+				WorldSeed.str_hash(str(zombie_id))])
+	else:
+		look_rng.randomize()
+	_model_root = HumanoidModel.build_zombie(look_rng)
+	_animator = HumanoidAnimator.new()
+	add_child(_animator)
+	_animator.add_child(_model_root)
+	_animator.configure(_model_root.get_meta("anim_limbs"),
+			{"shamble": true})
 
 	health = HealthComponent.new()
 	health.max_health = MAX_HEALTH
@@ -78,10 +103,16 @@ func _ready() -> void:
 	add_to_group(&"zombies")
 	ActorRegistry.register(self, zombie_id)
 	EventBus.attack_performed.connect(_on_noise_heard)
+	EventBus.explosion_occurred.connect(_on_noise_heard)
 
 
 func take_damage(amount: float, source_id: StringName) -> void:
 	health.damage(amount, source_id)
+
+
+## Havoc physics: radial impulses from explosions and heavy hits.
+func apply_knockback(impulse: Vector3) -> void:
+	_knockback = (_knockback + impulse).limit_length(KNOCKBACK_MAX)
 
 
 func _physics_process(delta: float) -> void:
@@ -89,6 +120,11 @@ func _physics_process(delta: float) -> void:
 		return
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
 	_retarget_cooldown -= delta
+
+	if not is_on_floor():
+		velocity.y = velocity.y - GRAVITY * delta
+	elif velocity.y < 0.0:
+		velocity.y = 0.0
 
 	if _retarget_cooldown <= 0.0:
 		_retarget_cooldown = 0.5
@@ -102,7 +138,19 @@ func _physics_process(delta: float) -> void:
 		State.CHASE:
 			_do_chase()
 
+	velocity += _knockback
+	_knockback *= exp(-5.5 * delta)
 	move_and_slide()
+
+	# Face where we actually walk (model front is local +Z), smoothed.
+	var xz_speed := Vector2(velocity.x, velocity.z).length()
+	if xz_speed > 0.15:
+		_visual_yaw = lerp_angle(_visual_yaw,
+				atan2(velocity.x, velocity.z),
+				minf(1.0, 9.0 * delta))
+	if _animator != null:
+		_animator.rotation.y = _visual_yaw
+		_animator.set_motion(xz_speed, not is_on_floor())
 
 
 # --- Perception -------------------------------------------------------------
@@ -131,11 +179,23 @@ func _on_noise_heard(noise_position: Vector3) -> void:
 
 func _do_wander(delta: float) -> void:
 	_wander_pause -= delta
+	var to_target := _wander_target - global_position
+	to_target.y = 0.0
+	# Stuck detection: ordered to move but not actually progressing (wall,
+	# car, fence) -> drop the current road target and pick another one.
+	if to_target.length() > 0.6:
+		if Vector2(velocity.x, velocity.z).length() < 0.1:
+			_stuck_timer += delta
+			if _stuck_timer >= STUCK_TIME:
+				_pick_wander_target()
+				_stuck_timer = 0.0
+		else:
+			_stuck_timer = 0.0
+	else:
+		_stuck_timer = 0.0
 	if _wander_pause <= 0.0:
 		_wander_pause = randf_range(2.0, 6.0)
 		_pick_wander_target()
-	var to_target := _wander_target - global_position
-	to_target.y = 0.0
 	if to_target.length() > 0.3:
 		velocity.x = to_target.normalized().x * SPEED_WANDER
 		velocity.z = to_target.normalized().z * SPEED_WANDER
@@ -145,6 +205,14 @@ func _do_wander(delta: float) -> void:
 
 
 func _pick_wander_target() -> void:
+	if city_plan != null:
+		var p := city_plan.sample_road_position(
+				Vector2(global_position.x, global_position.z),
+				ROAM_MIN_DIST, ROAM_MAX_DIST, _roam_rng)
+		if p != Vector2.INF:
+			_wander_target = Vector3(p.x, global_position.y, p.y)
+			return
+	# Fallback (legacy block or no road found): small anchor scatter.
 	var offset := Vector3(randf_range(-4.0, 4.0), 0, randf_range(-4.0, 4.0))
 	_wander_target = anchor + offset
 
@@ -182,6 +250,8 @@ func _do_chase() -> void:
 
 func _attack(victim: Node3D) -> void:
 	_attack_cooldown = ATTACK_COOLDOWN
+	if _animator != null:
+		_animator.play_attack()
 	victim.receive_bite(ATTACK_DAMAGE, zombie_id)
 	EventBus.attack_performed.emit(global_position)
 
@@ -198,9 +268,56 @@ func _on_health_died(source_id: StringName) -> void:
 	set_physics_process(false)
 	velocity = Vector3.ZERO
 
-	# Corpse conversion: fall over and darken.
-	for child in get_children():
-		if child is MeshInstance3D:
-			child.material_override.albedo_color = Color(0.3, 0.33, 0.28)
-	rotation_degrees.x = 90.0
-	position.y = 0.3
+	# Gore burst - violent ends shed flesh gibs that fall and pile up.
+	if source_id != &"infection":
+		DebrisManager.burst_box(global_position + Vector3.UP * 0.9,
+				Vector3(0.55, 1.2, 0.45),
+				Color(0.38, 0.2, 0.16), &"flesh", 7, 2.8)
+
+	# Violent deaths become a physics ragdoll: the corpse tumbles with the
+	# killing impulse and settles where gravity and walls put it. Quiet
+	# deaths (starvation/infection) keep the old scripted tip-over.
+	_death_impulse = _knockback
+	if source_id != &"infection" or _death_impulse.length() > 1.5:
+		_spawn_ragdoll_corpse(source_id)
+		queue_free()
+		return
+
+	# Corpse conversion (quiet deaths only): fall over and go pale.
+	for mesh in HumanoidModel.collect_meshes(_model_root):
+		if mesh.material_override is StandardMaterial3D:
+			(mesh.material_override as StandardMaterial3D).albedo_color = \
+					Color(0.34, 0.32, 0.28)
+	# Rotate only the visual model, not the collision capsule.
+	if _animator != null:
+		_animator.rotation_degrees.x = 90.0
+		_animator.position.y = 0.3
+
+
+## Replace the body with a physics ragdoll carrying the ACTUAL humanoid
+## model (tinted pale), launched by the killing blow.
+func _spawn_ragdoll_corpse(_source_id: StringName) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	# Quiet-death tint for the adopted body.
+	for mesh in HumanoidModel.collect_meshes(_model_root):
+		if mesh.material_override is StandardMaterial3D:
+			var mat := mesh.material_override as StandardMaterial3D
+			mat.albedo_color = mat.albedo_color.lerp(
+					Color(0.36, 0.3, 0.26), 0.45)
+	var corpse := CorpseBody.new()
+	scene.add_child(corpse)
+	corpse.global_position = global_position
+	# Carry the facing into the ragdoll (the model itself never yawed).
+	if _animator != null:
+		_animator.stop()
+		corpse.rotation.y = _animator.rotation.y
+	if _model_root != null:
+		corpse.take_visual(_model_root)
+	# Dampen the launch: a slump toward the hit, never a rocket jump.
+	var launch := _death_impulse
+	launch.y *= 0.4
+	if launch.length() < 1.0:
+		launch = Vector3(randf_range(-0.6, 0.6), 0.8, randf_range(-0.6, 0.6))
+	corpse.launch(launch)

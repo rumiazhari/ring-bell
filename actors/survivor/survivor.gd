@@ -27,6 +27,8 @@ const STAMINA_REGEN_IDLE := 15.0       # per second standing still
 const STAMINA_REGEN_MOVE := 8.0        # per second walking
 const STAMINA_ATTACK_COST := 10.0
 const EXHAUSTED_RECOVER_AT := 25.0     # stamina needed to clear exhaustion
+const GRAVITY := 18.0                  # airborne arcs from knockback
+const KNOCKBACK_MAX := 9.0             # clamp so blasts shove, not launch
 
 var identity: IdentityComponent
 var health: HealthComponent
@@ -45,8 +47,11 @@ var _config := {}                      # spawn config, applied in _ready()
 var _move_dir := Vector3.ZERO          # world-space desired direction
 var _wants_sprint := false
 var _attack_cooldown := 0.0
+var _knockback := Vector3.ZERO         # havoc impulses (explosions, shots)
+var _death_impulse := Vector3.ZERO     # snapshot of the killing blow's push
 var _visual_root: Node3D
-var _body_mesh: MeshInstance3D
+var _model_root: Node3D
+var _animator: HumanoidAnimator
 
 
 ## Store spawn configuration; consumed in _ready(). Keys:
@@ -63,6 +68,12 @@ func is_player() -> bool:
 func _ready() -> void:
 	_setup_components_from_config()
 	_setup_body()
+
+	# Stair/floor contract: explicit so procedural 34 deg stair ramps stay
+	# safely inside the floor angle, and slopes don't fling the capsule.
+	up_direction = Vector3.UP
+	floor_max_angle = deg_to_rad(46.0)
+	floor_snap_length = 0.3
 
 	collision_layer = LAYER_SURVIVORS
 	# NOTE: survivors do not collide with each other on purpose - it prevents
@@ -115,36 +126,30 @@ func _setup_body() -> void:
 	_visual_root.name = "Visual"
 	add_child(_visual_root)
 
-	_body_mesh = MeshInstance3D.new()
-	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.35
-	mesh.height = 1.7
-	_body_mesh.mesh = mesh
-	_body_mesh.position = Vector3(0, 0.85, 0)
-	set_body_color(_config.get("color", Color(0.6, 0.65, 0.7)))
-	_visual_root.add_child(_body_mesh)
-
-	# Facing indicator so movement direction reads at a glance.
-	var nose := MeshInstance3D.new()
-	var nose_mesh := BoxMesh.new()
-	nose_mesh.size = Vector3(0.12, 0.12, 0.28)
-	nose.mesh = nose_mesh
-	nose.position = Vector3(0, 1.35, 0.42)  # local +Z = forward (see facing logic)
-	nose.material_override = _make_material(Color(0.95, 0.92, 0.85))
-	_visual_root.add_child(nose)
+	# The player is a woman in a skirt; NPCs are varied humans dressed by
+	# their spawn manifest color.
+	var shirt: Color = _config.get("color", Color(0.6, 0.65, 0.7))
+	var female := is_player() or bool(_config.get("female", false))
+	var cfg := {
+		"female": female,
+		"shirt": shirt,
+	}
+	if female and is_player():
+		cfg["skin"] = Color(0.9, 0.74, 0.62)
+		cfg["hair"] = Color(0.4, 0.27, 0.16)
+		cfg["pants"] = Color(0.35, 0.32, 0.36)
+	_model_root = HumanoidModel.build_human(cfg)
+	_animator = HumanoidAnimator.new()
+	_visual_root.add_child(_animator)
+	_animator.add_child(_model_root)
+	_animator.configure(_model_root.get_meta("anim_limbs"))
 
 
 func set_body_color(color: Color) -> void:
-	if _body_mesh == null:
+	if _model_root == null or not _model_root.has_meta("shirt_material"):
 		return
-	_body_mesh.material_override = _make_material(color)
-
-
-static func _make_material(color: Color) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.9
-	return mat
+	var shirt_m: StandardMaterial3D = _model_root.get_meta("shirt_material")
+	shirt_m.albedo_color = color
 
 
 # --- Movement ---------------------------------------------------------------
@@ -188,7 +193,21 @@ func _physics_process(delta: float) -> void:
 	var blend := 1.0 - exp(-ACCELERATION * delta)
 	velocity.x = lerpf(velocity.x, target_velocity.x, blend)
 	velocity.z = lerpf(velocity.z, target_velocity.z, blend)
+	# Gravity: knockback can lift the body airborne, so the arc must come
+	# back down instead of drifting away forever.
+	if not is_on_floor():
+		velocity.y -= GRAVITY * delta
+	elif velocity.y < 0.0:
+		velocity.y = 0.0
+	# Havoc impulses ride on top of locomotion and decay exponentially.
+	velocity += _knockback
+	_knockback *= exp(-5.5 * delta)
 	move_and_slide()
+
+	if _animator != null:
+		_animator.set_motion(
+				Vector2(velocity.x, velocity.z).length(),
+				not is_on_floor())
 
 	if moving:
 		facing = _move_dir.normalized()
@@ -217,6 +236,8 @@ func try_attack() -> bool:
 	var weapon := ItemDB.get_weapon_def(equipped_weapon_id)
 	stamina -= STAMINA_ATTACK_COST
 	_attack_cooldown = float(weapon.get("cooldown", 0.8))
+	if _animator != null:
+		_animator.play_attack()
 
 	for target in query_melee_targets(float(weapon.get("reach", 1.5))):
 		target.take_damage(float(weapon.get("damage", 10.0)), identity.persistent_id)
@@ -246,6 +267,11 @@ func query_melee_targets(reach: float) -> Array[Node]:
 
 func take_damage(amount: float, source_id: StringName) -> void:
 	health.damage(amount, source_id)
+
+
+## Havoc physics: radial impulses from explosions and heavy hits.
+func apply_knockback(impulse: Vector3) -> void:
+	_knockback = (_knockback + impulse).limit_length(KNOCKBACK_MAX)
 
 
 ## Zombie bite entry point (damage + infection risk).
@@ -293,15 +319,63 @@ func _on_health_died(source_id: StringName) -> void:
 	remove_from_group(&"survivors")
 	remove_from_group(&"interactables")
 	stop_moving()
-	# Become a static corpse: no collision, no processing, visual change.
+	# Violent deaths shed a flesh burst before the corpse settles.
+	var violent := source_id != &"deprivation" and source_id != &"infection"
+	if violent:
+		DebrisManager.burst_box(global_position + Vector3.UP * 0.9,
+				Vector3(0.55, 1.2, 0.45),
+				MaterialDB.get_material(&"flesh").get("debris_color"),
+				&"flesh", 6, 2.6)
 	collision_layer = 0
 	collision_mask = 0
 	set_physics_process(false)
 	if interactable != null:
 		interactable.enabled = false
-	_body_mesh.material_override = _make_material(Color(0.45, 0.15, 0.15))
+
+	if violent:
+		_death_impulse = _knockback
+		_spawn_ragdoll_corpse()
+		return
+
+	# Quiet death (starvation/infection): static corpse, tip over in place.
+	for mesh in HumanoidModel.collect_meshes(_visual_root):
+		if mesh.material_override is StandardMaterial3D:
+			(mesh.material_override as StandardMaterial3D).albedo_color = \
+					Color(0.45, 0.15, 0.15)
 	_visual_root.rotation_degrees.x = 90.0
 	_visual_root.position.y = 0.35
+
+
+## Violent deaths become a physics ragdoll carrying the ACTUAL body model.
+func _spawn_ragdoll_corpse() -> void:
+	var scene := get_tree().current_scene
+	if scene == null or _model_root == null:
+		return
+	for mesh in HumanoidModel.collect_meshes(_model_root):
+		if mesh.material_override is StandardMaterial3D:
+			var mat := mesh.material_override as StandardMaterial3D
+			mat.albedo_color = mat.albedo_color.lerp(
+					Color(0.4, 0.12, 0.1), 0.5)
+	var corpse := CorpseBody.new()
+	scene.add_child(corpse)
+	corpse.global_position = global_position
+	if _visual_root != null:
+		corpse.rotation.y = _visual_root.rotation.y
+	if _animator != null:
+		_animator.stop()
+	corpse.take_visual(_model_root)
+	var launch := _death_impulse
+	launch.y *= 0.4
+	if launch.length() < 1.0:
+		launch = Vector3(randf_range(-0.6, 0.6), 0.8, randf_range(-0.6, 0.6))
+	corpse.launch(launch)
+	queue_free()
+
+
+## Firearm recoil / melee swing cue for the procedural animator.
+func notify_attack_anim() -> void:
+	if _animator != null:
+		_animator.play_attack()
 
 
 # --- Persistence ------------------------------------------------------------

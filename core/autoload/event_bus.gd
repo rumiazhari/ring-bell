@@ -25,6 +25,8 @@ signal quest_state_changed(quest_id: StringName, new_state: int)
 
 # --- Gameplay ---------------------------------------------------------------
 signal attack_performed(position: Vector3)
+signal weapon_switched(weapon_name: String)
+signal explosion_occurred(position: Vector3)
 
 # --- Time -------------------------------------------------------------------
 signal hour_changed(day: int, hour: int)

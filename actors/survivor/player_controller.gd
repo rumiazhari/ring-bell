@@ -2,10 +2,9 @@ class_name PlayerController
 extends Node
 ## Reads input actions and drives the parent Survivor.
 ##
-## Also owns the interaction scan (nearest interactable within range) and the
-## HUD prompt. Added as a child of the player Survivor by world/main.gd only.
-##
-## While a dialogue is open, main.gd sets input_enabled = false.
+## Also owns the interaction scan (nearest interactable within range), the
+## HUD prompt and the WeaponSystem (slots 1-4 switch guns; melee stays on
+## slot 1). While a dialogue is open, main.gd sets input_enabled = false.
 
 const INTERACT_RANGE := 2.4
 
@@ -15,6 +14,7 @@ var _survivor: Survivor
 var _hud: Node = null                 # injected by main.gd (ui/hud.gd)
 var _camera_rig: Node3D = null        # found via group "camera_rig"
 var _hovered: Node3D = null           # interactable body currently in range
+var _weapons: WeaponSystem            # created lazily in setup()
 
 
 func _ready() -> void:
@@ -23,9 +23,16 @@ func _ready() -> void:
 
 func setup(hud: Node) -> void:
 	_hud = hud
+	_weapons = WeaponSystem.new()
+	_survivor.add_child(_weapons)
+	if _hud != null and _hud.has_method(&"set_weapon_label"):
+		EventBus.weapon_switched.connect(
+				func(weapon_name: String) -> void:
+					_hud.call(&"set_weapon_label", weapon_name))
+		_hud.call(&"set_weapon_label", _weapons.weapon_label())
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _survivor == null or _survivor.health.is_dead:
 		_survivor.stop_moving()
 		_set_prompt("")
@@ -49,8 +56,21 @@ func _physics_process(_delta: float) -> void:
 	var dir := Vector3(raw.x, 0.0, raw.y).rotated(Vector3.UP, yaw)
 	_survivor.request_move(dir, Input.is_action_pressed(&"sprint"))
 
-	if Input.is_action_just_pressed(&"attack"):
+	for i in 4:
+		if Input.is_action_just_pressed(StringName("weapon_%d" % (i + 1))):
+			_weapons.select_slot(i)
+
+	# Aim point: mouse cursor projected onto the player's ground plane.
+	var aim_point := _survivor.global_position + Vector3(
+			_survivor.facing.x, 0, _survivor.facing.z) * 8.0
+	if _camera_rig != null and is_instance_valid(_camera_rig) \
+			and _camera_rig.has_method(&"ground_point_under_mouse"):
+		aim_point = _camera_rig.call(&"ground_point_under_mouse",
+				_survivor.global_position.y)
+	_weapons.tick(delta, aim_point)
+	if _weapons.current_is_melee() and Input.is_action_just_pressed(&"attack"):
 		_survivor.try_attack()
+
 	if Input.is_action_just_pressed(&"eat"):
 		_try_eat()
 	if Input.is_action_just_pressed(&"use_medical"):

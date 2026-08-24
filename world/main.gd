@@ -17,8 +17,6 @@ extends Node3D
 
 enum WorldMode { LEGACY_BLOCK, STREAMED_CITY }
 
-const ZOMBIE_COUNT_CITY := 16
-
 var hud: HUD
 var dialogue_ui: DialogueUI
 var camera_rig: FollowCamera
@@ -29,9 +27,12 @@ var _player_controller: PlayerController
 var _buildings: Array = []             # legacy roof hiding
 var _crates: Array[FoodCrate] = []
 var _mode := WorldMode.LEGACY_BLOCK
+var _gate_coord := Vector2i(99, 99)   # chunk currently floor-gated
+var _gate_tag := ""                   # building id currently floor-gated
 
 var city_plan: CityPlan
 var chunk_manager: ChunkManager
+var city_spawner: CitySpawner
 
 
 func _ready() -> void:
@@ -67,9 +68,10 @@ func _ready() -> void:
 		_spawn_city_population()
 
 	# Optional automated regression passes (see DEVELOPMENT.md):
-	#   godot --headless --path . -- --smoke     functional checks (legacy block)
-	#   godot --headless --path . -- --soak      day/night + AI stability
-	#   godot --headless --path . -- --citytest  city determinism checks
+	#   godot --headless --path . -- --smoke        functional checks (legacy)
+	#   godot --headless --path . -- --soak         day/night + AI stability
+	#   godot --headless --path . -- --citytest     city determinism checks
+	#   godot --headless --path . -- --cityruntime  streamed-city integration
 	var user_args := OS.get_cmdline_user_args()
 	if user_args.has("--smoke") or user_args.has("--soak"):
 		var tester: Node = load("res://debug/smoke_test.gd").new()
@@ -79,6 +81,22 @@ func _ready() -> void:
 		var tester2: Node = load("res://debug/world_test.gd").new()
 		tester2.name = "WorldTest"
 		add_child(tester2)
+	elif user_args.has("--cityruntime"):
+		var tester3: Node = load("res://debug/city_runtime_test.gd").new()
+		tester3.name = "CityRuntimeTest"
+		add_child(tester3)
+	elif user_args.has("--walkthrough"):
+		var tester4: Node = load("res://debug/walkthrough_probe.gd").new()
+		tester4.name = "WalkthroughProbe"
+		add_child(tester4)
+	elif user_args.has("--havoctest"):
+		var tester5: Node = load("res://debug/havoc_test.gd").new()
+		tester5.name = "HavocTest"
+		add_child(tester5)
+	elif user_args.has("--doortest"):
+		var tester6: Node = load("res://debug/temp_door_probe.gd").new()
+		tester6.name = "TempDoorProbe"
+		add_child(tester6)
 	elif user_args.has("--shot"):
 		var probe: Node = load("res://debug/shot_probe.gd").new()
 		probe.name = "ShotProbe"
@@ -86,8 +104,11 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	if _mode == WorldMode.LEGACY_BLOCK:
-		_update_roof_visibility()
+	match _mode:
+		WorldMode.LEGACY_BLOCK:
+			_update_roof_visibility()
+		WorldMode.STREAMED_CITY:
+			_update_city_interior()
 
 
 # --- Legacy block ------------------------------------------------------------
@@ -159,35 +180,13 @@ func _spawn_city_population() -> void:
 	else:
 		chunk_manager.set_player(null)
 
-	for p in _city_zombie_positions():
-		var zombie := Zombie.new()
-		add_child(zombie)
-		zombie.position = Vector3(p.x, 0.1, p.y)
-
-
-## Deterministic zombie scatter: grid intersections ringed around spawn,
-## jittered along streets. Pure plan queries + seeded rng -> identical runs.
-func _city_zombie_positions() -> Array[Vector2]:
-	var out: Array[Vector2] = []
-	var rng := WorldSeed.rng_for("city_zombies", [])
-	var center := city_plan.find_spawn_point()
-	var candidates: Array[Vector2] = []
-	for i in range(-4, 5):
-		for j in range(-4, 5):
-			var p := Vector2(city_plan.line_pos(0, i), city_plan.line_pos(1, j))
-			var d := p.distance_to(center)
-			if d > 24.0 and d < 130.0:
-				candidates.append(p)
-	# Seeded Fisher-Yates so zombie placement never depends on global RNG.
-	for i in range(candidates.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp := candidates[i]
-		candidates[i] = candidates[j]
-		candidates[j] = tmp
-	while out.size() < ZOMBIE_COUNT_CITY and not candidates.is_empty():
-		var base: Vector2 = candidates.pop_back()
-		out.append(base + Vector2(rng.randf_range(-6, 6), rng.randf_range(-6, 6)))
-	return out
+	# Per-ACTIVE-chunk procedural zombie population on road space.
+	if city_spawner != null and is_instance_valid(city_spawner):
+		city_spawner.queue_free()
+	city_spawner = CitySpawner.new()
+	city_spawner.name = "CitySpawner"
+	city_spawner.setup(city_plan, chunk_manager)
+	add_child(city_spawner)
 
 
 func _wire_player(p: Survivor) -> void:
@@ -227,15 +226,69 @@ func _update_roof_visibility() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var p := Vector2(player.global_position.x, player.global_position.z)
+	var any_inside := false
 	for building in _buildings:
 		var rect: Rect2 = building["rect"]
 		var inside := rect.grow(0.4).has_point(p)
+		any_inside = any_inside or inside
 		if building.get("roof_hidden", false) == inside:
 			continue
 		building["roof_hidden"] = inside
 		for roof_node in building.get("roof_nodes", []):
 			if is_instance_valid(roof_node):
 				(roof_node as MeshInstance3D).visible = not inside
+	if camera_rig != null:
+		camera_rig.set_interior(any_inside)
+
+
+# --- Interior cutaway (streamed city) -----------------------------------------
+
+## Top-down interior view: while the player is inside a building, every
+## layer ABOVE their current storey (upper walls, slabs, roof dressing) is
+## hidden, so the camera looks straight into the resident floor. Lower
+## floors stay visible beneath (occluded naturally by the current slab
+## except through the stairwell shaft). Stepping outside reveals everything.
+func _update_city_interior() -> void:
+	if player == null or not is_instance_valid(player) \
+			or city_plan == null or chunk_manager == null:
+		return
+	var p := Vector2(player.global_position.x, player.global_position.z)
+	var spec := {}
+	var inside := false
+	for candidate in city_plan.buildings_in_rect(
+			Rect2(p - Vector2.ONE * 1.5, Vector2.ONE * 3.0)):
+		if (candidate["rect"] as Rect2).grow(0.4).has_point(p):
+			spec = candidate
+			inside = true
+			break
+
+	var gate_active := inside and not spec.is_empty()
+	var floor_i := -1
+	if gate_active:
+		var fh: float = float(spec["floor_h"])
+		var n: int = mini(int(spec["floors"]), 8)
+		floor_i = int(floor((player.global_position.y + 0.1) / fh))
+		# floor_i == n means the player is on the ROOF DECK: keep the
+		# interior camera and hide the roof dressing so they stay visible
+		# inside the bulkhead (the deck slab itself is layer f<n> = shown).
+		gate_active = floor_i >= 0 and floor_i <= n
+	if gate_active:
+		var center: Vector2 = (spec["rect"] as Rect2).get_center()
+		var owner_coord := WorldSeed.chunk_coord(center.x, center.y)
+		var tag := str(spec["id"])
+		# Switching buildings directly? Reveal the previous one first.
+		if owner_coord != _gate_coord or tag != _gate_tag:
+			if _gate_coord != Vector2i(99, 99):
+				chunk_manager.apply_floor_gate(_gate_coord, "", -1)
+		chunk_manager.apply_floor_gate(owner_coord, tag, floor_i)
+		_gate_coord = owner_coord
+		_gate_tag = tag
+	elif _gate_coord != Vector2i(99, 99):
+		chunk_manager.apply_floor_gate(_gate_coord, "", -1)
+		_gate_coord = Vector2i(99, 99)
+		_gate_tag = ""
+	if camera_rig != null:
+		camera_rig.set_interior(gate_active)
 
 
 # --- World provider contract (see core/autoload/save_manager.gd) -------------
@@ -269,6 +322,9 @@ func _respawn_after_load(data: Dictionary) -> void:
 	for state in data.get("survivors", []):
 		saved_by_id[state.get("id", "")] = state
 
+	# NOTE: the world seed was already restored by SaveManager BEFORE this
+	# provider call, so city geometry below regenerates from the saved seed.
+
 	match _mode:
 		WorldMode.LEGACY_BLOCK:
 			var entries: Array = [Population.PLAYER_ENTRY]
@@ -289,6 +345,14 @@ func _respawn_after_load(data: Dictionary) -> void:
 				_crates[i].load_state(crate_states[i])
 
 		WorldMode.STREAMED_CITY:
+			# A different seed means a DIFFERENT city: drop every cached
+			# plan result and resident chunk before repopulating.
+			if chunk_manager != null \
+					and (city_plan == null
+							or city_plan.seed_used != WorldSeed.get_world_seed()):
+				chunk_manager.reset_stream()
+				city_plan = CityPlan.new()
+				chunk_manager.plan = city_plan
 			_spawn_city_population()
 			if chunk_manager != null and data.has("chunks"):
 				chunk_manager.load_state(data["chunks"])

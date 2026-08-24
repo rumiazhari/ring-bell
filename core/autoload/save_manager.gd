@@ -74,6 +74,10 @@ func load_game() -> bool:
 				% [int(meta["generator_version"]), WorldSeed.GENERATOR_VERSION])
 
 	# Order matters: facts first, then the world that spawns actors.
+	# The world seed MUST be restored before the world provider reloads -
+	# streamed city geometry is regenerated deterministically from it.
+	if meta.has("world_seed"):
+		WorldSeed.set_world_seed(int(meta["world_seed"]))
 	GameClock.load_state(data.get("clock", {}))
 	WorldState.load_state(data.get("world_state", {}))
 	QuestManager.load_state(data.get("quests", {}))

@@ -22,6 +22,8 @@ InputSetup="*res://core/autoload/input_setup.gd"
 EventBus="*res://core/autoload/event_bus.gd"
 GameClock="*res://core/autoload/game_clock.gd"
 ItemDB="*res://core/autoload/item_db.gd"
+MaterialDB="*res://core/autoload/material_db.gd"
+DebrisManager="*res://core/autoload/debris_manager.gd"
 ActorRegistry="*res://core/autoload/actor_registry.gd"
 WorldState="*res://core/autoload/world_state.gd"
 QuestManager="*res://core/autoload/quest_manager.gd"
@@ -43,6 +45,7 @@ enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
 3d_physics/layer_1="environment"
 3d_physics/layer_2="survivors"
 3d_physics/layer_3="zombies"
+3d_physics/layer_5="debris"
 
 [physics]
 
