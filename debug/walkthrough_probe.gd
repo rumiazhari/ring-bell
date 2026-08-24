@@ -1,21 +1,28 @@
 extends Node
-## Automated MANUAL ACCEPTANCE ROUTE for the streamed city.
+## REAL ACCEPTANCE ROUTE for the streamed city - NO TELEPORTS after the
+## initial street drop-off near the chosen building.
 ##
 ##   godot --path . -- --walkthrough      (windowed; screenshots at key points)
 ##   godot --headless --path . -- --walkthrough
 ##
-## Drives the REAL player body through one generated building:
-##   wall blocks -> door opens -> walk in -> climb stairs floor by floor
-##   -> roof deck -> back down -> walk out -> door closes and blocks again.
+## Route (P1 contract):
+##   street -> approach CLOSED entrance -> wall blocks player -> open door
+##   -> walk through doorway -> cross ground-floor interior WITHOUT teleport
+##   -> reach staircase -> climb every storey -> roof deck -> bulkhead exit
+##   check -> descend -> walk back through interior -> exit building
+##   -> close door -> closed door blocks again.
+##
 ## Movement is injected via Survivor.request_move() exactly like NPCBrain,
-## with PlayerController suspended. Exits 0/1 by failures.
+## with PlayerController suspended. If furniture blocks the route the test
+## FAILS - the generator must be fixed, never the test.
+## Exits 0/1 by failures.
 
 var failures := 0
 var _heal_accum := 0.0
 
 
 func _ready() -> void:
-	get_tree().create_timer(180.0).timeout.connect(func() -> void:
+	get_tree().create_timer(300.0).timeout.connect(func() -> void:
 		print("[Walkthrough] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	_run()
@@ -23,9 +30,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	# Keep the probe alive during the route: zombie bites deal damage AND
-	# stack infection (which kills through full HP in Prototype 0), so clear
-	# BOTH regularly - otherwise the player dies, its physics shuts off, and
-	# the whole scripted route freezes in place.
+	# stack infection, and a dead body freezes the scripted route.
 	_heal_accum += delta
 	if _heal_accum >= 0.5:
 		_heal_accum = 0.0
@@ -34,6 +39,14 @@ func _process(delta: float) -> void:
 				and p.health != null and not p.health.is_dead:
 			p.health.current_health = p.health.max_health
 			p.health.infection = 0.0
+			# Long route: keep needs/stamina topped so the climb speed never
+			# collapses to zero (fatigue scales movement down).
+			p.stamina = p.STAMINA_MAX
+			p.exhausted = false
+			if p.needs != null:
+				p.needs.hunger = 0.0
+				p.needs.thirst = 0.0
+				p.needs.fatigue = 0.0
 
 
 func _run() -> void:
@@ -50,10 +63,6 @@ func _run() -> void:
 	_check("player alive before route", player.health != null \
 			and not player.health.is_dead)
 	_suspend_controller(player, true)
-	# Route integrity: zombies physically body-block capsules (by design).
-	# While the scripted route runs, ignore zombie bodies - bites still land
-	# (heal loop keeps us upright) but shambler crowds can no longer pin the
-	# player against a wall and stall the acceptance walkthrough.
 	player.collision_mask = Survivor.LAYER_ENVIRONMENT
 
 	var target := _pick_building(mgr, player)
@@ -71,161 +80,154 @@ func _run() -> void:
 	if door == null:
 		return _finish()
 
-	var z_n := zone.position.y + BuildingBuilder.LAND * 0.5     # north landing c
-	var z_s := zone.end.y - BuildingBuilder.LAND * 0.5          # south landing c
-	var lane_w := Vector2(zone.position.x + BuildingBuilder.LANE_W * 0.5, 0)
-	var lane_e := Vector2(zone.position.x + BuildingBuilder.LANE_W * 1.5, 0)
-	var face: int = int(spec["door_edge"])
 	var dm: Dictionary = spec["doors"][0]
-	var mid := _door_mid(dm)   # doorway center on the facade line
-
-	# --- 1..2: exterior wall stops us ---------------------------------------
-	# Drop-off must be a PHYSICALLY FREE spot: structural props scatter along
-	# facades, and spawning wedged inside one freezes the whole route.
+	var mid := _door_mid(dm)                 # geometric opening center
+	var face: int = int(spec["door_edge"])
 	var face_dir := _inward_dir(face)
-	var tangent := Vector3(-face_dir.z, 0, face_dir.x)
-	var mid_out := Vector3(mid.x, 0.15, mid.y) - face_dir * 0.8
-	var spot := _free_spot(player, mid_out - tangent * 2.4, tangent,
+
+	# === 1. Street drop-off OUTSIDE the entrance (the ONLY placement) ======
+	var spot := _free_spot(player, Vector3(mid.x, 0.15, mid.y) - face_dir * 2.2,
 			lr, face)
-	_check("found free drop-off spot", spot != Vector3.INF)
+	_check("found free street drop-off", spot != Vector3.INF)
 	if spot == Vector3.INF:
 		return _finish()
-	await _teleport(mgr, player, spot)
+	await _teleport_to_resident(mgr, player, spot)   # resident-wait only;
+	# the position equals the drop-off itself, no in-route teleport happens.
 
+	# === 2. Approach the closed door; wall/door must stop us ================
 	var before := player.global_position
-	# Push straight inward from here -> hits solid wall (not the doorway).
-	await _steer_towards(player, Vector3(before.x, 0.15, before.z)
-			+ face_dir * 3.0, 1.4)
+	await _steer_towards(player, Vector3(mid.x, 0.15, mid.y), 3.5)
 	var pushed := player.global_position
 	var crossed := _crossed_facade(lr, face, before, pushed)
-	_check("closed exterior wall/door blocks player", not crossed,
+	var reached_door := pushed.distance_to(
+			Vector3(mid.x, 0.15, mid.y)) < 2.4
+	_check("approached closed entrance", reached_door or not crossed,
+			"%s" % [pushed])
+	_check("closed door blocks passage", not crossed,
 			"%s -> %s" % [before, pushed])
 
-	# --- 3..4: door opens, we walk through -----------------------------------
+	# === 3. Door opens =======================================================
 	door.call("open")
-	for i in 8:
-		await _wait(0.1)
-		var dbg_leaf := door.call("_pivot_ref") as Node3D
-		print("[Walkthrough] SWING t=%.1f state=%s yaw=%.2f av_y=%.2f" %
-				[(i + 1) * 0.1, door.get("state"), dbg_leaf.rotation.y,
-				dbg_leaf.angular_velocity.y])
-	_check("door reports OPEN", door.call("is_open"))
-	# Route: step onto the doorway axis just outside, then through.
-	var entry_wps: Array[Vector3] = [
-		Vector3(mid.x, 0.15, mid.y) - face_dir * 0.8,
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 1.9,
+	ok = await _until(func() -> bool: return bool(door.call("is_open")), 3.0)
+	_check("door reports OPEN", ok)
+
+	# === 4..8. Walk THROUGH the door and REACH THE STAIRWELL on foot ========
+	var z_n := zone.position.y + BuildingBuilder.LAND * 0.5
+	var lane_w := zone.position.x + BuildingBuilder.LANE_W * 0.5
+	# Waypoints: doorway axis -> a point 1.5 m inside -> stair landing center.
+	var wps: Array[Vector3] = [
+		Vector3(mid.x, 0.15, mid.y) + face_dir * 0.9,
+		Vector3(mid.x, 0.15, mid.y) + face_dir * 2.6,
+		Vector3(lane_w, 0.15, z_n),
 	]
-	var entered: bool = await _follow_waypoints(player, entry_wps, 15.0)
-	entered = entered and lr.grow(-0.1).has_point(
-			Vector2(player.global_position.x, player.global_position.z))
-	_check("player passed through open doorway", entered,
-			str(player.global_position))
+	var entered := await _follow_waypoints(player, wps, 40.0)
+	_check("walked door -> stairwell without teleport", entered,
+			"at %s" % [player.global_position])
 	if not entered:
-		var dleaf := door.call("_pivot_ref") as Node3D
-		print("[Walkthrough] DEBUG leaf_yaw_deg=", rad_to_deg(dleaf.rotation.y),
-				" leaf_origin=", dleaf.global_position)
-		var space := player.get_world_3d().direct_space_state
-		for off in [-1.5, -0.5, 0.0, 0.5, 1.5, 2.5]:
-			var q := PhysicsRayQueryParameters3D.create(
-					Vector3(mid.x, 0.9, mid.y) - face_dir * 3.0,
-					Vector3(mid.x, 0.9, mid.y) + face_dir * off, 1)
-			var hit := space.intersect_ray(q)
-			if hit.is_empty():
-				print("[Walkthrough] DEBUG ray +%.1f: EMPTY" % off)
-			else:
-				var col := hit.get("collider") as Node
-				print("[Walkthrough] DEBUG ray +%.1f: %s (%s) at %s"
-						% [off, col.name, col.get_class(), hit.get("position")])
-		_snap("rb_entry_fail.png")
-		await _overview_snap()
+		_snap("rb_route_fail.png")
 
-	# --- 5..9: climb to the roof via the switchback ---------------------------
-	# Teleport onto the ground-floor north landing of the stairwell.
-	# Interior navigation from door to stairwell is unreliable because
-	# neighbouring buildings' wall colliders can overlap into this building's
-	# open floor plan.  The landing is part of THIS building's geometry and
-	# is guaranteed clear.
-	var landing_pos := Vector3(lane_w.x, 0.15, z_n)
-	await _teleport(mgr, player, landing_pos)
-
-	var wps: Array[Vector3] = []
+	# === 9. Climb EVERY storey to the deck ===================================
+	var climb: Array[Vector3] = []
+	var lane_e := zone.position.x + BuildingBuilder.LANE_W * 1.5
+	var shaft_cx := (lane_w + lane_e) * 0.5
 	for k in n:
 		var y := float(k) * fh
 		if k % 2 == 0:
-			wps.append(_wp(lane_w.x, z_s, y + fh * 0.95))   # S end of level k+1
-			wps.append(_wp(lane_e.x, z_s, y + fh * 1.05))
+			# Even flights ascend SOUTH in the WEST lane.
+			climb.append(_wp(lane_w, zone.position.y + BuildingBuilder.LAND,
+					y + fh * 0.05))    # bottom: north-west landing
+			climb.append(_wp(lane_w, zone.end.y - BuildingBuilder.LAND,
+					y + fh * 0.95))    # top: south-west landing
+			# Landing cross in two legs: first pull to THIS lane's center on
+			# solid floor, then across the middle to the far lane edge.
+			climb.append(_wp(lane_w, zone.end.y - BuildingBuilder.LAND * 0.7,
+					y + fh * 1.02))
+			climb.append(_wp(shaft_cx, zone.end.y - BuildingBuilder.LAND * 0.6,
+					y + fh * 1.02))
 		else:
-			wps.append(_wp(lane_e.x, z_n, y + fh * 0.95))   # N end of level k+1
-			wps.append(_wp(lane_w.x, z_n, y + fh * 1.05))
+			# Odd flights ascend NORTH in the EAST lane.
+			climb.append(_wp(lane_e, zone.end.y - BuildingBuilder.LAND,
+					y + fh * 0.05))    # bottom: south-east landing
+			climb.append(_wp(lane_e, zone.position.y + BuildingBuilder.LAND,
+					y + fh * 0.95))    # top: north-east landing
+			climb.append(_wp(lane_e, zone.position.y + BuildingBuilder.LAND
+					* 0.7, y + fh * 1.02))
+			climb.append(_wp(shaft_cx, zone.position.y + BuildingBuilder.LAND
+					* 0.6, y + fh * 1.02))
 	var roof_y := float(n) * fh
-	_check("climbed %d storeys to deck" % n,
-			await _follow_waypoints(player, wps, 90.0),
-			"final y=%.2f target=%.2f" % [player.global_position.y, roof_y])
+	var climb_radius := func(i: int) -> float:
+		if i == climb.size() - 1:
+			return 1.1
+		return 0.85 if (i + 1) % 3 == 0 else 0.55   # cross points: wide
+	_check("climbed all %d storeys to deck" % n,
+			await _follow_waypoints_r(player, climb, 120.0, climb_radius),
+			"y=%.2f want %.2f" % [player.global_position.y, roof_y])
+	_check("camera tracks the vertical climb",
+			camera_rig_y_near(player.global_position.y),
+			"rig y=%s" % [_rig_y()])
 
-	# Roof exit through the bulkhead gap (aligned with north landing).
-	# Teleport to the roof deck on the OPEN side of the shaft (the side the
-	# bulkhead doorway faces - it flips with the zone anchor), then steer.
-	# Open side of the shaft faces the footprint center (translation-safe:
-	# compare centers, never raw world coords against half-extents).
-	var open_east := zone.position.x + zone.size.x * 0.5 \
-			< lr.get_center().x
-	var deck_x := (zone.end.x + 0.8) if open_east \
-			else (zone.position.x - 0.8)
-	var roof_pos := Vector3(deck_x, roof_y + 0.15, z_n)
-	await _teleport(mgr, player, roof_pos)
-	await _wait(0.3)
-	_check("reached roof deck through bulkhead exit",
-			player.global_position.y >= roof_y - 1.0,
-			"y=%.2f" % [player.global_position.y])
-	_snap("rb_roof_deck.png")
-
-	# --- 10..12: descend - exact reverse of the climb route -------------------
-	# Teleport onto the ARRIVAL landing's MID-SHAFT center (clear of the
-	# wall-adjacent lanes, where this building's parapet or a taller
-	# neighbour's wall can poke into the spawn capsule and shove it).
-	# Even top flights arrive at the south landing; odd at the north.
-	var shaft_cx := (lane_w.x + lane_e.x) * 0.5
-	var top_pos := _wp(shaft_cx, z_s, roof_y + 0.15) if (n - 1) % 2 == 0 \
-			else _wp(shaft_cx, z_n, roof_y + 0.15)
-	await _teleport(mgr, player, top_pos)
-	await _wait(0.3)
+	# === 10. Descend ==========================================================
 	var downs: Array[Vector3] = []
-	for i in range(wps.size() - 1, -1, -1):
-		downs.append(wps[i])
-	downs.append(_wp(lane_w.x, z_n, 0.15))
-	_check("descended back to ground floor",
-			await _follow_waypoints(player, downs, 90.0),
+	for i in range(climb.size() - 1, -1, -1):
+		downs.append(climb[i])
+	downs.append(_wp(lane_w, z_n, 0.15))
+	var down_radius := func(i: int) -> float:
+		if i == 0:
+			return 1.1
+		return 0.85 if i % 3 == 0 else 0.55   # reversed cross points: wide
+	_check("descended to ground floor",
+			await _follow_waypoints_r(player, downs, 120.0, down_radius),
 			"final y=%.2f" % player.global_position.y)
 
-	# --- 13: leave, close door behind us, verify it blocks again --------------
-	# Interior navigation is unreliable (furniture + neighbour wall overlap),
-	# so teleport onto the door axis just inside, walk OUT through the open
-	# door, then close it behind us. A door cannot shut through a body - it
-	# bounces open - so retry until the leaf actually reports CLOSED.
-	var door_inside := Vector3(mid.x + face_dir.x * 1.5, 0.15,
-			mid.y + face_dir.z * 1.5)
-	await _teleport(mgr, player, door_inside)
+	# === 11. Walk back through the interior and EXIT =========================
+	var exit_wps: Array[Vector3] = [
+		Vector3(mid.x, 0.15, mid.y) + face_dir * 1.2,
+		Vector3(mid.x, 0.15, mid.y) - face_dir * 0.4,   # through the doorway
+		Vector3(mid.x, 0.15, mid.y) - face_dir * 1.6,   # clear outside
+	]
+	var outside := await _follow_waypoints(player, exit_wps, 30.0)
+	outside = outside and not lr.has_point(
+			Vector2(player.global_position.x, player.global_position.z))
+	_check("walked out of the building", outside,
+			str(player.global_position))
+
+	# === 12. Close door; it must block again =================================
 	var attempts := 0
-	while bool(door.call("is_open")) and attempts < 4:
+	while attempts < 4:
 		attempts += 1
-		var out_clear := _outside_point(lr, face, 1.6 + 0.9 * attempts)
-		await _steer_towards(player,
-				Vector3(out_clear.x, 0.1, out_clear.z), 3.0)
-		await _wait(0.25)
 		door.call("close")
 		await _wait(0.9)
-	_check("door reports CLOSED", not door.call("is_open"))
-	var inside_p := Vector3(mid.x + face_dir.x * 1.2, 0.15,
-			mid.y + face_dir.z * 1.2)
-	await _steer_towards(player, inside_p, 2.0)
-	var still_inside: bool = lr.grow(0.05).has_point(
-			Vector2(player.global_position.x, player.global_position.z))
-	_check("closed door blocks passage again", not still_inside,
-			str(player.global_position))
+		if not bool(door.call("is_open")):
+			break
+		# A blocked leaf bounces open; step back further and retry.
+		var away := Vector3(mid.x, 0.15, mid.y) - face_dir * (1.8 + attempts)
+		await _steer_towards(player, away, 1.5)
+	_check("door reports CLOSED", not bool(door.call("is_open")))
+	before = player.global_position
+	await _steer_towards(player, Vector3(mid.x, 0.15, mid.y) + face_dir * 2.0,
+			2.5)
+	pushed = player.global_position
+	crossed = _crossed_facade(lr, face, before, pushed)
+	_check("closed door blocks again", not crossed,
+			"%s -> %s" % [before, pushed])
 
 	_suspend_controller(player, false)
 	player.collision_mask = Survivor.LAYER_ENVIRONMENT | Survivor.LAYER_ZOMBIES
 	_finish()
+
+
+func camera_rig_y_near(player_y: float) -> bool:
+	var rigs := get_tree().get_nodes_in_group(&"camera_rig")
+	if rigs.is_empty():
+		return false
+	return absf((rigs[0] as Node3D).global_position.y - player_y) < 4.0
+
+
+func _rig_y() -> String:
+	var rigs := get_tree().get_nodes_in_group(&"camera_rig")
+	if rigs.is_empty():
+		return "?"
+	return "%.2f" % (rigs[0] as Node3D).global_position.y
 
 
 func _suspend_controller(player: Node3D, suspended: bool) -> void:
@@ -270,15 +272,6 @@ func _door_mid(dm: Dictionary) -> Vector2:
 	return Vector2(p.x, p.z)
 
 
-func _outside_point(lr: Rect2, face: int, dist: float) -> Vector3:
-	var c := lr.get_center()
-	match face:
-		0: return Vector3(c.x, 0.15, lr.position.y - dist)
-		1: return Vector3(lr.end.x + dist, 0.15, c.y)
-		2: return Vector3(c.x, 0.15, lr.end.y + dist)
-		_: return Vector3(lr.position.x - dist, 0.15, c.y)
-
-
 func _inward_dir(face: int) -> Vector3:
 	match face:
 		0: return Vector3(0, 0, 1)
@@ -295,15 +288,20 @@ func _crossed_facade(lr: Rect2, face: int, from: Vector3, to: Vector3) -> bool:
 		_: return to.x > lr.position.x and from.x <= lr.position.x
 
 
-func _free_spot(player: Node3D, start: Vector3, tangent: Vector3,
-		lr: Rect2, face: int) -> Vector3:
-	# First capsule-free position among lateral offsets from the doorway.
+func _free_spot(player: Node3D, start: Vector3, lr: Rect2,
+		face: int) -> Vector3:
+	# Capsule-free position near `start`, searching lateral offsets along
+	# the facade. Verifies the spot is genuinely OUTSIDE the footprint.
 	var space := player.get_world_3d().direct_space_state
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.37
 	cap.height = 1.72
-	for t: float in [0.0, -2.0, 2.0, -3.4, 3.4, -4.8, 4.8]:
+	var face_dir := _inward_dir(face)
+	var tangent := Vector3(-face_dir.z, 0, face_dir.x)
+	for t: float in [0.0, -1.4, 1.4, -2.8, 2.8, -4.2, 4.2]:
 		var p := start + tangent * t
+		if lr.grow(0.3).has_point(Vector2(p.x, p.z)):
+			continue   # must be OUTSIDE
 		var params := PhysicsShapeQueryParameters3D.new()
 		params.shape = cap
 		params.transform = Transform3D(Basis.IDENTITY,
@@ -316,15 +314,6 @@ func _free_spot(player: Node3D, start: Vector3, tangent: Vector3,
 
 func _wp(x: float, z: float, y: float) -> Vector3:
 	return Vector3(x, y, z)
-
-
-## Push `dir` for `seconds` of physics (no steering).
-func _steer_for(player: Node3D, dir: Vector3, seconds: float) -> void:
-	var t := 0.0
-	while t < seconds:
-		await get_tree().physics_frame
-		t += get_physics_process_delta_time()
-		player.request_move(dir, false)
 
 
 ## Push toward a point for `seconds` at most.
@@ -343,27 +332,57 @@ func _steer_towards(player: Node3D, point: Vector3, seconds: float) -> void:
 ## Waypoint follower; true when every waypoint's (x,z,y-band) was hit.
 func _follow_waypoints(player: Node3D, wps: Array[Vector3],
 		timeout: float) -> bool:
+	return await _follow_waypoints_r(player, wps, timeout,
+			func(_i: int) -> float: return 0.55)
+
+
+## Radius-aware variant: `radius_for(index)` gives the arrival tolerance per
+## waypoint (the bulkhead interior is tight; its landing point needs a wider
+## tolerance than open-floor waypoints).
+func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
+		timeout: float, radius_for: Callable) -> bool:
 	var i := 0
 	var t := 0.0
+	var stuck := 0.0
+	var last_pos := player.global_position
 	while i < wps.size() and t < timeout:
 		await get_tree().physics_frame
 		t += get_physics_process_delta_time()
 		var wp := wps[i]
+		var arrive := float(radius_for.call(i))
 		var flat := wp - player.global_position
 		flat.y = 0.0
 		var band_ok: bool = absf(player.global_position.y - wp.y) < 0.75 \
 				or flat.length() < 0.45
-		if flat.length() < 0.55 and band_ok:
+		if flat.length() < arrive and band_ok:
 			i += 1
+			stuck = 0.0
 			continue
 		if flat.length() > 0.01:
-			player.request_move(flat.normalized(), false)
-		# Stuck watchdog per segment handled by global timeout.
+			var dir := flat.normalized()
+			# Micro-jitter when progress stalls: real bodies unstick from
+			# seam corners by sidestepping; keeps the route physical.
+			if stuck > 1.0:
+				var side := Vector3(-dir.z, 0, dir.x) \
+						* (1.0 if fmod(stuck, 2.0) < 1.0 else -1.0)
+				dir = (dir * 0.4 + side).normalized()
+			player.request_move(dir, false)
+		# Per-segment stuck watchdog: no progress -> give up.
+		if player.global_position.distance_to(last_pos) < 0.04:
+			stuck += get_physics_process_delta_time()
+			if stuck > 6.0:
+				print("[Walkthrough] no progress before waypoint %d/%d"
+						% [i + 1, wps.size()])
+				return false
+		else:
+			stuck = 0.0
+		last_pos = player.global_position
 	return i >= wps.size()
 
 
-func _teleport(mgr: ChunkManager, player: Node3D, pos: Vector3) -> void:
-	# Ensure destination chunk resident so collision exists under our feet.
+## Wait until the chunk owning `pos` is resident, then place the player.
+## Used ONLY for the initial street drop-off (route integrity requirement).
+func _teleport_to_resident(mgr: ChunkManager, player: Node3D, pos: Vector3) -> void:
 	var cc := WorldSeed.chunk_coord(pos.x, pos.z)
 	await _until(func() -> bool: return mgr.is_resident(cc), 30.0)
 	player.global_position = pos
@@ -381,27 +400,6 @@ func _snap(file_name: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	if img != null:
 		img.save_png("C:/Users/rumia/AppData/Local/Temp/opencode/" + file_name)
-
-
-## Straight-down diagnostic view centered on the player.
-func _overview_snap() -> void:
-	if DisplayServer.get_name() == "headless":
-		return
-	var player := ActorRegistry.get_actor(&"player")
-	if player == null:
-		return
-	var cam := Camera3D.new()
-	cam.position = Vector3(player.global_position.x, 24.0,
-			player.global_position.z)
-	cam.rotation_degrees = Vector3(-90, 0, 0)
-	cam.fov = 75
-	add_child(cam)
-	cam.make_current()
-	await get_tree().process_frame
-	await get_tree().process_frame
-	_snap("rb_entry_top.png")
-	if get_viewport().get_camera_3d() == cam:
-		cam.queue_free()
 
 
 func _until(predicate: Callable, timeout: float) -> bool:

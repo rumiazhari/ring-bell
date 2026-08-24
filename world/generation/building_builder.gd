@@ -34,10 +34,12 @@ const RAMP_T := 0.22                 # ramp collider thickness
 const RAMP_OVERLAP := 0.2            # flight tucks onto landings (no step)
 const DOOR_W := 1.5
 const DOOR_H := 2.25
+const DOOR_FRAME := 0.06               # jamb clearance: aperture = DOOR_W + this
 const WIN_W := 1.15
 const WIN_H := 1.35
 const WIN_SILL := 0.85
 const WIN_SPACING := 2.4
+const GLASS_T := 0.2                   # pane thickness inside the WALL_T aperture
 const PARAPET_H := 0.9
 
 # Prague-flavored placeholder palettes.
@@ -95,6 +97,27 @@ static func stair_zone_world(spec: Dictionary) -> Rect2:
 	return local
 
 
+## Horizontal run of one flight: the shaft length minus both landing depths.
+static func flight_run(fh: float) -> float:
+	return stair_zone_len(fh) - 2.0 * LAND
+
+
+## The ACTUAL ramp inclination for a floor height - derived from the fixed
+## run, never assumed. PITCH_DEG is only the design target that sizes the
+## shaft; the real slope is atan2(fh, flight_run).
+static func flight_angle(fh: float) -> float:
+	return atan2(fh, flight_run(fh))
+
+
+## Height of the ramp's walkable TOP surface at shaft-local z (world z
+## relative like zone.position.y). Linear between the flush endpoints.
+static func ramp_height_at(z: float, base_y: float, fh: float,
+		zone_y: float) -> float:
+	var t := clampf((z - (zone_y + LAND)) / maxf(flight_run(fh), 0.001),
+			0.0, 1.0)
+	return base_y + t * fh
+
+
 static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	var fp: Rect2 = spec["rect"]
 	var style: Dictionary = spec["style"]
@@ -142,16 +165,14 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		b.pop_layer()
 
 	# --- walls + windows + furniture ---------------------------------------------
+	# One aperture-composing facade generator handles doors AND windows.
 	var door_edge := int(spec.get("door_edge", 0))
 	for f in n:
 		b.push_layer(tag + ":f%d" % f)
 		var y0 := f * fh
 		var col := PLINTH_COLOR if f == 0 else wall_c
-		_storey_walls(b, off, w, d, y0, fh, col,
+		_storey_walls(b, off, w, d, y0, fh, col, f,
 				door_edge if f == 0 else -1)
-		for facade in 4:
-			_window_row(b, off, w, d, facade, f, fh,
-					door_edge == facade and f == 0)
 		if f == 0:
 			# Shopfront dressing on the street-facing ground wall (visual).
 			_shopfront(b, off, w, d, spec)
@@ -175,56 +196,125 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 
 # --- Walls -------------------------------------------------------------------
 
-## All four walls of one storey. Every piece is STRUCTURAL: exterior walls
-## must physically stop the player. `door_edge` >= 0 splits that wall around
-## the real doorway opening (filled by a dynamic Door entity at runtime).
+## All four walls of one storey as REAL APERTURE COMPOSITION (P0-E):
+## every opening - the entrance door and each window - is carved by the
+## SAME generator. Piers stand between openings, a sill band closes each
+## window below, a structural lintel closes each opening above, and window
+## panes are centered INSIDE their empty gaps. Nothing solid is ever left
+## behind glass; after shattering, the aperture is genuinely open.
+##
+## DESTRUCTION GRANULARITY (P0-F): piers are emitted as stacked ~1 m tall
+## modules (CELL_H), so blasts carve out a few courses instead of deleting a
+## whole multi-metre wall segment. Every module is its own integrity record.
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
-		y0: float, fh: float, col: Color, door_edge: int) -> void:
-	var cy := y0 + fh * 0.5
-	# Order MUST match the door_edge encoding (0=N, 1=E, 2=S, 3=W).
-	# An earlier N/S/W/E ordering made edge==3 replace the EAST wall's slot:
-	# the STREET-side wall went up solid behind the door entity, bricking
-	# every generated entrance shut.
-	var sides := [
-		[Vector3(w * 0.5, 0, WALL_T * 0.5), Vector3(w + WALL_T, fh, WALL_T)],   # N
-		[Vector3(w - WALL_T * 0.5, 0, d * 0.5), Vector3(WALL_T, fh, d + WALL_T)],# E
-		[Vector3(w * 0.5, 0, d - WALL_T * 0.5), Vector3(w + WALL_T, fh, WALL_T)],# S
-		[Vector3(WALL_T * 0.5, 0, d * 0.5), Vector3(WALL_T, fh, d + WALL_T)],   # W
-	]
+		y0: float, fh: float, col: Color, floor_i: int, door_edge: int) -> void:
+	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
-		if door_edge == side:
-			_wall_with_door(b, off, side, w, d, y0, fh, col)
-		else:
-			var c: Vector3 = sides[side][0]
-			b.add_destructible_box(off + Vector3(c.x, cy, c.z),
-					sides[side][1], col, &"concrete")
+		# Per-facade reveal sublayer "<tag>:f<storey>:<facade>" lets the
+		# camera fade exactly the wall(s) between itself and the player.
+		b.push_layer("facade:%s" % facades[side])
+		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
+				door_edge == side)
+		b.pop_layer()
 
 
-## Wall split around a centered doorway gap + structural lintel above it.
-## NO decorative leaf here - Door entities own the leaf.
-static func _wall_with_door(b: MeshBatcher, off: Vector3, side: int,
-		w: float, d: float, y0: float, fh: float, col: Color) -> void:
+const CELL_H := 2.5   # slab strip panel length (walls stay pier-segmented)
+
+
+## One facade: openings list -> pier / sill / lintel segments (+ panes).
+## `is_entrance` turns the mid-facade door into a real aperture; the Door
+## ENTITY from the CityPlan manifest fills it at runtime.
+static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
+		w: float, d: float, y0: float, fh: float, col: Color, floor_i: int,
+		is_entrance: bool) -> void:
 	var horizontal := side == 0 or side == 2     # N/S walls run along X
 	var length := w if horizontal else d
-	var mid := length * 0.5
-	var seg_len := (length - DOOR_W) * 0.5
-	var lintel_h := fh - DOOR_H
+	var lo := -WALL_T * 0.5                      # extend past corners like the
+	var hi := length + WALL_T * 0.5              # old monolithic walls did
 
-	for s in 2:
-		var seg_mid := (seg_len * 0.5) if s == 0 else length - seg_len * 0.5
-		var c := _side_point(side, w, d, seg_mid)
-		var size := Vector3(seg_len, fh, WALL_T) if horizontal \
-				else Vector3(WALL_T, fh, seg_len)
-		b.add_destructible_box(
-				off + Vector3(c.x, y0 + fh * 0.5, c.y), size, col,
-				&"concrete")
-	# Structural lintel band above the opening.
-	var lc := _side_point(side, w, d, mid)
-	var lsize := Vector3(DOOR_W, lintel_h, WALL_T) if horizontal \
-			else Vector3(WALL_T, lintel_h, DOOR_W)
-	b.add_destructible_box(
-			off + Vector3(lc.x, y0 + DOOR_H + lintel_h * 0.5, lc.y),
-			lsize, col, &"concrete")
+	# --- openings: {c: center_t, wd: width, bot: sill height, h: height,
+	#                glass: bool}
+	var openings: Array[Dictionary] = []
+	# Doorway aperture gets a small jamb clearance (real door frames have
+	# one) so the leaf never rubs the piers and no collider face lies
+	# exactly on the leaf's swing plane.
+	if is_entrance and floor_i == 0:
+		openings.append({"c": length * 0.5, "wd": DOOR_W + DOOR_FRAME,
+				"bot": 0.0, "h": DOOR_H, "glass": false})
+	var count := int(floor((length - 1.6) / WIN_SPACING))
+	for i in count:
+		var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+		if is_entrance and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+			continue   # keep the entrance clear; shopfront dresses this wall
+		openings.append({"c": t, "wd": WIN_W, "bot": WIN_SILL, "h": WIN_H,
+				"glass": true})
+	if openings.is_empty():
+		# Solid wall: one full-length piece.
+		_emit_wall_seg(b, off, side, horizontal, lo, hi, y0, fh, col, w, d)
+		return
+	openings.sort_custom(_opening_cmp)
+
+	# --- piers between openings (full height) ---------------------------------
+	var cursor := lo
+	for o in openings:
+		var a: float = float(o["c"]) - float(o["wd"]) * 0.5
+		if a - cursor >= 0.05:
+			_emit_wall_seg(b, off, side, horizontal, cursor, a, y0, fh,
+					col, w, d)
+		cursor = maxf(cursor, float(o["c"]) + float(o["wd"]) * 0.5)
+	if hi - cursor >= 0.05:
+		_emit_wall_seg(b, off, side, horizontal, cursor, hi, y0, fh, col,
+				w, d)
+
+	# --- vertical closure + glass per opening ----------------------------------
+	for o in openings:
+		var oc: float = float(o["c"])
+		var obot: float = float(o["bot"])
+		var oh: float = float(o["h"])
+		var owd: float = float(o["wd"])
+		# Sill band below window openings.
+		if obot > 0.05:
+			_emit_band(b, off, side, horizontal, w, d, oc, owd, y0,
+					obot, col)
+		# Structural lintel/header above every opening.
+		var lh := fh - obot - oh
+		if lh > 0.05:
+			_emit_band(b, off, side, horizontal, w, d, oc, owd,
+					y0 + obot + oh, lh, col)
+		# Glass pane centered INSIDE the aperture (windows only).
+		if bool(o["glass"]):
+			var p := _side_point(side, w, d, oc)
+			var gsize := Vector3(owd - 0.06, oh - 0.04, GLASS_T) \
+					if horizontal else Vector3(GLASS_T, oh - 0.04, owd - 0.06)
+			b.add_destructible_box(
+					off + Vector3(p.x, y0 + obot + oh * 0.5, p.y), gsize,
+					WINDOW_COLOR, &"glass", true)
+
+
+static func _emit_wall_seg(b: MeshBatcher, off: Vector3, side: int,
+		horizontal: bool, a: float, b2: float, y0: float, fh: float,
+		col: Color, w: float, d: float) -> void:
+	var mid_t := (a + b2) * 0.5
+	var p := _side_point(side, w, d, mid_t)
+	var size := Vector3(b2 - a, fh, WALL_T) if horizontal \
+			else Vector3(WALL_T, fh, b2 - a)
+	b.add_destructible_box(off + Vector3(p.x, y0 + fh * 0.5, p.y),
+			size, col, &"concrete")
+
+
+## Sill/lintel band of `bw` meters centered at opening center `oc`.
+static func _emit_band(b: MeshBatcher, off: Vector3, side: int,
+		horizontal: bool, w: float, d: float, oc: float, bw: float,
+		y_base: float, bh: float, col: Color) -> void:
+	var p := _side_point(side, w, d, oc)
+	var size := Vector3(bw, bh, WALL_T) if horizontal \
+			else Vector3(WALL_T, bh, bw)
+	b.add_destructible_box(off + Vector3(p.x, y_base + bh * 0.5, p.y),
+			size, col, &"concrete")
+
+
+static func _opening_cmp(a: Dictionary, b2: Dictionary) -> bool:
+	return float(a["c"]) < float(b2["c"])
 
 
 ## Point along a facade at distance t from its first corner.
@@ -237,27 +327,10 @@ static func _side_point(side: int, w: float, d: float, t: float) -> Vector2:
 
 
 # --- Windows -----------------------------------------------------------------
-
-static func _window_row(b: MeshBatcher, off: Vector3, w: float, d: float,
-		facade: int, floor_i: int, fh: float, is_street_ground: bool) -> void:
-	var horizontal := facade == 0 or facade == 2
-	var length := w if horizontal else d
-	var count := int(floor((length - 1.6) / WIN_SPACING))
-	if count <= 0:
-		return
-	var cy := floor_i * fh + WIN_SILL + WIN_H * 0.5
-	for i in count:
-		var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
-		if is_street_ground and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
-			continue   # keep the entrance clear; shopfront dresses this wall
-		var p := _side_point(facade, w, d, t)
-		var size := Vector3(WIN_W, WIN_H, 0.5) if horizontal \
-				else Vector3(0.5, WIN_H, WIN_W)
-		# Collidable so bullets/zombies can hit the panes; the glass
-		# material renders them as tinted translucent panes.
-		b.add_destructible_box(off + Vector3(p.x, cy, p.y), size,
-				WINDOW_COLOR, &"glass", true)
-
+# Window apertures are composed by _facade_with_openings() together with the
+# entrance door: one generator, one set of physical aperture rules (piers,
+# sill, lintel, glass centered inside the gap). Ground-floor shopfront glazing
+# follows the same rules when it becomes structural (see _shopfront dressing).
 
 ## Signboard band + tall display panels flanking the door on historic lots.
 static func _shopfront(b: MeshBatcher, off: Vector3, w: float, d: float,
@@ -284,76 +357,121 @@ static func _shopfront(b: MeshBatcher, off: Vector3, w: float, d: float,
 
 # --- Slabs -------------------------------------------------------------------
 
-## Floor slab split into three boxes leaving `hole` open (the stair shaft).
-## The hole is REAL: collision is cut through every level, so the shaft is
-## traversable and nothing invisible ever blocks the stairs.
+## Floor slab split around the stairwell aperture. DELEGATES to slab_pieces()
+## so tests can validate coverage numerically without a scene tree.
+##
+## COVERAGE CONTRACT (enforced by --citytest): union(pieces) equals the usable
+## interior footprint minus EXACTLY the shaft hole - no accidental gaps, no
+## overlaps, exactly one intended opening.
+static func slab_pieces(w: float, d: float, hole: Rect2) -> Array[Rect2]:
+	var inner := Rect2(WALL_T, WALL_T,
+			maxf(w - 2.0 * WALL_T, 0.0), maxf(d - 2.0 * WALL_T, 0.0))
+	return SlabMath.subtract_rect(inner, hole)
+
+
 static func _slab_with_hole(b: MeshBatcher, off: Vector3, w: float, d: float,
 		hole: Rect2, y: float) -> void:
 	var cy := y - SLAB_T * 0.5
-	var pieces := [
-		Rect2(hole.end.x, WALL_T, w - WALL_T - hole.end.x, d - 2.0 * WALL_T),
-		Rect2(WALL_T, WALL_T, hole.position.x - WALL_T, hole.position.y - WALL_T),
-		Rect2(WALL_T, hole.end.y, hole.position.x - WALL_T,
-				d - WALL_T - hole.end.y),
-	]
-	for r: Rect2 in pieces:
-		if r.size.x <= 0.05 or r.size.y <= 0.05:
-			continue
-		b.add_destructible_box(
-				off + Vector3(r.get_center().x, cy, r.get_center().y),
-				Vector3(r.size.x, SLAB_T, r.size.y), DECK_COLOR,
-				&"concrete")
+	for r: Rect2 in slab_pieces(w, d, hole):
+		# 1D subdivision along the LONGER axis only: a rocket still carves a
+		# local hole through one ~CELL_H panel strip while collider count
+		# stays linear (not quadratic) in floor area.
+		if r.size.x >= r.size.y:
+			var cols := maxi(1, roundi(r.size.x / CELL_H))
+			var cw := r.size.x / float(cols)
+			for cx in cols:
+				var c := Vector2(r.position.x + (float(cx) + 0.5) * cw,
+						r.get_center().y)
+				b.add_destructible_box(off + Vector3(c.x, cy, c.y),
+						Vector3(cw, SLAB_T, r.size.y), DECK_COLOR,
+						&"concrete")
+		else:
+			var rows := maxi(1, roundi(r.size.y / CELL_H))
+			var ch := r.size.y / float(rows)
+			for cz in rows:
+				var c := Vector2(r.get_center().x,
+						r.position.y + (float(cz) + 0.5) * ch)
+				b.add_destructible_box(off + Vector3(c.x, cy, c.y),
+						Vector3(r.size.x, SLAB_T, ch), DECK_COLOR,
+						&"concrete")
 
 
 # --- Stairs ------------------------------------------------------------------
 
-## Switchback staircase: structural landings at BOTH shaft ends at every
-## level; flights alternate lanes as single rotated ramp colliders whose top
-## surface runs EXACTLY from landing surface to landing surface (overlap into
-## both landings removes any step). Treads are visual only.
+## Switchback staircase. GEOMETRY CONTRACT (P0-B):
+##   - The flight's horizontal run is FIXED by the shaft layout; the ramp
+##     angle is DERIVED from it (atan2(fh, run)) - never assumed.
+##   - The walkable top surface starts EXACTLY flush with the lower landing
+##     top (z0 at height lvl*fh) and ends EXACTLY flush with the upper
+##     landing top (z1 at height (lvl+1)*fh). No lip, no invisible step,
+##     no overshoot into a landing.
+##   - Visual treads are placed ON the same inclined plane as the collider,
+##     so what you see is what you stand on.
+##   - Slope stays below Survivor.floor_max_angle (46 deg) for every
+##     generated floor height (asserted by --citytest).
+## Treads are visual only. Landings at both shaft ends on every level are
+## structural and tagged f<lvl-1> (the storey you board from).
 static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 		fh: float, n: int, tag: String, guard_on_east := true) -> void:
-	var ang := deg_to_rad(PITCH_DEG)
 	var z_n := zone.position.y                  # north end
 	var z_s := zone.end.y                       # south end
 	var zx := zone.position.x
 	var cx_west := zx + LANE_W * 0.5
 	var cx_east := zx + LANE_W * 1.5
 
-	# Landings at every level 0..n (structural, top flush with floor level).
-	# Tagged f<lvl-1>: a landing is the floor you START from when walking
-	# the flight above it, so the whole upward route stays visible from the
-	# player's current storey (landing 0 clamps to f0 = the ground floor).
-	for lvl in n + 1:
-		b.push_layer(tag + ":f%d" % maxi(lvl - 1, 0))
+	const LAND_TUCK := 0.08   # landings tuck under flight ends: no seam notch
+	# Structural landings at every level 1..n, top FLUSH with that level's
+	# floor surface (top face exactly at y = lvl*fh). Level 0 needs none:
+	# the ground slab already provides it. Each landing extends a few cm
+	# UNDER its adjacent flight ends so the ramp underside meets the landing
+	# plate above floor level - a capsule crossing the seam can no longer
+	# wedge in the right-angle notch.
+	for lvl in range(1, n + 1):
+		b.push_layer(tag + ":f%d" % (lvl - 1))
 		var ly := lvl * fh - SLAB_T * 0.5
-		b.add_destructible_box(off + Vector3(zx + LANE_W, ly, z_n + LAND * 0.5),
-				Vector3(LANE_W * 2.0, SLAB_T, LAND), DECK_COLOR, &"concrete")
-		b.add_destructible_box(off + Vector3(zx + LANE_W, ly, z_s - LAND * 0.5),
-				Vector3(LANE_W * 2.0, SLAB_T, LAND), DECK_COLOR, &"concrete")
+		b.add_destructible_box(
+				off + Vector3(zx + LANE_W, ly,
+						z_n + (LAND - LAND_TUCK) * 0.5),
+				Vector3(LANE_W * 2.0, SLAB_T, LAND + LAND_TUCK),
+				DECK_COLOR, &"concrete")
+		b.add_destructible_box(
+				off + Vector3(zx + LANE_W, ly,
+						z_s - (LAND - LAND_TUCK) * 0.5),
+				Vector3(LANE_W * 2.0, SLAB_T, LAND + LAND_TUCK),
+				DECK_COLOR, &"concrete")
 		b.pop_layer()
 
-	var z0 := z_n + LAND - RAMP_OVERLAP
-	var z1 := z_s - LAND + RAMP_OVERLAP
+	# Flight span between landing INNER edges. No RAMP_OVERLAP fudge: flush
+	# start/end come from exact endpoint placement instead.
+	var z0 := z_n + LAND
+	var z1 := z_s - LAND
 	var run := z1 - z0
+	var ang := atan2(fh, run)          # DERIVED - the actual slope
 	var cos_a := cos(ang)
 
 	for k in n:
 		var ascending_south := k % 2 == 0
 		var lane_c := cx_west if ascending_south else cx_east
 		var y0 := k * fh
-		# Single walkable ramp collider; top surface spans y0 -> y0+fh across
-		# [z0, z1]. Center corrected by half-thickness along the normal.
-		# Tagged f<k> (the floor you board it from): the staircase up is
-		# ALWAYS visible from the resident level so the player can climb.
+		# Single walkable ramp collider whose TOP surface runs from
+		# (z0, y0) to (z1, y0 + fh): center sits mid-span, dropped by half
+		# the slab thickness measured along the plane normal so the TOP
+		# face lands exactly on the endpoints. Tagged f<k>: always visible
+		# from the storey you board it on.
 		b.push_layer(tag + ":f%d" % k)
 		var hyp := sqrt(run * run + fh * fh)
 		var basis := Basis(Vector3.RIGHT, -ang if ascending_south else ang)
 		var center_y := y0 + fh * 0.5 - (RAMP_T * 0.5) / cos_a
+		# Pull each end back by the thickness measured along the slope so the
+		# UNDERSIDE corners sit above the landing plane: a capsule crossing
+		# the landing cannot get wedged in the seam notch, and the walkable
+		# top surface still meets both landings exactly.
+		var trim: float = RAMP_T * tan(ang)
+		var hyp_eff := maxf(hyp - trim, hyp * 0.5)
 		b.add_box_rotated(
 				off + Vector3(lane_c, center_y, (z0 + z1) * 0.5),
-				Vector3(LANE_W - 0.04, RAMP_T, hyp), basis, DECK_COLOR, true,
-				false, &"concrete")
+				Vector3(LANE_W - 0.04, RAMP_T, hyp_eff), basis, DECK_COLOR,
+				true, false, &"concrete")
 		# Handrails both sides of the flight: slope-parallel slim bars at
 		# ~0.85 m above the ramp surface. SOLID - railings must stop bodies.
 		# Each rail stops ~0.5 m short of both flight ends: the landing
@@ -365,17 +483,19 @@ static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 							center_y + 0.85 / cos_a, (z0 + z1) * 0.5),
 					Vector3(0.07, 0.07, maxf(hyp - 1.0, hyp * 0.7)), basis,
 					RAIL_COLOR, true, false, &"steel")
-		# Decorative treads (collision comes from the ramps). `t` FOLLOWS the
-		# flight's real ascent direction - north-bound flights previously
-		# rendered their steps backwards, crossing the ramp visually.
+		# Decorative treads (collision comes from the ramps) lying ON the
+		# ramp plane: each tread's center follows the same straight line as
+		# the collider's top surface, offset by half its thickness along
+		# the plane normal. Visual and physical describe ONE plane.
 		var steps := maxi(8, int(round(run / 0.28)))
+		var step_len := hyp / float(steps)
 		for i in steps:
 			var raw := (float(i) + 0.5) / float(steps)
 			var t := raw if ascending_south else 1.0 - raw
 			var z := lerpf(z0, z1, t)
-			var sy := y0 + raw * fh + 0.03
+			var sy := y0 + raw * fh + 0.03 / cos_a
 			b.add_visual_box(off + Vector3(lane_c, sy, z),
-					Vector3(LANE_W - 0.06, 0.06, run / float(steps) + 0.02),
+					Vector3(LANE_W - 0.06, 0.06, step_len + 0.02),
 					FLOOR_COLOR)
 		b.pop_layer()
 
@@ -471,20 +591,29 @@ const FURN_BOOKS := [
 
 ## Scatter deterministic furniture through one storey's open floor.
 ## Everything inherits the CURRENT storey layer (the cutaway hides it with
-## the room). Placement keeps clear of the stair zone (+0.7 m), the ground-
-## floor entrance swing arc, and previously placed items. Tables/desks/
-## shelves collide (walk around them); chairs and plants are soft clutter.
+## the room) AND sits on THAT storey's floor: every item's origin Y is
+## floor_i * fh (P0-C) - upper-storey furniture can never stack onto the
+## ground-floor colliders again.
+##
+## Placement (P0-D) validates each item's ORIENTED footprint (OBB) against:
+## exterior-wall inset, stair shaft + circulation margin, entrance swing +
+## walk-in corridor, and previously placed solid items. Visual and collider
+## transforms are identical everywhere (the desk body shares its accessories'
+## rotated basis; bookshelves are genuinely snapped against their wall).
 static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
-		_fh: float, floor_i: int, tag: String, zone: Rect2,
+		fh: float, floor_i: int, tag: String, zone: Rect2,
 		door_edge: int) -> void:
 	var rng := WorldSeed.rng_for("furnish",
 			[WorldSeed.str_hash(tag), floor_i])
+	var floor_y := float(floor_i) * fh   # THE floor this furniture lives on
 	var usable := Rect2(WALL_T + 0.45, WALL_T + 0.45,
 			w - 2.0 * (WALL_T + 0.45), d - 2.0 * (WALL_T + 0.45))
 	if usable.size.x < 1.4 or usable.size.y < 1.4:
 		return
-	# Interior point just past the entrance (swing-arc keep-out center).
-	var door_pt := Vector2(-99.0, -99.0)
+
+	# --- keep-out OBBs: stair shaft, entrance swing, walk-in corridor ------
+	var blocked: Array[Dictionary] = []
+	blocked.append(_rect_obb(zone.grow(0.7)))
 	if door_edge >= 0:
 		var mid_len := (w if door_edge == 0 or door_edge == 2 else d) * 0.5
 		var dp := _side_point(door_edge, w, d, mid_len)
@@ -493,80 +622,193 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 			1: dp += Vector2(-1.1, 0)
 			2: dp += Vector2(0, -1.1)
 			_: dp += Vector2(1.1, 0)
-		door_pt = dp
+		# Facade-aligned strip covering the leaf swing (~1.5 m radius) plus
+		# a 2.4 m walk-in lane behind it - the entrance route stays open.
+		var corridor_len := DOOR_W + 2.4
+		var corridor_depth := DOOR_W + 0.4
+		var cc := dp
+		match door_edge:
+			0: cc += Vector2(0, corridor_depth * 0.5 - 0.55)
+			1: cc += Vector2(-corridor_depth * 0.5 + 0.55, 0)
+			2: cc += Vector2(0, -corridor_depth * 0.5 + 0.55)
+			_: cc += Vector2(corridor_depth * 0.5 - 0.55, 0)
+		var along_x := door_edge == 0 or door_edge == 2
+		blocked.append({
+			"c": cc,
+			"e": Vector2(corridor_len * 0.5, corridor_depth * 0.5)
+					if along_x else Vector2(corridor_depth * 0.5,
+					corridor_len * 0.5),
+			"r": 0.0,
+		})
 
-	var zone_grown: Rect2 = zone.grow(0.7)
-	var placed: Array[Vector2] = []
-	var spot_free := func(p: Vector2, radius: float) -> bool:
-		if zone_grown.has_point(p):
+	var placed: Array[Dictionary] = []    # solid furniture OBBs so far
+	var spot_free := func(p: Vector2, half: Vector2, yaw: float) -> bool:
+		var obb := {"c": p, "e": half, "r": yaw}
+		if not _obb_in_rect(obb, usable):
 			return false
-		if p.distance_to(door_pt) < 2.3:
-			return false
+		for bl in blocked:
+			if _obb_overlap(obb, bl):
+				return false
 		for q in placed:
-			if p.distance_to(q) < radius + 0.9:
+			if _obb_overlap(obb, q):
 				return false
 		return true
-	var take_spot := func(radius: float) -> Variant:
+	var take_spot := func(half: Vector2, yaw: float) -> Variant:
 		for attempt in 40:
 			var cand := Vector2(
-					rng.randf_range(usable.position.x, usable.end.x),
-					rng.randf_range(usable.position.y, usable.end.y))
-			if spot_free.call(cand, radius):
-				placed.append(cand)
+					rng.randf_range(usable.position.x + half.x,
+							usable.end.x - half.x),
+					rng.randf_range(usable.position.y + half.y,
+							usable.end.y - half.y))
+			if spot_free.call(cand, half, yaw):
+				placed.append({"c": cand, "e": half, "r": yaw})
 				return cand
 		return null
 
 	# Tables with chairs pulled up around them.
 	for i in rng.randi_range(1, 3):
-		var t: Variant = take_spot.call(1.5)
+		var t: Variant = take_spot.call(Vector2(0.63, 0.44), 0.0)
 		if t == null:
 			break
 		var tp: Vector2 = t
-		_f_table(b, off + Vector3(tp.x, 0.0, tp.y))
+		_f_table(b, off + Vector3(tp.x, floor_y, tp.y))
 		for c in rng.randi_range(1, 2):
 			var ca := TAU * rng.randf()
 			var cp := tp + Vector2(cos(ca), sin(ca)) * 0.95
 			if usable.grow(-0.3).has_point(cp) \
-					and not zone_grown.has_point(cp):
-				_f_chair(b, off + Vector3(cp.x, 0.0, cp.y),
+					and spot_free.call(cp, Vector2(0.24, 0.24), ca) \
+					or (_obb_in_rect({"c": cp, "e": Vector2(0.24, 0.24),
+					"r": ca}, usable.grow(-0.1))
+					and not _point_in_any(cp, blocked)):
+				_f_chair(b, off + Vector3(cp.x, floor_y, cp.y),
 						atan2(tp.x - cp.x, tp.y - cp.y))
-	# Bookshelves nudged against the nearest wall.
+	# Bookshelves: genuinely snapped against the NEAREST wall, back plate
+	# touching the interior wall face (P0-D - the direction was computed
+	# before but never applied). Skipped when the snapped spot would block
+	# the shaft or the entrance lane.
 	for i in rng.randi_range(1, 2):
-		var s: Variant = take_spot.call(1.2)
-		if s == null:
+		var s := _shelf_spot(rng, usable, w, d, blocked, placed)
+		if s.is_empty():
 			break
-		var sp: Vector2 = s
-		var dists: Array[float] = [sp.x, w - sp.x, sp.y, d - sp.y]
-		var wall_dir: Vector2
-		match dists.find(minf_array(dists)):
-			0: wall_dir = Vector2(1, 0)
-			1: wall_dir = Vector2(-1, 0)
-			2: wall_dir = Vector2(0, 1)
-			_: wall_dir = Vector2(0, -1)
-		_f_shelf(b, off + Vector3(sp.x, 0.0, sp.y),
-				atan2(wall_dir.x, wall_dir.y), rng)
-	# Computer desks.
+		placed.append(s["obb"])
+		_f_shelf(b, off + Vector3(s["pos"].x, floor_y, s["pos"].y),
+				float(s["yaw"]), rng)
+	# Computer desks: accessories AND body share one rotated basis.
 	for i in rng.randi_range(0, 2):
-		var dv: Variant = take_spot.call(1.4)
+		var yaw := rng.randf_range(0.0, TAU)
+		var dv: Variant = take_spot.call(Vector2(0.68, 0.36), yaw)
 		if dv == null:
 			break
 		var dp2: Vector2 = dv
-		_f_desk_pc(b, off + Vector3(dp2.x, 0.0, dp2.y),
-				rng.randf_range(0.0, TAU))
-	# Plant vases tucked into leftovers.
+		_f_desk_pc(b, off + Vector3(dp2.x, floor_y, dp2.y), yaw)
+	# Plant vases tucked into leftovers (soft clutter - no collision).
 	for i in rng.randi_range(1, 3):
-		var pv: Variant = take_spot.call(0.6)
+		var pv: Variant = take_spot.call(Vector2(0.26, 0.26), 0.0)
 		if pv == null:
 			break
 		var pp: Vector2 = pv
-		_f_plant(b, off + Vector3(pp.x, 0.0, pp.y))
+		_f_plant(b, off + Vector3(pp.x, floor_y, pp.y))
 
 
-static func minf_array(arr: Array[float]) -> float:
-	var best := arr[0]
-	for v in arr:
-		best = minf(best, v)
-	return best
+## Nearest-wall shelf placement: picks the wall, snaps the carcass against
+## the interior wall face, returns {pos: Vector2, yaw: float, obb} or {}.
+static func _shelf_spot(rng: RandomNumberGenerator, usable: Rect2,
+		w: float, d: float, blocked: Array[Dictionary],
+		placed: Array[Dictionary]) -> Dictionary:
+	const DEPTH := 0.34
+	const GAP := 0.02
+	var side := rng.randi_range(0, 3)          # 0=W 1=E 2=N 3=S
+	var yaw := 0.0
+	var pos := Vector2.ZERO
+	match side:
+		0:
+			yaw = PI * 0.5
+			pos = Vector2(WALL_T + DEPTH * 0.5 + GAP,
+					rng.randf_range(usable.position.y + 0.9,
+							usable.end.y - 0.9))
+		1:
+			yaw = PI * 0.5
+			pos = Vector2(w - WALL_T - DEPTH * 0.5 - GAP,
+					rng.randf_range(usable.position.y + 0.9,
+							usable.end.y - 0.9))
+		2:
+			yaw = 0.0
+			pos = Vector2(rng.randf_range(usable.position.x + 0.9,
+					usable.end.x - 0.9), WALL_T + DEPTH * 0.5 + GAP)
+		_:
+			yaw = 0.0
+			pos = Vector2(rng.randf_range(usable.position.x + 0.9,
+					usable.end.x - 0.9), d - WALL_T - DEPTH * 0.5 - GAP)
+	var half := Vector2(DEPTH * 0.5, 0.8) if side >= 2 \
+			else Vector2(0.8, DEPTH * 0.5)
+	var obb := {"c": pos, "e": half, "r": yaw}
+	if not _obb_in_rect(obb, usable):
+		return {}
+	for bl in blocked:
+		if _obb_overlap(obb, bl):
+			return {}
+	for q in placed:
+		if _obb_overlap(obb, q):
+			return {}
+	return {"pos": pos, "yaw": yaw, "obb": obb}
+
+
+static func _point_in_any(p: Vector2, obbs: Array[Dictionary]) -> bool:
+	for o in obbs:
+		if _obb_contains_point(o, p):
+			return true
+	return false
+
+
+## Oriented-bounding-box containment/intersection helpers (2D SAT).
+## An OBB is {c: Vector2 center, e: Vector2 half-extents, r: float yaw}.
+static func _obb_axes(r: float) -> Vector2:
+	return Vector2(cos(r), sin(r))
+
+
+static func _obb_contains_point(o: Dictionary, p: Vector2) -> bool:
+	var u := _obb_axes(float(o["r"]))
+	var v := Vector2(-u.y, u.x)
+	var l := p - (o["c"] as Vector2)
+	var e: Vector2 = o["e"]
+	return absf(l.dot(u)) <= e.x + SlabMath.EPS \
+			and absf(l.dot(v)) <= e.y + SlabMath.EPS
+
+
+static func _obb_in_rect(o: Dictionary, r: Rect2) -> bool:
+	var u := _obb_axes(float(o["r"]))
+	var v := Vector2(-u.y, u.x)
+	var e: Vector2 = o["e"]
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var corner: Vector2 = (o["c"] as Vector2) + u * e.x * sx \
+					+ v * e.y * sy
+			if not r.grow(SlabMath.EPS).has_point(corner):
+				return false
+	return true
+
+
+static func _obb_overlap(a: Dictionary, b2: Dictionary) -> bool:
+	var axes: Array[Vector2] = []
+	var ua := _obb_axes(float(a["r"]))
+	var ub := _obb_axes(float(b2["r"]))
+	axes.append(ua)
+	axes.append(Vector2(-ua.y, ua.x))
+	axes.append(ub)
+	axes.append(Vector2(-ub.y, ub.x))
+	var ea: Vector2 = a["e"]
+	var eb: Vector2 = b2["e"]
+	var d: Vector2 = (b2["c"] as Vector2) - (a["c"] as Vector2)
+	for ax in axes:
+		var ra := ea.x * absf(ax.dot(ua)) + ea.y * absf(ax.dot(Vector2(-ua.y, ua.x)))
+		var rb := eb.x * absf(ax.dot(ub)) + eb.y * absf(ax.dot(Vector2(-ub.y, ub.x)))
+		if absf(d.dot(ax)) > ra + rb:
+			return false
+	return true
+
+
+static func _rect_obb(r: Rect2) -> Dictionary:
+	return {"c": r.get_center(), "e": r.size * 0.5, "r": 0.0}
 
 
 ## Dining/work table: oak top on a dark apron base. Collides (walk around).
@@ -608,11 +850,14 @@ static func _f_shelf(b: MeshBatcher, pos: Vector3, yaw: float,
 					Vector3(bw, 0.26, 0.22), basis, bc, false)
 
 
-## Desk with keyboard, monitor stand and dark screen. Desk collides.
+## Desk with keyboard, monitor stand and dark screen. VISUAL/COLLIDER
+## AGREEMENT (P0-D): the destructible desk BODY shares its accessories'
+## rotated basis - collider and visuals describe the same oriented footprint.
 static func _f_desk_pc(b: MeshBatcher, pos: Vector3, yaw: float) -> void:
 	var basis := Basis(Vector3.UP, -yaw)
-	b.add_destructible_box(pos + Vector3(0, 0.36, 0),
-			Vector3(1.35, 0.72, 0.68), FURN_DESK, &"wood")
+	b.add_box_rotated(pos + Vector3(0, 0.36, 0),
+			Vector3(1.35, 0.72, 0.68), basis, FURN_DESK, true,
+			false, &"wood")
 	b.add_box_rotated(pos + basis.z * 0.18 + Vector3(0, 0.79, 0),
 			Vector3(0.42, 0.05, 0.16), basis, FURN_KEYBOARD, false)
 	b.add_box_rotated(pos - basis.z * 0.16 + Vector3(0, 0.82, 0),
@@ -716,18 +961,11 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 
 ## Flat-roof dressing: thin VISUAL membrane around the shaft hole (no
 ## collision - the structural top slab below is the real deck). Lives on the
-## RoofLayer so interiors can be revealed while the player is inside.
+## RoofLayer so interiors can be revealed while the player is inside. Shares
+## slab_pieces() with the structural slabs: same aperture, same four strips.
 static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 		d: float, hole: Rect2, y: float, color: Color) -> void:
-	var pieces := [
-		Rect2(hole.end.x, WALL_T, w - WALL_T - hole.end.x, d - 2.0 * WALL_T),
-		Rect2(WALL_T, WALL_T, hole.position.x - WALL_T, hole.position.y - WALL_T),
-		Rect2(WALL_T, hole.end.y, hole.position.x - WALL_T,
-				d - WALL_T - hole.end.y),
-	]
-	for r: Rect2 in pieces:
-		if r.size.x <= 0.05 or r.size.y <= 0.05:
-			continue
+	for r: Rect2 in slab_pieces(w, d, hole):
 		b.add_roof_visual_box(
 				off + Vector3(r.get_center().x, y, r.get_center().y),
 				Vector3(r.size.x, 0.04, r.size.y), color)

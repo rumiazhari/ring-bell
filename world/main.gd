@@ -29,6 +29,8 @@ var _crates: Array[FoodCrate] = []
 var _mode := WorldMode.LEGACY_BLOCK
 var _gate_coord := Vector2i(99, 99)   # chunk currently floor-gated
 var _gate_tag := ""                   # building id currently floor-gated
+var _was_inside := false              # interior hysteresis state
+var _faded := []                      # currently faded facade letters
 
 var city_plan: CityPlan
 var chunk_manager: ChunkManager
@@ -243,50 +245,67 @@ func _update_roof_visibility() -> void:
 
 # --- Interior cutaway (streamed city) -----------------------------------------
 
-## Top-down interior view: while the player is inside a building, every
-## layer ABOVE their current storey (upper walls, slabs, roof dressing) is
-## hidden, so the camera looks straight into the resident floor. Lower
-## floors stay visible beneath (occluded naturally by the current slab
-## except through the stairwell shaft). Stepping outside reveals everything.
+## REAL interior detection + sector cutaway (P1):
+## 1. Interior state comes from InteriorProbe (actual interior boundary,
+##    valid storey under the feet, hysteresis at thresholds) - no more
+##    generously-grown footprint triggering while still outside.
+## 2. Layers above the resident storey hide; the camera-facing facade(s) of
+##    the resident storey fade based on the CAMERA's sector around the
+##    player, so rotating the camera swaps which wall is faded. Opposite
+##    walls stay visible and preserve the room shape.
 func _update_city_interior() -> void:
 	if player == null or not is_instance_valid(player) \
 			or city_plan == null or chunk_manager == null:
 		return
-	var p := Vector2(player.global_position.x, player.global_position.z)
+	var p3 := player.global_position
+	var p := Vector2(p3.x, p3.z)
 	var spec := {}
 	var inside := false
+	var floor_i := -1
 	for candidate in city_plan.buildings_in_rect(
 			Rect2(p - Vector2.ONE * 1.5, Vector2.ONE * 3.0)):
-		if (candidate["rect"] as Rect2).grow(0.4).has_point(p):
+		var res: Dictionary = InteriorProbe.evaluate(
+				p, p3.y, candidate, _was_inside)
+		if bool(res["inside"]):
 			spec = candidate
 			inside = true
+			floor_i = int(res["floor"])
 			break
+	if not inside:
+		_was_inside = false
+	else:
+		_was_inside = true
 
 	var gate_active := inside and not spec.is_empty()
-	var floor_i := -1
+	var n := -1
 	if gate_active:
-		var fh: float = float(spec["floor_h"])
-		var n: int = mini(int(spec["floors"]), 8)
-		floor_i = int(floor((player.global_position.y + 0.1) / fh))
-		# floor_i == n means the player is on the ROOF DECK: keep the
-		# interior camera and hide the roof dressing so they stay visible
-		# inside the bulkhead (the deck slab itself is layer f<n> = shown).
+		# Roof-deck rule: floor_i == n means standing on the deck - keep the
+		# interior camera, hide roof dressing, keep deck layer visible.
+		n = mini(int(spec["floors"]), 8)
 		gate_active = floor_i >= 0 and floor_i <= n
 	if gate_active:
 		var center: Vector2 = (spec["rect"] as Rect2).get_center()
 		var owner_coord := WorldSeed.chunk_coord(center.x, center.y)
 		var tag := str(spec["id"])
-		# Switching buildings directly? Reveal the previous one first.
+		# Camera-sector facades to fade on the resident storey.
+		var cam_xz := Vector2.ZERO
+		if camera_rig != null and is_instance_valid(camera_rig):
+			cam_xz = Vector2(camera_rig.global_position.x,
+					camera_rig.global_position.z)
+		var new_faded: Array = InteriorProbe.faded_facades(p, cam_xz) \
+				if floor_i < n else []
 		if owner_coord != _gate_coord or tag != _gate_tag:
 			if _gate_coord != Vector2i(99, 99):
 				chunk_manager.apply_floor_gate(_gate_coord, "", -1)
-		chunk_manager.apply_floor_gate(owner_coord, tag, floor_i)
+		chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded)
 		_gate_coord = owner_coord
 		_gate_tag = tag
+		_faded = new_faded
 	elif _gate_coord != Vector2i(99, 99):
 		chunk_manager.apply_floor_gate(_gate_coord, "", -1)
 		_gate_coord = Vector2i(99, 99)
 		_gate_tag = ""
+		_faded = []
 	if camera_rig != null:
 		camera_rig.set_interior(gate_active)
 

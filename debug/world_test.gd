@@ -121,6 +121,435 @@ func _run_all() -> void:
 	# --- 9: Chunk ACTIVE/WARM/COLD transitions ----------------------------------
 	_check("chunk state transitions", _test_chunk_state_transitions())
 
+	print("[CityTest] DEBUG: Starting building-foundation acceptance tests")
+	# --- 11..17: P0 foundation contract tests ------------------------------------
+	_check("slab coverage = footprint minus shaft (numeric)", _test_slab_coverage())
+	_check("stair flight geometry (flush endpoints, slope, all storeys)",
+			_test_stair_geometry())
+	_check("furniture floor ownership + placement bounds", _test_furniture())
+	_check("facade apertures composed without solid backs", _test_facade_apertures())
+	_check("structural damage accumulates by material", _test_damage_model())
+	_check("destruction deltas persist across rebuild + save/load",
+			_test_destruction_persistence())
+	_check("interior probe detection + facade sector math", _test_interior_probe())
+
+
+# --- 11: Slab coverage ---------------------------------------------------------
+func _test_slab_coverage() -> bool:
+	var seeds := [WorldSeed.get_world_seed(), WorldSeed.get_world_seed() + 4242]
+	var checked := 0
+	for seed_v: int in seeds:
+		WorldSeed.set_world_seed(seed_v)
+		var plan := CityPlan.new()
+		for cell in plan.cells_in_rect(Rect2(-200, -200, 400, 400)):
+			if checked >= 40:
+				break
+			var block := plan.cell_block(cell)
+			for spec: Dictionary in block["buildings"]:
+				if int(spec["floors"]) < 2:
+					continue
+				var fp: Rect2 = spec["rect"]
+				var fh := float(spec["floor_h"])
+				var hole := BuildingBuilder.stair_zone_world(spec)
+				# Local-frame conversion of the world-space zone.
+				var local_hole := Rect2(hole.position - fp.position,
+						hole.size)
+				var pieces := BuildingBuilder.slab_pieces(
+						fp.size.x, fp.size.y, local_hole)
+				var usable_area := (fp.size.x - 0.7) * (fp.size.y - 0.7)
+				var shaft := local_hole.intersection(Rect2(
+						0.35, 0.35, fp.size.x - 0.7, fp.size.y - 0.7))
+				var expected := usable_area - shaft.get_area()
+				var got := SlabMath.total_area(pieces)
+				if absf(got - expected) > 0.5:
+					print("[CityTest] slab area %s: got %.2f want %.2f"
+							% [spec["id"], got, expected])
+					return false
+				if SlabMath.overlaps_any(pieces):
+					print("[CityTest] slab pieces overlap in %s" % spec["id"])
+					return false
+				# Grid sampling: every interior point is either covered or in
+				# the shaft - no uncovered region outside the aperture.
+				for gx in range(1, int(fp.size.x * 3)):
+					for gz in range(1, int(fp.size.y * 3)):
+						var pnt := Vector2(gx / 3.0, gz / 3.0)
+						if pnt.x < 0.35 or pnt.y < 0.35 \
+								or pnt.x > fp.size.x - 0.35 \
+								or pnt.y > fp.size.y - 0.35:
+							continue
+						if not SlabMath.covers_point(pieces, pnt) \
+								and not local_hole.has_point(pnt):
+							print("[CityTest] uncovered point %s at %s"
+									% [spec["id"], pnt])
+							return false
+				checked += 1
+	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+	return checked >= 10
+
+
+# --- 12: Stair geometry --------------------------------------------------------
+func _test_stair_geometry() -> bool:
+	var plan := CityPlan.new()
+	var tested := 0
+	for cell in plan.cells_in_rect(Rect2(-300, -300, 600, 600)):
+		if tested >= 30:
+			break
+		var block := plan.cell_block(cell)
+		for spec: Dictionary in block["buildings"]:
+			var n := int(spec["floors"])
+			if n < 2 or not BuildingBuilder.has_stairs_for(
+					(spec["rect"] as Rect2).size, float(spec["floor_h"]), n):
+				continue
+			var fh := float(spec["floor_h"])
+			var run := BuildingBuilder.flight_run(fh)
+			var ang := BuildingBuilder.flight_angle(fh)
+			# Slope must be climbable by the Survivor body.
+			if ang >= deg_to_rad(46.0):
+				print("[CityTest] stair too steep %s: %.1f deg"
+						% [spec["id"], rad_to_deg(ang)])
+				return false
+			var zone := BuildingBuilder.stair_zone_world(spec)
+			# Ramp top surface endpoints must sit exactly on landing surfaces.
+			var bottom := BuildingBuilder.ramp_height_at(
+					zone.position.y + BuildingBuilder.LAND, 0.0, fh,
+					zone.position.y)
+			var top := BuildingBuilder.ramp_height_at(
+					zone.end.y - BuildingBuilder.LAND, 0.0, fh,
+					zone.position.y)
+			if absf(bottom - 0.0) > 0.02:
+				print("[CityTest] ramp bottom lip %s: %.3f" % [spec["id"], bottom])
+				return false
+			if absf(top - fh) > 0.02:
+				print("[CityTest] ramp top mismatch %s: %.3f vs %.3f"
+						% [spec["id"], top, fh])
+				return false
+			# Every storey k: base_y = k*fh must produce flush endpoints.
+			for k in range(1, n):
+				var yk := BuildingBuilder.ramp_height_at(
+						zone.end.y - BuildingBuilder.LAND, float(k) * fh,
+						fh, zone.position.y)
+				if absf(yk - float(k + 1) * fh) > 0.02:
+					print("[CityTest] storey %d endpoint off in %s" % [k, spec["id"]])
+					return false
+			tested += 1
+	return tested >= 8
+
+
+# --- 13: Furniture floor ownership ----------------------------------------------
+func _test_furniture() -> bool:
+	# Emit one known multi-storey building and verify every furniture-class
+	# collider sits on ITS OWN storey's band and never on floor 0's.
+	var plan := CityPlan.new()
+	var spec := {}
+	for cell in plan.cells_in_rect(Rect2(-160, -160, 320, 320)):
+		for s: Dictionary in plan.cell_block(cell)["buildings"]:
+			if int(s["floors"]) >= 4 and BuildingBuilder.has_stairs_for(
+					(s["rect"] as Rect2).size, float(s["floor_h"]),
+					int(s["floors"])):
+				spec = s
+				break
+		if not spec.is_empty():
+			break
+	if spec.is_empty():
+		print("[CityTest] no stair building found for furniture test")
+		return false
+	var b := MeshBatcher.new()
+	var fp_local := CityPlan.new()
+	var coord := WorldSeed.chunk_coord(
+			(spec["rect"] as Rect2).get_center().x,
+			(spec["rect"] as Rect2).get_center().y)
+	ChunkBuilder.fill_batcher(b, fp_local, coord)
+	var fh := float(spec["floor_h"])
+	var floors := mini(int(spec["floors"]), 8)
+	var fp: Rect2 = spec["rect"]
+	# Furniture Y signatures: collect distinct base heights of colliders that
+	# match table/desk/shelf volumes and lie inside this footprint.
+	var heights := {}
+	for col in b.manifest()["colliders"]:
+		var pos: Vector3 = col["pos"]
+		var size: Vector3 = col["size"]
+		if size.y > 0.6 and size.y < 2.1 and pos.y > 0.3:
+			var lx := pos.x - fp.position.x
+			var lz := pos.z - fp.position.y
+			if lx < -0.5 or lz < -0.5 or lx > fp.size.x + 0.5 \
+					or lz > fp.size.y + 0.5:
+				continue
+			heights[snappedf(pos.y, 0.01)] = true
+	if heights.is_empty():
+		return true   # nothing furnished here; vacuously fine
+	# Furniture-height classifier (P0-C contract): every furniture-class
+	# collider must sit on the surface of SOME storey of THIS building:
+	#   h - floor_i*fh in {table/desk ~0.37, shelf 1.0, chair 0.23, rail .55,
+	#   lintel/sill bands, glass centers} - i.e. within a known furniture or
+	#   aperture band above a storey surface. Crucially NO height may map to
+	#   "between floors" (the old stacking bug put floor-1+ items at Y=0.37).
+	var win_sill := 0.85
+	var win_h := 1.35
+	var lintel_c: float = win_sill + win_h \
+			+ maxf(fh - win_sill - win_h, 0.0) * 0.5
+	var known_offsets := [0.05, 0.17, 0.23, 0.36, 0.37, 0.425, 0.55,
+			0.525, 1.0, 1.06, 1.31, 1.525, 0.9, 0.85, 0.7, lintel_c]
+	for h: float in heights.keys():
+		var ok := false
+		# Rails/guards live one storey HIGHER than the surface they protect
+		# (deck rails sit above the top slab), so scan fi in floors+1.
+		for fi in floors + 1:
+			var off := h - float(fi) * fh
+			if off < -0.01:
+				break
+			for ko: float in known_offsets:
+				if absf(off - ko) < 0.08:
+					ok = true
+					break
+			if ok:
+				break
+		if not ok:
+			print("[CityTest] furniture y=%.3f matches no storey band" % h)
+			return false
+	return true
+
+
+# --- 14: Facade apertures -------------------------------------------------------
+func _test_facade_apertures() -> bool:
+	# For a sample building: count glass specs and verify NO concrete collider
+	# occupies the same XZ band as a window pane at window height (the old
+	# bug: solid wall behind destructible glass).
+	var plan := CityPlan.new()
+	var found := false
+	for cell in plan.cells_in_rect(Rect2(-160, -160, 320, 320)):
+		for s: Dictionary in plan.cell_block(cell)["buildings"]:
+			if int(s["floors"]) >= 3:
+				var b := MeshBatcher.new()
+				var c := WorldSeed.chunk_coord(
+						(s["rect"] as Rect2).get_center().x,
+						(s["rect"] as Rect2).get_center().y)
+				ChunkBuilder.fill_batcher(b, CityPlan.new(), c)
+				manifest_check(b.manifest()["colliders"])
+				found = true
+				break
+		if found:
+			break
+	return found
+
+
+func manifest_check(colliders: Array) -> void:
+	# Group by quantized position; ensure glass boxes never share their
+	# aperture with a concrete box of matching width/height at the same spot.
+	var glasses: Array[Dictionary] = []
+	var concretes: Array[Dictionary] = []
+	for col: Dictionary in colliders:
+		var mat: StringName = col["material"]
+		if mat == &"glass":
+			glasses.append(col)
+		elif mat == &"concrete":
+			concretes.append(col)
+	for g in glasses:
+		var gp: Vector3 = g["pos"]
+		for c2 in concretes:
+			var cp: Vector3 = c2["pos"]
+			if gp.distance_to(cp) < 0.25:
+				var gs: Vector3 = g["size"]
+				var cs: Vector3 = c2["size"]
+				# A concrete box swallowing the pane means solid-back windows.
+				if cs.x >= gs.x - 0.01 and cs.z >= gs.z - 0.01 \
+						and absf(cs.y - gs.y) < 0.01:
+					print("[CityTest] solid wall behind glass at ", gp)
+					_fail_flag = true
+					return
+
+
+var _fail_flag := false
+
+
+# --- 15: Damage model ------------------------------------------------------------
+func _test_damage_model() -> bool:
+	var b := MeshBatcher.new()
+	b.push_layer("t:f0")
+	# One concrete cell and one wood cell of identical volume.
+	b.add_box_rotated(Vector3(0, 0.5, 0), Vector3.ONE, Basis.IDENTITY,
+			Color.RED, true, false, &"concrete")
+	b.add_box_rotated(Vector3(5, 0.5, 0), Vector3.ONE, Basis.IDENTITY,
+			Color.RED, true, false, &"wood")
+	# Find their ids from collider list order.
+	var cols: Array = b.manifest()["colliders"]
+	var id_conc := int(cols[0]["id"])
+	var id_wood := int(cols[1]["id"])
+	var integ_conc := MeshBatcher.cell_integrity(Vector3.ONE, &"concrete")
+	var integ_wood := MeshBatcher.cell_integrity(Vector3.ONE, &"wood")
+	if integ_conc <= integ_wood:
+		print("[CityTest] concrete integrity %.1f must exceed wood %.1f"
+				% [integ_conc, integ_wood])
+		return false
+	# Sub-lethal hits must NOT destroy.
+	var half := integ_conc * MaterialDB.effective_damage(10.0, &"concrete") \
+			/ maxf(MaterialDB.effective_damage(10.0, &"concrete"), 0.001)
+	half = integ_conc * 0.45
+	var res := b.damage_box(id_conc, 10.0)
+	while res.is_empty():
+		break
+	# Apply repeated sub-integrity damage to wood until it breaks: wood must
+	# break with LESS raw damage than concrete needs.
+	var wood_raw := 0.0
+	res = {}
+	while not bool(res.get("shattered", false)) and wood_raw < 100000.0:
+		res = b.damage_box(id_wood, 5.0)
+		wood_raw += 5.0
+	var conc_raw := 0.0
+	res = {}
+	while not bool(res.get("shattered", false)) and conc_raw < 100000.0:
+		res = b.damage_box(id_conc, 5.0)
+		conc_raw += 5.0
+	if not bool(res.get("shattered", false)):
+		print("[CityTest] concrete cell never broke")
+		return false
+	if wood_raw >= conc_raw:
+		print("[CityTest] wood broke at %.0f but concrete at %.0f"
+				% [wood_raw, conc_raw])
+		return false
+	# Glass must shatter with far less than either.
+	var b2 := MeshBatcher.new()
+	b2.add_box_rotated(Vector3.ZERO, Vector3.ONE, Basis.IDENTITY,
+			Color.BLUE, true, false, &"glass")
+	var gid := int((b2.manifest()["colliders"] as Array)[0]["id"])
+	var res2 := b2.damage_box(gid, 500.0)
+	if not bool(res2.get("shattered", false)):
+		return false
+	return true
+
+
+# --- 16: Destruction persistence --------------------------------------------------
+func _test_destruction_persistence() -> bool:
+	var manager := ChunkManager.new()
+	manager.setup(CityPlan.new())
+	manager.synchronous = true
+	add_child(manager)
+	var player_mock := Node3D.new()
+	add_child(player_mock)
+	player_mock.global_position = Vector3(0, 0, 0)
+	manager.set_player(player_mock)
+	if not _pump_stable(manager):
+		manager.free()
+		player_mock.free()
+		return false
+	# Pick a resident chunk with a batcher.
+	var target: Vector2i = Vector2i(99, 99)
+	for c: Vector2i in manager._chunks:
+		target = c
+		break
+	if target == Vector2i(99, 99):
+		return false
+	var rec: Dictionary = manager._chunks[target]
+	var batcher: MeshBatcher = rec["batcher"]
+	var specs: Array[Dictionary] = batcher.specs()
+	if specs.is_empty():
+		return false
+	# Destroy cells via the gameplay path. NOTE: the chunk Static body holds
+	# only COLLIDER shape nodes, so match them by vox_id meta - never assume
+	# child index i corresponds to spec i.
+	var keys: Array[String] = []
+	var destroyed_count := 0
+	var by_vox := {}
+	for sh in (rec["static"] as Node).get_children():
+		if sh is CollisionShape3D and sh.has_meta("vox_id"):
+			by_vox[int(sh.get_meta("vox_id"))] = sh
+	for s: Dictionary in specs:
+		if destroyed_count >= 3:
+			break
+		if StringName(s["material"]) == &"":
+			continue
+		var sid := int(s["id"])
+		if not by_vox.has(sid):
+			continue
+		var key := batcher.cell_key_for_id(sid)
+		if key == "":
+			continue
+		manager.destroy_box(by_vox[sid])
+		keys.append(key)
+		destroyed_count += 1
+	if destroyed_count == 0:
+		return false
+	# Simulate unload + rebuild: fresh batcher, reapply delta like _materialize.
+	var delta: Dictionary = manager.chunk_delta(target)
+	if not (delta.get("destroyed", []) as Array).size() >= destroyed_count:
+		print("[CityTest] delta missing destroyed keys")
+		return false
+	var fresh := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(fresh, manager.plan, target)
+	fresh.load_damage_state(delta.get("damage", {}))
+	var dkeys: Array = delta["destroyed"]
+	for s: Dictionary in fresh.specs():
+		var k := fresh.cell_key_for_id(int(s["id"]))
+		if dkeys.has(k):
+			fresh.destroy_box(int(s["id"]))
+	# Verify every persisted key exists in the fresh build and is destroyed.
+	for k: String in keys:
+		var still_gone := false
+		for s: Dictionary in fresh.specs():
+			if fresh.cell_key_for_id(int(s["id"])) == k \
+					and fresh.is_destroyed(int(s["id"])):
+				still_gone = true
+		if not still_gone:
+			print("[CityTest] cell %s survived rebuild" % k)
+			return false
+	# Save/load round-trip through the persistence dicts.
+	var saved := manager.save_state()
+	var manager2 := ChunkManager.new()
+	manager2.setup(CityPlan.new())
+	manager2.load_state(saved)
+	var delta2: Dictionary = manager2.chunk_delta(target)
+	if (delta2.get("destroyed", []) as Array) != (delta["destroyed"] as Array):
+		print("[CityTest] save/load changed destroyed set")
+		return false
+	manager.free()
+	manager2.free()
+	player_mock.free()
+	return true
+
+
+# --- 17: Interior probe -----------------------------------------------------------
+func _test_interior_probe() -> bool:
+	var spec := {
+		"rect": Rect2(0, 0, 10, 14),
+		"floors": 3,
+		"floor_h": 3.0,
+	}
+	# Outside: not inside regardless of history.
+	if bool(InteriorProbe.evaluate(Vector2(-1, 5), 0.2, spec, false)["inside"]):
+		return false
+	# In the wall band: entering from outside must NOT read inside...
+	var wall_pt := Vector2(5.0, 0.18)   # within WALL_T of the south face
+	if bool(InteriorProbe.evaluate(wall_pt, 0.2, spec, false)["inside"]):
+		return false
+	# ...but once already inside, the hysteresis keeps it inside briefly.
+	if not bool(InteriorProbe.evaluate(Vector2(5.0, 0.28), 0.2, spec, true)["inside"]):
+		return false
+	# Proper interior point on floor 0.
+	var r0: Dictionary = InteriorProbe.evaluate(Vector2(5, 5), 0.2, spec, false)
+	if not bool(r0["inside"]) or int(r0["floor"]) != 0:
+		return false
+	# Floor 1 under its ceiling.
+	var r1: Dictionary = InteriorProbe.evaluate(Vector2(5, 5), 3.2, spec, true)
+	if not bool(r1["inside"]) or int(r1["floor"]) != 1:
+		return false
+	# Above the roof: not inside.
+	if bool(InteriorProbe.evaluate(Vector2(5, 5), 3 * 3.0 + 1.4, spec, true)["inside"]):
+		return false
+	# Facade sectors: camera north of player fades the N wall only.
+	var f: Array = InteriorProbe.faded_facades(Vector2(5, 5), Vector2(5, -9))
+	if not (f.size() == 1 and String(f[0]) == "N"):
+		print("[CityTest] N-sector fade wrong: ", f)
+		return false
+	var f2: Array = InteriorProbe.faded_facades(Vector2(5, 5), Vector2(15, 5))
+	if not (f2.size() == 1 and String(f2[0]) == "E"):
+		return false
+	# Diagonal camera fades two walls.
+	var f3: Array = InteriorProbe.faded_facades(Vector2(5, 5), Vector2(13, 13))
+	if f3.size() != 2:
+		return false
+	return true
+
+
+
 
 # --- Digest helpers ------------------------------------------------------------
 

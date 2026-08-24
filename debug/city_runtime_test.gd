@@ -69,14 +69,18 @@ func _run() -> void:
 	_check("door entities exist", doors.size() > 0, str(doors.size()))
 	if doors.size() > 0:
 		var door: Node = doors[0]
+		var dm: Dictionary = door.manifest
 		door.call("open")
 		await _wait(0.8)
 		var opened: bool = door.call("is_open")
 		_check("door opens via API", opened)
 		# The COLLIDER must actually move with the leaf: a ray fired through
-		# the doorway center must now pass (previously it hit the leaf).
-		var dpos: Vector3 = door.global_position
-		var dm: Dictionary = door.manifest
+		# the doorway CENTER must now pass (previously it hit the leaf).
+		# NOTE: aim at the manifest position - the geometric opening center.
+		# The Door NODE origin sits at the HINGE, whose face line coincides
+		# with the pier plane; a ray along that exact line grazes the pier
+		# and reports a false positive.
+		var dpos: Vector3 = dm.get("position")
 		var yaw: float = float(dm.get("yaw", 0.0))
 		var inw := Vector3(sin(yaw), 0, cos(yaw))   # facade inward normal
 		var space: PhysicsDirectSpaceState3D = door.get_world_3d().direct_space_state

@@ -34,11 +34,22 @@ var layer_nodes := {}                  # layer key -> MeshInstance3D
 var _parent: Node3D
 var _shape_nodes: Dictionary = {}      # vox_id -> CollisionShape3D
 
-# Window damage tracking: id -> accumulated damage
-var _vox_damage := {}                  # id -> float
-var _cracked := {}                     # id -> true (cracked state)
-var _destroy_threshold_mult := 14.0    # strength multiplier for destruction
-var _crack_threshold_mult := 5.0       # strength multiplier for cracking
+# Unified structural-damage records: id -> {damage: float}. Every
+# destructible cell accumulates effective damage (raw / MaterialDB strength)
+# and is destroyed only when it reaches its integrity. Deterministic - no
+# random destruction of untouched geometry.
+var _cell_damage := {}                 # id -> accumulated effective damage
+var _cracked := {}                     # id -> true (glass visual crack state)
+
+
+## Integrity of one structural cell, scaled by volume so big panels need
+## more punishment than small chips (tuned: a rocket's ~120 raw damage in
+## the falloff core destroys a handful of adjacent concrete cells but not a
+## whole wall; SMG pellets only ever chip).
+static func cell_integrity(size: Vector3, material: StringName) -> float:
+	var vol := size.x * size.y * size.z
+	var base := clampf(sqrt(maxf(vol, 0.01)) * 26.0, 8.0, 90.0)
+	return base * float(MaterialDB.get_material(material).get("strength", 1.0))
 
 
 ## DECORATIVE geometry - no physics. Windows, trim, treads, roof tiles,
@@ -61,7 +72,10 @@ func add_structural_box(pos: Vector3, size: Vector3, color: Color) -> void:
 
 
 ## DESTRUCTIBLE geometry - carries optional collision, is tracked with an id
-## and can be blown out of the chunk mesh at runtime (see destroy_box).
+## and can be blown out of the chunk mesh at runtime (see damage_box /
+## destroy_box). Callers subdivide large surfaces into structural cells
+## (0.75-1.25 m modules) so blasts carve believable holes instead of
+## deleting whole walls; every cell is its own integrity record.
 func add_destructible_box(pos: Vector3, size: Vector3, color: Color,
 		material: StringName, collide := true) -> void:
 	_append_spec(pos, size, Basis.IDENTITY, color, collide, false, material)
@@ -114,6 +128,15 @@ func pop_layer() -> void:
 
 func props() -> Array[Dictionary]:
 	return _prop_defs
+
+
+## Live spec list (tests / persistence readers). Treat as read-only.
+func specs() -> Array[Dictionary]:
+	return _specs
+
+
+func is_destroyed(id: int) -> bool:
+	return _destroyed.has(id)
 
 
 func box_count() -> int:
@@ -191,34 +214,84 @@ func destroy_box(id: int) -> Dictionary:
 	return {}
 
 
-## Applies bullet/impact damage to a voxel box (for glass cracking).
-## For glass: accumulates damage, cracks at 5x material strength, shatters
-## at 14x. Returns info dict with state.
-## Non-glass materials are not damaged via this path (bullets don't erode them).
+## Stable, materialization-order-independent cell key: quantized world
+## position + size. Two rebuilds of the same chunk under the same seed
+## produce identical keys for identical geometry, so destroyed-cell sets
+## round-trip through saves regardless of emission order.
+static func cell_key(pos: Vector3, size: Vector3) -> String:
+	return "%d:%d:%d|%d:%d:%d" % [
+		roundi(pos.x * 20.0), roundi(pos.y * 20.0), roundi(pos.z * 20.0),
+		roundi(size.x * 20.0), roundi(size.y * 20.0), roundi(size.z * 20.0),
+	]
+
+
+func cell_key_for_id(id: int) -> String:
+	for spec in _specs:
+		if int(spec["id"]) == id:
+			return cell_key(spec["pos"], spec["size"])
+	return ""
+
+
+## Damage snapshot for persistence: {cell_key: {"damage": float}} for every
+## partially damaged, still-standing cell.
+func damage_state() -> Dictionary:
+	var out := {}
+	for id: int in _cell_damage.keys():
+		if _destroyed.has(id):
+			continue
+		var key := cell_key_for_id(id)
+		if key != "":
+			out[key] = {"damage": float(_cell_damage[id])}
+	return out
+
+
+## Restore partial-damage state after a chunk rebuild (keys as produced by
+## damage_state()). Also re-marks any cells whose restored damage already
+## meets integrity as destroyed WITHOUT spawning debris again.
+func load_damage_state(data: Dictionary) -> void:
+	_cell_damage.clear()
+	for spec in _specs:
+		var key := cell_key(spec["pos"], spec["size"])
+		if not data.has(key):
+			continue
+		var id := int(spec["id"])
+		var dmg := float(data[key].get("damage", 0.0))
+		if dmg >= cell_integrity(spec["size"], spec["material"]):
+			if not _destroyed.has(id):
+				_destroyed[id] = true
+		else:
+			_cell_damage[id] = dmg
+
+
+## Applies damage to a structural cell (unified model, P0-G):
+##   effective = raw / MaterialDB strength, accumulated per cell.
+## The cell is destroyed ONLY when accumulated effective damage reaches its
+## integrity. Glass additionally flips to a cracked visual at >= 40%.
+## Returns {} when nothing changed; otherwise
+##   {shattered: true, ...spec}      - cell destroyed this hit
+##   {cracked: true, ...spec}        - glass crossed the crack threshold
 func damage_box(id: int, amount: float) -> Dictionary:
-	if _destroyed.has(id):
+	if _destroyed.has(id) or amount <= 0.0:
 		return {}
 	for spec in _specs:
 		if int(spec["id"]) == id:
-			if spec["material"] != &"glass":
-				return {}
-			var total := float(_vox_damage.get(id, 0.0)) + amount
-			_vox_damage[id] = total
-			var mat := MaterialDB.get_material(&"glass")
-			var strength := float(mat.get("strength", 1.0))
-			var crack_thresh := strength * _crack_threshold_mult
-			var destroy_thresh := strength * _destroy_threshold_mult
-			if total >= destroy_thresh:
-				# Shatter: destroy the box
+			var material: StringName = spec["material"]
+			if material == &"":
+				return {}   # indestructible plain structural box
+			var effective := MaterialDB.effective_damage(amount, material)
+			var total := float(_cell_damage.get(id, 0.0)) + effective
+			_cell_damage[id] = total
+			if total >= cell_integrity(spec["size"], material):
 				var info := destroy_box(id)
 				info["shattered"] = true
 				return info
-			elif total >= crack_thresh and not _cracked.has(id):
-				# Crack: mark for visual change, trigger rebuild
+			# Cracked-glass visual feedback only.
+			if material == &"glass" and not _cracked.has(id) \
+					and total >= cell_integrity(spec["size"], material) * 0.4:
 				_cracked[id] = true
-				var info := spec.duplicate()
-				info["cracked"] = true
-				return info
+				var info2: Dictionary = spec.duplicate()
+				info2["cracked"] = true
+				return info2
 			return {}
 	return {}
 

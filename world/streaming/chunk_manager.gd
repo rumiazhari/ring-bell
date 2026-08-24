@@ -191,6 +191,18 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 		pc: Vector2i) -> void:
 	var stats := ChunkBuilder.build(self, plan, coord, batcher)
+	# Re-apply persisted destruction (chunk deltas) BEFORE the first mesh
+	# bake so destroyed cells never appear at all on rebuild.
+	var rec: Dictionary = _records.get(coord, {})
+	var delta: Dictionary = rec.get("deltas", {})
+	batcher.load_damage_state(delta.get("damage", {}))
+	var destroyed_keys: Array = delta.get("destroyed", [])
+	if not destroyed_keys.is_empty():
+		for spec in batcher.specs():
+			var key := batcher.cell_key_for_id(int(spec["id"]))
+			if key != "" and destroyed_keys.has(key):
+				batcher.destroy_box(int(spec["id"]))
+		stats = _rebake_chunk(coord, batcher)
 	var dist := chebyshev_distance(coord, pc)
 	var state: StringName = &"active" if dist <= ACTIVE_RADIUS else &"warm"
 	_chunks[coord] = {
@@ -256,16 +268,51 @@ func note_discovered(coord: Vector2i) -> void:
 		_records[coord] = {"discovered": true, "deltas": {}}
 
 
+# --- Destruction deltas (persistence, P1) ------------------------------------
+
+## Append one destroyed-cell key to a chunk's delta record. Keys are stable
+## quantized geometry keys (MeshBatcher.cell_key), independent of
+## materialization order, so they survive chunk reloads AND save/load.
+func _record_destroyed(coord: Vector2i, cell_key: String) -> void:
+	if cell_key == "":
+		return
+	note_discovered(coord)
+	var delta: Dictionary = _records[coord]["deltas"]
+	if not delta.has("destroyed"):
+		delta["destroyed"] = []
+	if not (delta["destroyed"] as Array).has(cell_key):
+		(delta["destroyed"] as Array).append(cell_key)
+
+
+## Replace the partial-damage snapshot for a chunk.
+func _record_damage(coord: Vector2i, damage: Dictionary) -> void:
+	note_discovered(coord)
+	_records[coord]["deltas"]["damage"] = damage
+
+
+## Destroyed-cell keys + partial damage for one chunk (debug/tests).
+func chunk_delta(coord: Vector2i) -> Dictionary:
+	return _records.get(coord, {}).get("deltas", {})
+
+
 # --- Interior reveal ---------------------------------------------------------
 
 ## Hides the building layers ABOVE the player's current storey (upper walls,
 ## slabs, roof dressing) so the elevated camera sees a top-down cutaway of
-## the resident level. Collision is never touched - hidden layers keep
+## the resident level. Optionally fades the CAMERA-FACING facade(s) of the
+## resident storey (sector suffix ":N"/":E"/":S"/":W" on wall sublayers) so
+## the near wall no longer blocks the room; far walls stay visible to
+## preserve the room shape. Collision is never touched - hidden layers keep
 ## blocking, they are just invisible.
 ##
 ## tag: "<building id>" from the CityPlan spec; max_floor: the player's
 ## storey index. Pass max_floor < 0 to reveal everything again.
-func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int) -> void:
+## faded: list of facade letters ("N","E","S","W") to hide on the resident
+## storey. Rotation updates the set every frame; transitions are instant
+## per-layer but the SET changes only when the camera sector changes, which
+## reads as a smooth swap rather than flicker.
+func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
+		faded: Array = []) -> void:
 	if not _chunks.has(coord):
 		return
 	var rec: Dictionary = _chunks[coord]
@@ -280,7 +327,18 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int) -> void:
 			if suffix.begins_with("roof"):
 				hide = true   # covers "roof" and "roof|r" (visual dressing)
 			elif suffix.begins_with("f"):
-				hide = int(suffix.substr(1)) > max_floor
+				var rest := suffix.substr(1)
+				var colon := rest.find(":")
+				if colon >= 0:
+					# Facade sublayer "f<storey>:<facade>": hidden when above
+					# the resident storey OR when it IS the resident storey's
+					# camera-facing wall.
+					var fl := int(rest.substr(0, colon))
+					var facade := rest.substr(colon + 1)
+					hide = fl > max_floor \
+							or (fl == max_floor and faded.has(facade))
+				else:
+					hide = int(rest) > max_floor
 		if bool(applied.get(layer_key, false)) != hide:
 			applied[layer_key] = hide
 			changed = true
@@ -314,6 +372,8 @@ func destroy_box(shape_node: Node3D) -> Dictionary:
 		if info.is_empty():
 			return {}
 		(shape_node as CollisionShape3D).set_deferred("disabled", true)
+		_record_destroyed(c, batcher.cell_key_for_id(
+				int(shape_node.get_meta("vox_id"))))
 		if not bool(rec.get("rebuild_queued", false)):
 			rec["rebuild_queued"] = true
 			_rebuild_queue.append(c)
@@ -349,6 +409,10 @@ func damage_box(shape_node: Node3D, amount: float) -> Dictionary:
 				_rebuild_queue.append(c)
 		if res.get("shattered", false):
 			(shape_node as CollisionShape3D).set_deferred("disabled", true)
+			_record_destroyed(c, batcher.cell_key_for_id(id))
+		else:
+			# Partial damage: keep the accumulated record fresh for saves.
+			_record_damage(c, batcher.damage_state())
 		return {
 			"shattered": res.get("shattered", false),
 			"cracked": res.get("cracked", false),
@@ -374,6 +438,26 @@ func _flush_rebuilds() -> void:
 		var batcher: MeshBatcher = rec.get("batcher")
 		if batcher != null:
 			batcher.refresh_meshes()
+
+
+## Full in-place re-materialization of one chunk's geometry after persisted
+## destruction was re-applied to a FRESH batcher: frees the just-built layer
+## meshes and Static body, flushes again, updates the record. Only used on
+## chunk load when deltas exist.
+func _rebake_chunk(coord: Vector2i, batcher: MeshBatcher) -> Dictionary:
+	var node := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+	if node != null:
+		node.queue_free()
+	var chunk := Node3D.new()
+	chunk.name = "Chunk_%d_%d" % [coord.x, coord.y]
+	add_child(chunk)
+	var stats := batcher.flush_into(chunk)
+	var rec: Dictionary = _chunks.get(coord, {})
+	rec["layers"] = batcher.layer_nodes
+	rec["static"] = chunk.get_node_or_null("Static")
+	rec["boxes"] = int(stats["boxes"])
+	rec["colliders"] = int(stats["colliders"])
+	return stats
 
 
 func _log(text: String) -> void:
@@ -476,6 +560,8 @@ func debug_lines() -> Array[String]:
 # --- Persistence contract ----------------------------------------------------
 
 ## Records survive saves; geometry is rebuilt deterministically on return.
+## Destruction deltas (destroyed cell keys + partial damage) ride inside the
+## per-chunk records, so destroyed geometry stays destroyed after reload.
 func save_state() -> Dictionary:
 	var recs := {}
 	for c: Vector2i in _records:
@@ -487,5 +573,8 @@ func load_state(data: Dictionary) -> void:
 	_records.clear()
 	for key: String in data.get("records", {}):
 		var parts := key.split(",")
-		_records[Vector2i(int(parts[0]), int(parts[1]))] = \
-				data["records"][key]
+		var rec: Dictionary = data["records"][key]
+		# Guarantee the delta shape even for older saves.
+		if not rec.has("deltas") or not (rec["deltas"] is Dictionary):
+			rec["deltas"] = {}
+		_records[Vector2i(int(parts[0]), int(parts[1]))] = rec

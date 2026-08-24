@@ -25,6 +25,7 @@ const VERTICAL_SPEED := 9.0        # stairs should feel attached
 const KEY_ROTATE_SPEED := 2.4      # rad/s with Q/R
 const DRAG_SENSITIVITY := 0.0055
 const ZOOM_STEP := 1.0
+const PRESENT_SPEED := 5.0         # interior/exterior blend rate (pitch AND distance)
 
 var target: Node3D = null
 
@@ -47,12 +48,12 @@ func _ready() -> void:
 
 
 ## Places the camera UP and BACK along its own viewing axis so the rig target
-## stays centered.
+## stays centered. The boom uses the CURRENT blended pitch and distance, so
+## interior transitions glide instead of snapping.
 func _apply_camera_transform() -> void:
 	_camera.rotation_degrees = Vector3(_pitch, 0, 0)
 	var boom := Vector3(0, 0, 1).rotated(Vector3.RIGHT, deg_to_rad(_pitch))
-	var dist := minf(_distance, INTERIOR_DISTANCE) if _interior else _distance
-	_cam_base = boom * dist
+	_cam_base = boom * _distance
 	_camera.position = _cam_base
 
 
@@ -112,11 +113,17 @@ func _process(delta: float) -> void:
 
 	rotation.y = _yaw
 
-	# Ease pitch/distance toward the interior or exterior presentation.
+	# Ease pitch AND distance toward the interior or exterior presentation
+	# with the SAME exponential blend: no zoom pop at the doorway - the boom
+	# shortens smoothly while the view steepens.
 	var target_pitch := INTERIOR_PITCH_DEG if _interior else PITCH_DEG
-	if not is_equal_approx(_pitch, target_pitch):
-		_pitch = lerpf(_pitch, target_pitch,
-				1.0 - exp(-6.0 * delta))
+	var target_dist := minf(_distance, INTERIOR_DISTANCE) if _interior \
+			else _distance
+	if not is_equal_approx(_pitch, target_pitch) \
+			or not is_equal_approx(_distance, target_dist):
+		var blend := 1.0 - exp(-PRESENT_SPEED * delta)
+		_pitch = lerpf(_pitch, target_pitch, blend)
+		_distance = lerpf(_distance, target_dist, blend)
 		_apply_camera_transform()
 
 	# Explosion shake: jitter the lens around the boom BASE so the offset
