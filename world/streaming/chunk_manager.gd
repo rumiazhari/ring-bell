@@ -190,9 +190,11 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 		pc: Vector2i) -> void:
-	var stats := ChunkBuilder.build(self, plan, coord, batcher)
-	# Re-apply persisted destruction (chunk deltas) BEFORE the first mesh
-	# bake so destroyed cells never appear at all on rebuild.
+	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
+	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
+	# first and ONLY materialization below already omits destroyed cells
+	# (MeshBatcher.flush_into skips them for BOTH mesh and collision) and
+	# no second destructive rebake is needed during a chunk load.
 	var rec: Dictionary = _records.get(coord, {})
 	var delta: Dictionary = rec.get("deltas", {})
 	batcher.load_damage_state(delta.get("damage", {}))
@@ -202,7 +204,22 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 			var key := batcher.cell_key_for_id(int(spec["id"]))
 			if key != "" and destroyed_keys.has(key):
 				batcher.destroy_box(int(spec["id"]))
-		stats = _rebake_chunk(coord, batcher)
+	# Doors recorded destroyed must never respawn when the chunk returns.
+	var dstates: Dictionary = delta.get("doors", {})
+	var dead_doors := {}
+	for did: String in dstates.keys():
+		if bool(dstates[did].get("destroyed", false)):
+			dead_doors[did] = true
+	# Exactly ONE materialization: flush meshes/static body + doors + props.
+	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors)
+	# Restore surviving doors' saved logical state (open pose / lock).
+	if not dstates.is_empty():
+		var chunk := get_node_or_null(
+				NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk != null:
+			for child in chunk.get_children():
+				if child is Door and dstates.has(String(child.name)):
+					(child as Door).load_state(dstates[String(child.name)])
 	var dist := chebyshev_distance(coord, pc)
 	var state: StringName = &"active" if dist <= ACTIVE_RADIUS else &"warm"
 	_chunks[coord] = {
@@ -290,9 +307,27 @@ func _record_damage(coord: Vector2i, damage: Dictionary) -> void:
 	_records[coord]["deltas"]["damage"] = damage
 
 
-## Destroyed-cell keys + partial damage for one chunk (debug/tests).
+## Destroyed-cell keys + partial damage + door states for one chunk
+## (debug/tests).
 func chunk_delta(coord: Vector2i) -> Dictionary:
 	return _records.get(coord, {}).get("deltas", {})
+
+
+## Append/update the persisted state of one door (stable key = door manifest
+## id). Destroyed doors never respawn when their chunk reloads; surviving
+## doors restore their saved logical state.
+func _record_door(coord: Vector2i, door_id: String, state: Dictionary) -> void:
+	if door_id == "":
+		return
+	note_discovered(coord)
+	var doors: Dictionary = _records[coord]["deltas"].get("doors", {})
+	doors[door_id] = state.duplicate()
+	_records[coord]["deltas"]["doors"] = doors
+
+
+## Persisted door states for one chunk ({door_id: {open, destroyed, ...}}).
+func door_states(coord: Vector2i) -> Dictionary:
+	return _records.get(coord, {}).get("deltas", {}).get("doors", {})
 
 
 # --- Interior reveal ---------------------------------------------------------
@@ -328,11 +363,12 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 				hide = true   # covers "roof" and "roof|r" (visual dressing)
 			elif suffix.begins_with("f"):
 				var rest := suffix.substr(1)
+				# EXPLICIT facade ownership: "f<storey>:<N/E/S/W>" (the
+				# builder pushes "<building>:f<i>:<facade>" directly - no
+				# nesting tricks), plus the composite glass/roof buckets
+				# MeshBatcher appends ("|g"/"|r").
 				var colon := rest.find(":")
 				if colon >= 0:
-					# Facade sublayer "f<storey>:<facade>": hidden when above
-					# the resident storey OR when it IS the resident storey's
-					# camera-facing wall.
 					var fl := int(rest.substr(0, colon))
 					var facade := rest.substr(colon + 1)
 					hide = fl > max_floor \
@@ -440,26 +476,6 @@ func _flush_rebuilds() -> void:
 			batcher.refresh_meshes()
 
 
-## Full in-place re-materialization of one chunk's geometry after persisted
-## destruction was re-applied to a FRESH batcher: frees the just-built layer
-## meshes and Static body, flushes again, updates the record. Only used on
-## chunk load when deltas exist.
-func _rebake_chunk(coord: Vector2i, batcher: MeshBatcher) -> Dictionary:
-	var node := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
-	if node != null:
-		node.queue_free()
-	var chunk := Node3D.new()
-	chunk.name = "Chunk_%d_%d" % [coord.x, coord.y]
-	add_child(chunk)
-	var stats := batcher.flush_into(chunk)
-	var rec: Dictionary = _chunks.get(coord, {})
-	rec["layers"] = batcher.layer_nodes
-	rec["static"] = chunk.get_node_or_null("Static")
-	rec["boxes"] = int(stats["boxes"])
-	rec["colliders"] = int(stats["colliders"])
-	return stats
-
-
 func _log(text: String) -> void:
 	_events.append("[%s] %s" % [GameClock.time_string(), text])
 	while _events.size() > 8:
@@ -560,13 +576,36 @@ func debug_lines() -> Array[String]:
 # --- Persistence contract ----------------------------------------------------
 
 ## Records survive saves; geometry is rebuilt deterministically on return.
-## Destruction deltas (destroyed cell keys + partial damage) ride inside the
-## per-chunk records, so destroyed geometry stays destroyed after reload.
+## Destruction deltas (destroyed cell keys + partial damage + door states)
+## ride inside the per-chunk records, so destroyed geometry stays destroyed
+## after reload. Resident doors are snapshotted HERE so saves always carry
+## their current open/closed state.
 func save_state() -> Dictionary:
+	_snapshot_resident_doors()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]
 	return {"records": recs}
+
+
+## Capture every resident Door's live state into its chunk record. Stable
+## key is the door manifest id (= the Door node name).
+func _snapshot_resident_doors() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(
+				NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		for child in node.get_children():
+			if child is Door and not (child as Door).is_queued_for_deletion():
+				var st: Dictionary = (child as Door).save_state()
+				_record_door(c, String(st.get("id", String(child.name))), st)
+
+
+## Public hook for Door nodes recording their own state changes / death.
+func record_door_state(coord: Vector2i, door_id: String,
+		state: Dictionary) -> void:
+	_record_door(coord, door_id, state)
 
 
 func load_state(data: Dictionary) -> void:

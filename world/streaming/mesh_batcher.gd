@@ -42,13 +42,24 @@ var _cell_damage := {}                 # id -> accumulated effective damage
 var _cracked := {}                     # id -> true (glass visual crack state)
 
 
-## Integrity of one structural cell, scaled by volume so big panels need
-## more punishment than small chips (tuned: a rocket's ~120 raw damage in
-## the falloff core destroys a handful of adjacent concrete cells but not a
-## whole wall; SMG pellets only ever chip).
+## Raw-damage integrity of one structural cell, scaled by volume so big
+## panels need more punishment than small chips. Material toughness comes
+## from the strength ladder here (NOT applied twice - callers accumulate
+## RAW damage and compare against this threshold):
+##   wood 1.0 < concrete 2.6 < steel 4.5, glass special-cased fragile.
+## Tuning vs game weapons (ItemDB): an SMG round is 9 raw, a shotgun volley
+## ~56 raw, a rocket ~130 raw at the falloff core.
+##   - wood wall module (~1.36 m3): ~52 raw  -> ~6 SMG rounds, 1 rocket
+##   - concrete module: ~136 raw             -> shrugs off SMGs, needs a
+##                                             second rocket to finish
+##   - steel module: ~235 raw                -> sustained explosives only
+##   - glass pane: fixed 22 raw              -> 1 SMG hit cracks, 3 shatter,
+##                                                shotgun volley shatters
 static func cell_integrity(size: Vector3, material: StringName) -> float:
+	if material == &"glass":
+		return 22.0
 	var vol := size.x * size.y * size.z
-	var base := clampf(sqrt(maxf(vol, 0.01)) * 26.0, 8.0, 90.0)
+	var base := clampf(sqrt(maxf(vol, 0.01)) * 45.0, 12.0, 160.0)
 	return base * float(MaterialDB.get_material(material).get("strength", 1.0))
 
 
@@ -76,9 +87,13 @@ func add_structural_box(pos: Vector3, size: Vector3, color: Color) -> void:
 ## destroy_box). Callers subdivide large surfaces into structural cells
 ## (0.75-1.25 m modules) so blasts carve believable holes instead of
 ## deleting whole walls; every cell is its own integrity record.
+## owner/floor: optional placement metadata (building id + storey index)
+## used by acceptance tests to tie every furniture collider to ITS floor.
 func add_destructible_box(pos: Vector3, size: Vector3, color: Color,
-		material: StringName, collide := true) -> void:
-	_append_spec(pos, size, Basis.IDENTITY, color, collide, false, material)
+		material: StringName, collide := true, owner_tag := "",
+		floor_i := -1) -> void:
+	_append_spec(pos, size, Basis.IDENTITY, color, collide, false, material,
+			owner_tag, floor_i)
 
 
 ## Manifest for a DYNAMIC destructible prop; ChunkBuilder.build() turns
@@ -95,12 +110,14 @@ func add_box(pos: Vector3, size: Vector3, color: Color, collide := false) -> voi
 ## a pure rotation (no scaling) or collision shapes will be distorted.
 func add_box_rotated(pos: Vector3, size: Vector3, basis: Basis,
 		color: Color, collide := false, roof_layer := false,
-		material := &"") -> void:
-	_append_spec(pos, size, basis, color, collide, roof_layer, material)
+		material := StringName(""), owner_tag := "", floor_i := -1) -> void:
+	_append_spec(pos, size, basis, color, collide, roof_layer, material,
+			owner_tag, floor_i)
 
 
 func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
-		collide: bool, roof_layer: bool, material: StringName) -> void:
+		collide: bool, roof_layer: bool, material: StringName,
+		owner_tag := "", floor_i := -1) -> void:
 	_box_count += 1
 	var id := _box_count
 	# Glass renders translucent (tinted pane); everything else is opaque.
@@ -110,6 +127,7 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 		"color": Color(color, alpha),
 		"collide": collide, "roof": roof_layer, "material": material,
 		"layer": _layers.back(),
+		"building_id": owner_tag, "floor_i": floor_i,
 	})
 	if collide:
 		_colliders.append({"pos": pos, "size": size.abs(), "basis": basis,
@@ -147,6 +165,32 @@ func collider_count() -> int:
 	return _colliders.size()
 
 
+## Test/introspection helper: applies the SAME visibility rules as
+## ChunkManager.apply_floor_gate() directly to this batcher's layer nodes,
+## writing the resulting visibility into `out` ({key: visible}) instead of
+## requiring a live ChunkManager. Keeps the gate contract unit-testable
+## against REAL generated layer_nodes (flush_into must have run).
+func apply_floor_gate_probe(tag: String, max_floor: int, faded: Array,
+		out: Dictionary) -> void:
+	for key: String in layer_nodes.keys():
+		var hide := false
+		if max_floor >= 0 and tag != "" and key.begins_with(tag + ":"):
+			var suffix := key.substr(tag.length() + 1)
+			if suffix.begins_with("roof"):
+				hide = true
+			elif suffix.begins_with("f"):
+				var rest := suffix.substr(1)
+				var colon := rest.find(":")
+				if colon >= 0:
+					var fl := int(rest.substr(0, colon))
+					var facade := rest.substr(colon + 1)
+					hide = fl > max_floor \
+							or (fl == max_floor and faded.has(facade))
+				else:
+					hide = int(rest) > max_floor
+		out[key] = not hide
+
+
 ## Full deterministic record of everything added (for --citytest equality).
 func manifest() -> Dictionary:
 	return {"boxes": _box_count, "colliders": _colliders.duplicate(true),
@@ -160,6 +204,9 @@ func _group_keys() -> Array:
 
 ## Builds nodes under `parent`: one MeshInstance3D per reveal LAYER (see
 ## layer_nodes) + "Static" StaticBody3D holding every collision shape.
+## PERSISTENCE CONTRACT: cells already marked destroyed NEVER regain a
+## CollisionShape3D here, so mesh and collision state always agree on
+## first materialization (restored deltas are applied BEFORE this flush).
 func flush_into(parent: Node3D, body_layer := 1) -> Dictionary:
 	_parent = parent
 	var stats := {"mesh_nodes": 0, "colliders": _colliders.size()}
@@ -181,6 +228,8 @@ func flush_into(parent: Node3D, body_layer := 1) -> Dictionary:
 		body.collision_mask = 0
 		parent.add_child(body)
 		for col in _colliders:
+			if _destroyed.has(int(col["id"])):
+				continue   # destroyed cell: no collider resurrection
 			var shape_node := CollisionShape3D.new()
 			var shape := BoxShape3D.new()
 			shape.size = col["size"]
@@ -246,8 +295,9 @@ func damage_state() -> Dictionary:
 
 
 ## Restore partial-damage state after a chunk rebuild (keys as produced by
-## damage_state()). Also re-marks any cells whose restored damage already
-## meets integrity as destroyed WITHOUT spawning debris again.
+## damage_state()). Values are ACCUMULATED RAW damage; also re-marks any
+## cells whose restored raw damage already meets their integrity as
+## destroyed WITHOUT spawning debris again.
 func load_damage_state(data: Dictionary) -> void:
 	_cell_damage.clear()
 	for spec in _specs:
@@ -263,10 +313,11 @@ func load_damage_state(data: Dictionary) -> void:
 			_cell_damage[id] = dmg
 
 
-## Applies damage to a structural cell (unified model, P0-G):
-##   effective = raw / MaterialDB strength, accumulated per cell.
-## The cell is destroyed ONLY when accumulated effective damage reaches its
-## integrity. Glass additionally flips to a cracked visual at >= 40%.
+## Applies damage to a structural cell. `amount` is the RAW incoming
+## damage; material toughness enters exactly ONCE via this comparison
+## against cell_integrity() (which is scaled by MaterialDB strength):
+##   total_raw >= integrity -> destroyed.
+## Glass additionally flips to a cracked visual at >= 40% of its integrity.
 ## Returns {} when nothing changed; otherwise
 ##   {shattered: true, ...spec}      - cell destroyed this hit
 ##   {cracked: true, ...spec}        - glass crossed the crack threshold
@@ -278,16 +329,19 @@ func damage_box(id: int, amount: float) -> Dictionary:
 			var material: StringName = spec["material"]
 			if material == &"":
 				return {}   # indestructible plain structural box
-			var effective := MaterialDB.effective_damage(amount, material)
-			var total := float(_cell_damage.get(id, 0.0)) + effective
+			# Accumulate RAW damage; the strength ladder lives only in
+			# cell_integrity(), so concrete/wood/steel differ by their
+			# thresholds instead of a double-applied divisor.
+			var total := float(_cell_damage.get(id, 0.0)) + amount
 			_cell_damage[id] = total
-			if total >= cell_integrity(spec["size"], material):
+			var integ := cell_integrity(spec["size"], material)
+			if total >= integ:
 				var info := destroy_box(id)
 				info["shattered"] = true
 				return info
 			# Cracked-glass visual feedback only.
 			if material == &"glass" and not _cracked.has(id) \
-					and total >= cell_integrity(spec["size"], material) * 0.4:
+					and total >= integ * 0.4:
 				_cracked[id] = true
 				var info2: Dictionary = spec.duplicate()
 				info2["cracked"] = true

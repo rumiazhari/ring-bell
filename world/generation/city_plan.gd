@@ -269,16 +269,29 @@ func _buildings_for_cell(block: Dictionary, cell: Vector2i) -> Array:
 		_building_cache[cell] = result
 		return result
 
-	# 1. Corner buildings (edge ids C0..C3; door faces the longer street side).
+	# 1. Corner buildings (edge ids C0..C3). Door edge MUST be one of the
+	# corner's TWO STREET-FACING facades (P0-7) - the other two faces look
+	# into the block interior. The longer street facade wins; equal
+	# frontages resolve deterministically to the first listed edge.
 	var corners := [
 		Rect2(br.position.x, br.position.y, d_w, d_n),                       # NW
 		Rect2(br.end.x - d_e, br.position.y, d_e, d_n),                      # NE
 		Rect2(br.end.x - d_e, br.end.y - d_s, d_e, d_s),                     # SE
 		Rect2(br.position.x, br.end.y - d_s, d_w, d_s),                      # SW
 	]
+	# Valid street-facing door edges per corner (N=0 E=1 S=2 W=3):
+	#   NW: N or W | NE: N or E | SE: S or E | SW: S or W
+	var corner_edges := [[0, 3], [0, 1], [2, 1], [2, 3]]
 	for c in 4:
 		var lot: Rect2 = corners[c]
-		var edge := 0 if (lot.size.x >= lot.size.y) else 1
+		var edges: Array = corner_edges[c]
+		# Facade length of each candidate edge: horizontal edges (N/S) run
+		# along lot.size.x, vertical edges (E/W) along lot.size.y.
+		var e0_len: float = lot.size.x if edges[0] == 0 or edges[0] == 2 \
+				else lot.size.y
+		var e1_len: float = lot.size.x if edges[1] == 0 or edges[1] == 2 \
+				else lot.size.y
+		var edge: int = edges[0] if e0_len >= e1_len else edges[1]
 		result.append(_make_spec(lot, edge, cell, c, rng, true))
 
 	# 2. Edge rows between corners.

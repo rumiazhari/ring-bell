@@ -154,17 +154,17 @@ func close() -> void:
 	_drive_to(0.0)
 
 
+## The leaf is ALWAYS physical (P1-10): closed it blocks the doorway,
+## mid-swing and fully open it blocks wherever the visible leaf is.
+## Navigation must route through the clear APERTURE, never by deleting
+## the leaf's collision.
 func _drive_to(target: float) -> void:
 	set_physics_process(true)
 	_leaf.freeze = false
-	# Solid while moving/closed. An OPEN leaf drops out of collision: it
-	# otherwise juts into rooms (e.g. across the stairwell of stair-side
-	# entrances) and blocks navigation.
 	_leaf.collision_layer = LAYER_ENVIRONMENT
 	if absf(_leaf.rotation.y - target) <= SETTLE_EPS \
 			and _leaf.angular_velocity.length() < 0.05:
 		_leaf.freeze = true
-		_leaf.collision_layer = 0 if target != 0.0 else LAYER_ENVIRONMENT
 		state = DoorState.OPEN if target != 0.0 else DoorState.CLOSED
 		_update_prompt()
 		return
@@ -181,9 +181,19 @@ func is_open() -> bool:
 	return state == DoorState.OPEN
 
 
+## Semantics (P1-10): the leaf body itself always blocks; only a DESTROYED
+## door stops being solid. A closed leaf additionally seals the doorway,
+## so callers that ask "can I pass the opening" get false while closed.
 func is_solid() -> bool:
-	# A physically swinging leaf ALWAYS blocks while it moves.
-	return not is_open()
+	if _leaf == null or not is_instance_valid(_leaf):
+		return false   # destroyed / never built: nothing to block with
+	return true
+
+
+## True when the DOORWAY (the aperture) can be walked through right now:
+## an open leaf swings clear of the opening, a closed one seals it.
+func is_passage_clear() -> bool:
+	return state == DoorState.OPEN or state == DoorState.OPENING
 
 
 func take_structural_damage(amount: float, source_id: StringName = &"") -> void:
@@ -234,7 +244,8 @@ func _physics_process(delta: float) -> void:
 			_bounce_open()
 		elif reached and _target_angle_cached != 0.0:
 			_leaf.freeze = true
-			_leaf.collision_layer = 0   # open doors never block navigation
+			# P1-10: an open leaf STAYS collidable at its swung position.
+			_leaf.collision_layer = LAYER_ENVIRONMENT
 			state = DoorState.OPEN
 			_update_prompt()
 		else:
@@ -263,25 +274,26 @@ func _physics_process(delta: float) -> void:
 	_last_yaw = ang
 
 
-## Blocked while closing: reopen fully and drop out of collision.
+## Blocked while closing: reopen fully. The leaf stays PHYSICAL at its
+## swung position (P1-10) - it juts into the room and that is the point.
 func _bounce_open() -> void:
 	_leaf.angular_velocity = Vector3.ZERO
 	_leaf.freeze = true
-	_leaf.collision_layer = 0
+	_leaf.collision_layer = LAYER_ENVIRONMENT
 	state = DoorState.OPEN
 	_update_prompt()
 
 
-## Jam fallback: declare victory at the current pose.
+## Jam fallback: declare victory at the current pose. A jammed HALF-OPEN
+## door must NOT become intangible - keep the collision on (P1-10).
 func _force_settle() -> void:
 	_leaf.angular_velocity = Vector3.ZERO
 	_leaf.freeze = true
 	if state == DoorState.CLOSING:
-		_leaf.collision_layer = LAYER_ENVIRONMENT
 		state = DoorState.CLOSED
 	else:
-		_leaf.collision_layer = 0
 		state = DoorState.OPEN
+	_leaf.collision_layer = LAYER_ENVIRONMENT
 	_update_prompt()
 
 
@@ -294,6 +306,15 @@ func _on_destroyed() -> void:
 	interactable.enabled = false
 	remove_from_group(&"interactables")
 	remove_from_group(&"doors")
+	# PERSISTENCE (door state): record the death under the door's manifest
+	# id in its owning chunk's delta, so the chunk NEVER respawns it.
+	var coord := WorldSeed.chunk_coord(global_position.x, global_position.z)
+	for mgr in get_tree().get_nodes_in_group(&"chunk_manager"):
+		if mgr.has_method(&"record_door_state"):
+			mgr.record_door_state(coord,
+					str(manifest.get("id", "")),
+					{"id": str(manifest.get("id", "")),
+							"open": false, "destroyed": true})
 	var w := float(manifest.get("width", 1.5))
 	var h := float(manifest.get("height", 2.25))
 	# Burst at the LEAF's current center (it may be mid-swing), not the
@@ -316,14 +337,34 @@ func _update_prompt() -> void:
 			interactable.prompt = "Open door"
 
 
+## Persisted per-door record (stable key = manifest id, stored in the
+## owning chunk's delta). Covers open/closed AND destroyed so a blasted
+## door never respawns when its chunk streams back or a save reloads.
 func save_state() -> Dictionary:
-	return {"open": is_open(), "id": str(manifest.get("id", ""))}
+	# DestructibleComponent exposes its destruction flag as the BOOL MEMBER
+	# `is_destroyed` (not a method); read it defensively (a destroyed Door
+	# normally frees itself via _on_destroyed before anything can ask).
+	var gone := false
+	if _destructible != null and is_instance_valid(_destructible):
+		gone = bool(_destructible.is_destroyed)
+	return {
+		"id": str(manifest.get("id", "")),
+		"open": is_open(),
+		"locked": bool(manifest.get("locked", false)),
+		"destroyed": gone,
+	}
 
 
 func load_state(data: Dictionary) -> void:
 	if bool(data.get("open", false)):
 		_leaf.rotation.y = _open_angle
 		_leaf.freeze = true
-		_leaf.collision_layer = 0   # open doors never block navigation
+		# Open leaf stays collidable at its swung position (P1-10).
+		_leaf.collision_layer = LAYER_ENVIRONMENT
 		state = DoorState.OPEN
+	elif not bool(data.get("destroyed", false)):
+		_leaf.rotation.y = 0.0
+		_leaf.freeze = true
+		_leaf.collision_layer = LAYER_ENVIRONMENT
+		state = DoorState.CLOSED
 	_update_prompt()

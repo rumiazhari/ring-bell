@@ -287,11 +287,13 @@ func _update_city_interior() -> void:
 		var center: Vector2 = (spec["rect"] as Rect2).get_center()
 		var owner_coord := WorldSeed.chunk_coord(center.x, center.y)
 		var tag := str(spec["id"])
-		# Camera-sector facades to fade on the resident storey.
-		var cam_xz := Vector2.ZERO
+		# Camera-sector facades to fade on the resident storey. P0-4: use
+		# the ACTUAL Camera3D lens position - the rig origin tracks the
+		# PLAYER, so it sits at the player and its "sector" was near zero.
+		var cam_xz := p
 		if camera_rig != null and is_instance_valid(camera_rig):
-			cam_xz = Vector2(camera_rig.global_position.x,
-					camera_rig.global_position.z)
+			cam_xz = Vector2(camera_rig.camera_world_position().x,
+					camera_rig.camera_world_position().z)
 		var new_faded: Array = InteriorProbe.faded_facades(p, cam_xz) \
 				if floor_i < n else []
 		if owner_coord != _gate_coord or tag != _gate_tag:

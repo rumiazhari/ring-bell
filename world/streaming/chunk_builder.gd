@@ -69,8 +69,13 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 ## SPLIT COSTS HERE: fill_batcher() is pure data (run it on worker threads
 ## with a PRIVATE CityPlan copy - see ChunkManager._fill_job); build()
 ## materializes on the main thread only.
+##
+## P0-2: this is the FIRST and ONLY materialization of a (already
+## damage-restored) batcher - doors/props spawn exactly once here.
+## dead_doors: {door manifest id: true} - doors recorded destroyed in the
+## persistence delta are NOT respawned when their chunk streams back in.
 static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
-		batcher: MeshBatcher = null) -> Dictionary:
+		batcher: MeshBatcher = null, dead_doors := {}) -> Dictionary:
 	if batcher == null:
 		batcher = MeshBatcher.new()
 		fill_batcher(batcher, plan, coord)
@@ -87,6 +92,8 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	for spec in _owned_buildings(plan, rect, coord):
 		buildings += 1
 		for dm: Dictionary in spec.get("doors", []):
+			if dead_doors.has(String(dm["id"])):
+				continue   # destroyed doors stay destroyed across reloads
 			var door := Door.new()
 			door.name = String(dm["id"])
 			door.setup(dm)

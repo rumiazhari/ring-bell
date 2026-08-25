@@ -138,9 +138,13 @@ func _bounce_rigid_bodies(pos: Vector3, radius: float, damage: float) -> void:
 					away.normalized() * damage * falloff * 0.12 * body.mass)
 
 
-## The batched city mesh is voxel-destructible: blasts carve the hit boxes
-## out of the chunk (collision off + mesh re-bake) and spawn matching debris
-## in their place. Weak hits only chip dust off the surface.
+## The batched city mesh is voxel-destructible, but ONLY through the
+## structural-integrity model (P0-1): each blast samples a few exposed
+## surface cells and feeds them distance-falloffed raw damage via
+## ChunkManager.damage_box() -> MeshBatcher damage accumulation.
+## A ray hit is cell DISCOVERY, never an automatic deletion - untouched
+## structures can not randomly vanish, and one hit can not bypass material
+## strength. Weak blasts only chip dust off the surface.
 func _chip_static_geometry(pos: Vector3, radius: float,
 		material_hint: StringName, damage := 0.0) -> void:
 	var space := _space()
@@ -149,6 +153,8 @@ func _chip_static_geometry(pos: Vector3, radius: float,
 	var mat := MaterialDB.get_material(material_hint)
 	var color: Color = mat.get("debris_color")
 	var energy := damage_to_energy(damage_for_radius(radius))
+	# Deduplicate so several rays landing on one cell do not multiply it.
+	var hit_cells: Array[Node3D] = []
 	for i in CHIP_RAYS:
 		var dir := Vector3(randf_range(-1, 1), randf_range(-0.35, 0.75),
 				randf_range(-1, 1)).normalized()
@@ -158,16 +164,38 @@ func _chip_static_geometry(pos: Vector3, radius: float,
 		if hit.is_empty():
 			continue
 		if damage >= 40.0:
-			var info := _resolve_voxel(hit)
-			if not info.is_empty():
-				_voxel_debris(info, energy)
-				continue
+			# Discover the batched cell under this ray (no destruction).
+			var node := _voxel_node(hit)
+			if node != null and not hit_cells.has(node):
+				hit_cells.append(node)
+			continue
 		var point: Vector3 = hit["position"]
 		var normal: Vector3 = hit["normal"]
 		spawn_piece(point + normal * 0.08,
 				Vector3.ONE * randf_range(0.09, 0.2),
 				color.lightened(randf_range(-0.05, 0.15)), material_hint,
 				(normal + Vector3.UP * 0.7).normalized() * energy * 0.5)
+	# Structural progress: every discovered cell takes the SAME explosion-
+	# grade raw damage shaped by ITS OWN distance falloff, then goes through
+	# the accumulated-damage/integrity ladder (material resistance applies;
+	# wood breaks long before concrete, steel resists both).
+	for node in hit_cells:
+		var center := node.global_position \
+				if node is Node3D else Vector3.ZERO
+		var d: float = center.distance_to(pos)
+		var falloff: float = clampf(1.0 - d / maxf(radius, 0.01), 0.15, 1.0)
+		var raw := damage * falloff
+		var applied := _damage_voxel(node, raw)
+		if not applied.is_empty():
+			if bool(applied.get("shattered", false)):
+				_voxel_debris(applied, energy)
+			else:
+				# Still standing: a cosmetic chip sells the impact.
+				spawn_piece(center + Vector3.UP * 0.4,
+						Vector3.ONE * randf_range(0.09, 0.18),
+						color.lightened(randf_range(-0.05, 0.15)),
+						StringName(applied.get("material", material_hint)),
+						Vector3.UP * energy * 0.4)
 
 
 ## Bullet-grade static hits: glass cracks and shatters by damage level;
@@ -197,8 +225,34 @@ func bullet_hit_static(hit: Dictionary, damage: float) -> void:
 			&"concrete", (normal * 0.7 + Vector3.UP * 0.5) * 1.6)
 
 
+## Resolve a physics hit to its batched cell's CollisionShape3D WITHOUT
+## touching it. Returns the shape node (meta vox_id set) or null.
+func _voxel_node(hit: Dictionary) -> Node3D:
+	var body: Object = hit.get("collider")
+	if body is StaticBody3D and hit.has("shape"):
+		var sb := body as StaticBody3D
+		var owner_id := sb.shape_find_owner(int(hit["shape"]))
+		var node := sb.shape_owner_get_owner(owner_id)
+		if node is Node3D and (node as Node3D).has_meta("vox_id"):
+			return node
+	return null
+
+
+## Route raw damage into a batched structural cell through the REAL
+## ChunkManager.damage_box() path (accumulation + material integrity).
+## Returns ChunkManager's result ({shattered/cracked, pos, size, ...}) or {}.
+func _damage_voxel(shape_node: Node3D, raw_amount: float) -> Dictionary:
+	if shape_node == null or not shape_node.has_meta("vox_id"):
+		return {}
+	for mgr in get_tree().get_nodes_in_group(&"chunk_manager"):
+		if mgr.has_method(&"damage_box"):
+			return mgr.damage_box(shape_node, raw_amount)
+	return {}
+
+
 ## Resolve a physics hit to its batched box spec and destroy it via the
-## owning ChunkManager.
+## owning ChunkManager. Retained for direct-removal callers (tests,
+## scripted demolition); the explosion path NEVER uses this anymore.
 func _resolve_voxel(hit: Dictionary) -> Dictionary:
 	var body: Object = hit.get("collider")
 	if body is StaticBody3D and hit.has("shape"):

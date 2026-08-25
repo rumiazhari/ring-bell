@@ -70,28 +70,59 @@ func _run() -> void:
 	if doors.size() > 0:
 		var door: Node = doors[0]
 		var dm: Dictionary = door.manifest
-		door.call("open")
-		await _wait(0.8)
-		var opened: bool = door.call("is_open")
-		_check("door opens via API", opened)
-		# The COLLIDER must actually move with the leaf: a ray fired through
-		# the doorway CENTER must now pass (previously it hit the leaf).
-		# NOTE: aim at the manifest position - the geometric opening center.
-		# The Door NODE origin sits at the HINGE, whose face line coincides
-		# with the pier plane; a ray along that exact line grazes the pier
-		# and reports a false positive.
+		# 4a. CLOSED: a ray through the doorway center hits the leaf.
 		var dpos: Vector3 = dm.get("position")
 		var yaw: float = float(dm.get("yaw", 0.0))
 		var inw := Vector3(sin(yaw), 0, cos(yaw))   # facade inward normal
 		var space: PhysicsDirectSpaceState3D = door.get_world_3d().direct_space_state
-		var q := PhysicsRayQueryParameters3D.create(
+		var q_closed := PhysicsRayQueryParameters3D.create(
 				dpos - inw * 0.6 + Vector3(0, 1.1, 0),
 				dpos + inw * 1.4 + Vector3(0, 1.1, 0), 1)
-		q.exclude = [(door.call("_pivot_rid") as RID)]
-		var clear: bool = space.intersect_ray(q).is_empty()
-		_check("open doorway physically passable", clear)
+		q_closed.exclude = [player.get_rid()]
+		var hit_closed := space.intersect_ray(q_closed)
+		var blocked_by_leaf: bool = not hit_closed.is_empty() \
+				and hit_closed.get("collider") == door.call("_pivot_ref")
+		_check("closed leaf blocks doorway ray", blocked_by_leaf,
+				str(hit_closed.get("collider")))
+		# 4b. Open it; the leaf must reach its expected swing angle.
+		door.call("open")
+		await _wait(1.2)
+		var opened: bool = door.call("is_open")
+		_check("door opens via API", opened)
+		var leaf_yaw: float = wrapf(
+				(door.call("_pivot_ref") as Node3D).rotation.y, -PI, PI)
+		var want_yaw: float = absf(wrapf(
+				float(door.get("_open_angle")), -PI, PI))
+		_check("open leaf reaches swing angle range",
+				absf(absf(leaf_yaw) - want_yaw) < deg_to_rad(6.0),
+				"leaf=%.1fdeg target=%.1fdeg"
+						% [rad_to_deg(leaf_yaw), rad_to_deg(want_yaw)])
+		# 4c. OPEN: the doorway center is clear WITHOUT excluding the leaf
+		# RID - if the leaf still hung across the opening this would catch it.
+		var q_open := PhysicsRayQueryParameters3D.create(
+				dpos - inw * 0.6 + Vector3(0, 1.1, 0),
+				dpos + inw * 1.4 + Vector3(0, 1.1, 0), 1)
+		q_open.exclude = [player.get_rid()]
+		var clear: bool = space.intersect_ray(q_open).is_empty()
+		_check("open doorway physically passable (no RID exclusion)", clear)
+		# 4d. OPEN: the leaf itself is STILL PHYSICAL at its swung position -
+		# a ray aimed at the rotated leaf's actual position must hit IT.
+		var leaf := (door.call("_pivot_ref") as Node3D)
+		var w := float(dm.get("width", 1.5))
+		var side := -1.0 if str(dm.get("hinge", "left")) == "right" else 1.0
+		var leaf_mid_world := leaf.global_transform * Vector3(-side * w * 0.5,
+				1.1, 0.0)
+		var q_leaf := PhysicsRayQueryParameters3D.create(
+				dpos + Vector3(0, 1.1, 0),
+				leaf_mid_world + (leaf_mid_world - dpos).normalized() * 0.5, 1)
+		q_leaf.exclude = [player.get_rid()]
+		var hit_leaf := space.intersect_ray(q_leaf)
+		var leaf_solid: bool = not hit_leaf.is_empty() \
+				and hit_leaf.get("collider") == leaf
+		_check("open leaf still collidable at swung position", leaf_solid,
+				str(hit_leaf.get("collider")))
 		door.call("close")
-		await _wait(0.8)
+		await _wait(1.2)
 		_check("door closes via API", not door.call("is_open"))
 
 	# --- 5. Deterministic ids survive unload/reload ---------------------------
@@ -137,6 +168,22 @@ func _run() -> void:
 	# --- 6. Stair climb probe --------------------------------------------------
 	_check("stair probe reaches upper floor", await _stair_probe_reaches_floor(mgr))
 
+	# --- 6b. Camera: real lens position + facade sectors + zoom memory (P0-4/5)
+	var rig := _camera_rig()
+	_check("camera rig found", rig != null)
+	if rig != null:
+		_camera_sector_and_zoom(rig, player, mgr)
+
+	# --- 7. REAL streamed destruction persistence (P0-2) ------------------------
+	# Destroy a structural cell through the runtime path, walk away until
+	# its chunk truly unloads, return, and verify the real _materialize()
+	# rebuilt it WITHOUT the destroyed mesh/collider and WITH doors/props.
+	_check("streamed destruction survives unload/reload",
+			await _persistence_roundtrip(mgr, player))
+	# --- 8. Door state persistence across unload/reload -------------------------
+	_check("destroyed/opened door states survive streaming",
+			await _door_persistence(mgr, player))
+
 	_finish()
 
 
@@ -158,6 +205,11 @@ func _door_ids() -> Array[String]:
 		out.append(String(d.name))
 	out.sort()
 	return out
+
+
+func _camera_rig() -> FollowCamera:
+	var rigs := get_tree().get_nodes_in_group(&"camera_rig")
+	return rigs[0] if not rigs.is_empty() else null
 
 
 ## Fire a horizontal ray at a nearby tall building's north wall from
@@ -283,6 +335,259 @@ func _until(predicate: Callable, timeout: float) -> bool:
 		await get_tree().process_frame
 		waited += get_process_delta_time()
 	return predicate.call()
+
+
+## P0-4 + P0-5 acceptance against the LIVE FollowCamera:
+##   - camera_world_position() returns the actual Camera3D lens position
+##     (differs from the rig/player origin by the full boom length);
+##   - horizontal_view_direction() points from player to lens and its
+##     sector matches faded_facades();
+##   - interior mode pulls presentation distance to <= INTERIOR_DISTANCE
+##     while _user_distance is preserved, and leaving restores it (no snap).
+func _camera_sector_and_zoom(rig: FollowCamera, player: Node3D,
+		mgr: ChunkManager) -> void:
+	var lens := rig.camera_world_position()
+	var lens_offset := Vector2(lens.x - player.global_position.x,
+			lens.z - player.global_position.z)
+	_check("camera API exposes REAL lens offset (>6 m)",
+			lens_offset.length() > 6.0, str(lens_offset.length()))
+	var view_dir := rig.horizontal_view_direction()
+	_check("view direction matches lens sector",
+			view_dir.length() > 0.9 and absf(
+					view_dir.angle_to(lens_offset.normalized())) < 0.05)
+	# Sector math on the live direction: N/E/S/W classification agrees with
+	# InteriorProbe.faded_facades().
+	var faked := InteriorProbe.faded_facades(Vector2.ZERO, view_dir)
+	var sector_ok := false
+	if view_dir.y < -0.35:
+		sector_ok = faked.has("N")
+	elif view_dir.y > 0.35:
+		sector_ok = faked.has("S")
+	elif view_dir.x > 0.35:
+		sector_ok = faked.has("E")
+	elif view_dir.x < -0.35:
+		sector_ok = faked.has("W")
+	else:
+		sector_ok = true   # diagonal tolerance zone
+	_check("faded_facades sector matches live view direction", sector_ok,
+			str(faked))
+	# Zoom state separation (P0-5): driven through the WORLD'S OWN interior
+	# detection - main.gd re-asserts the rig state every frame, so we stand
+	# the player inside a REAL building instead of toggling the flag by hand.
+	rig.set("_user_distance", 18.0)
+	rig.set_interior(false)
+	await _wait(1.5)   # let presentation ease out fully
+	var spec_in := {}
+	for cand in mgr.plan.buildings_in_rect(Rect2(
+			player.global_position.x - 90.0,
+			player.global_position.z - 90.0, 180.0, 180.0)):
+		if int(cand["floors"]) >= 1:
+			spec_in = cand
+			break
+	if spec_in.is_empty():
+		_check("interior zoom test had a building available", false)
+		return
+	var c_in: Vector2 = (spec_in["rect"] as Rect2).get_center()
+	var saved_pos: Vector3 = player.global_position
+	player.global_position = Vector3(c_in.x, 0.3, c_in.y)
+	var ok_enter := await _until(func() -> bool:
+		return bool(rig.is_interior()), 6.0)
+	var ok_in := await _until(func() -> bool:
+		var pd: float = rig.get("_presentation_distance")
+		return pd <= FollowCamera.INTERIOR_DISTANCE + 0.25, 8.0)
+	var pres_in: float = rig.get("_presentation_distance")
+	var user_kept: float = rig.get("_user_distance")
+	_check("interior presentation <= 9 m",
+			ok_enter and ok_in and pres_in <= 9.25,
+			"entered=%s presentation=%.2f" % [str(ok_enter), pres_in])
+	_check("interior keeps user zoom preference (~18 m)",
+			absf(user_kept - 18.0) < 0.01, "user=%.2f" % user_kept)
+	player.global_position = Vector3(saved_pos.x, 0.3, saved_pos.z)
+	var ok_out := await _until(func() -> bool:
+		return not bool(rig.is_interior()) \
+				and float(rig.get("_presentation_distance")) >= 17.5, 12.0)
+	_check("exit restores exterior zoom smoothly", ok_out,
+			"presentation=%.2f" % float(rig.get("_presentation_distance")))
+	rig.set("_user_distance", FollowCamera.DEFAULT_DISTANCE)
+
+
+## P0-2 REAL streaming acceptance: destroy a structural cell through the
+## actual ChunkManager path, force a genuine unload (player leaves the
+## hysteresis ring), return, wait for the real _materialize(), then assert
+## mesh+collision agree (destroyed cell gone from BOTH) and doors/props
+## still exist. No manual batcher reconstruction anywhere.
+func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
+	# Pick the chunk under the player and find a destructible wall cell.
+	var coord := WorldSeed.chunk_coord(
+			player.global_position.x, player.global_position.z)
+	if not mgr.is_resident(coord):
+		return false
+	var rec: Dictionary = mgr._chunks[coord]
+	var batcher: MeshBatcher = rec["batcher"]
+	var static_body: Node = rec["static"]
+	if static_body == null or not is_instance_valid(static_body):
+		return false
+	var by_vox := {}
+	for sh in (static_body as Node).get_children():
+		if sh is CollisionShape3D and not (sh as CollisionShape3D).disabled \
+				and sh.has_meta("vox_id"):
+			by_vox[int(sh.get_meta("vox_id"))] = sh
+	var target_shape: CollisionShape3D = null
+	var target_key := ""
+	for s in batcher.specs():
+		if StringName(s["material"]) != &"concrete":
+			continue
+		var sid := int(s["id"])
+		if by_vox.has(sid):
+			target_shape = by_vox[sid]
+			target_key = batcher.cell_key_for_id(sid)
+			break
+	if target_shape == null or target_key == "":
+		print("[CityRuntime] no destructible concrete cell found")
+		return false
+	var doors_before := 0
+	var props_before := 0
+	var chunk_node := get_tree().current_scene \
+			.get_node_or_null(NodePath("Chunks/Chunk_%d_%d"
+					% [coord.x, coord.y]))
+	if chunk_node != null:
+		for child in chunk_node.get_children():
+			if child is Door:
+				doors_before += 1
+			elif child is DestructibleProp:
+				props_before += 1
+	# Destroy through the runtime API.
+	if mgr.destroy_box(target_shape).is_empty():
+		return false
+	# Leave far beyond the hysteresis ring so this chunk truly unloads.
+	var away := player.global_position + Vector3(480.0, 0, 0)
+	player.global_position = away
+	if not await _until(func() -> bool:
+				return not mgr.is_resident(coord), 60.0):
+		print("[CityRuntime] owner chunk never unloaded")
+		return false
+	# Return; the REAL _materialize() rebuilds it.
+	player.global_position = Vector3(away.x - 480.0, away.y, away.z)
+	if not await _until(func() -> bool:
+			return mgr.is_resident(coord) \
+					and mgr.pending_count() == 0, 60.0):
+		print("[CityRuntime] owner chunk never returned")
+		return false
+	# Assert on the REBUILT record.
+	var rec2: Dictionary = mgr._chunks[coord]
+	var batcher2: MeshBatcher = rec2["batcher"]
+	var mesh_absent := true
+	for s in batcher2.specs():
+		if batcher2.is_destroyed(int(s["id"])):
+			continue
+		if batcher2.cell_key_for_id(int(s["id"])) == target_key:
+			mesh_absent = false   # destroyed cell came back to the mesh
+			break
+	if not mesh_absent:
+		print("[CityRuntime] destroyed cell re-materialized as MESH")
+		return false
+	var collider_absent := true
+	var static2: Node = rec2["static"]
+	if static2 == null or not is_instance_valid(static2):
+		return false
+	for sh in static2.get_children():
+		if sh is CollisionShape3D and sh.has_meta("vox_id") \
+				and int(sh.get_meta("vox_id")) in batcher2._destroyed:
+			collider_absent = false
+	if not collider_absent:
+		print("[CityRuntime] destroyed cell re-materialized as COLLIDER")
+		return false
+	# Doors/props survived the rebake.
+	var doors_after := 0
+	var props_after := 0
+	var chunk2 := get_tree().current_scene \
+			.get_node_or_null(NodePath("Chunks/Chunk_%d_%d"
+					% [coord.x, coord.y]))
+	if chunk2 == null:
+		return false
+	for child in chunk2.get_children():
+		if child is Door:
+			doors_after += 1
+		elif child is DestructibleProp:
+			props_after += 1
+	if doors_after < doors_before or props_after < props_before:
+		print("[CityRuntime] doors/props lost on reload (%d/%d -> %d/%d)"
+				% [doors_before, props_before, doors_after, props_after])
+		return false
+	print(("[CityRuntime] persistence ok: key %s stays destroyed, "
+			+ "%d doors / %d props intact") % [target_key.substr(0, 16),
+					doors_after, props_after])
+	return true
+
+
+## Door state persistence: destroy one door, open another (or the same if
+## only one exists), stream the chunk out and back, verify the destroyed
+## door did NOT respawn and survivors restore their logical state.
+func _door_persistence(mgr: ChunkManager, player: Node3D) -> bool:
+	var origin := WorldSeed.chunk_coord(
+			player.global_position.x, player.global_position.z)
+	if not await _until(func() -> bool:
+			return mgr.pending_count() == 0, 40.0):
+		return false
+	var door_nodes := get_tree().get_nodes_in_group(&"doors")
+	if door_nodes.is_empty():
+		print("[CityRuntime] no doors for persistence test")
+		return false
+	# Only doors INSIDE the chunk we are about to cycle prove anything.
+	var local_doors: Array[Node] = []
+	for d in door_nodes:
+		var p3: Vector3 = (d as Node3D).global_position
+		if WorldSeed.chunk_coord(p3.x, p3.z) == origin:
+			local_doors.append(d)
+	if local_doors.is_empty():
+		print("[CityRuntime] no doors in the origin chunk")
+		return true   # nothing to assert here; not a failure of persistence
+	# Destroy one local door, open another if possible.
+	var victim: Node = local_doors[0]
+	var victim_id := String(victim.name)
+	victim.call("take_structural_damage", 4000.0, &"player")
+	await _wait(0.3)
+	var opener: Node = null
+	for d in local_doors:
+		if d != victim:
+			opener = d
+			break
+	var opened_id := ""
+	if opener != null:
+		opener.call("open")
+		await _wait(1.2)
+		if bool(opener.call("is_open")):
+			opened_id = String(opener.name)
+	# Stream the whole area out and back.
+	var away := player.global_position + Vector3(544.0, 0, 0)
+	player.global_position = away
+	if not await _until(func() -> bool:
+			return not mgr.is_resident(origin), 60.0):
+		return false
+	player.global_position = Vector3(away.x - 544.0, away.y, away.z)
+	if not await _until(func() -> bool:
+			return mgr.is_resident(origin) \
+					and mgr.pending_count() == 0, 60.0):
+		return false
+	# The destroyed door must NOT be back.
+	var ids_now: Array[String] = _door_ids()
+	if ids_now.has(victim_id):
+		print("[CityRuntime] destroyed door %s respawned" % victim_id)
+		return false
+	# Any door recorded open must have come back open.
+	var dstates: Dictionary = mgr.door_states(origin)
+	for d in get_tree().get_nodes_in_group(&"doors"):
+		var did := String(d.name)
+		if dstates.has(did) and bool(dstates[did].get("open", false)) \
+				and not bool(d.call("is_open")):
+			print("[CityRuntime] door %s lost its OPEN state" % did)
+			return false
+	if opened_id != "" and dstates.has(opened_id) \
+			and bool(dstates[opened_id].get("open", false)):
+		print("[CityRuntime] opened door %s restored open" % opened_id)
+	return true
+
+
 
 
 func _wait(seconds: float) -> void:

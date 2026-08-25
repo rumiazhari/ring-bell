@@ -5,3 +5,9 @@
 # OS junk
 Thumbs.db
 Desktop.ini
+
+# Autopilot suite logs
+tools/out_*.txt
+
+# Autopilot run lock
+.autopilot.lock

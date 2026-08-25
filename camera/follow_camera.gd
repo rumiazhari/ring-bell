@@ -30,7 +30,13 @@ const PRESENT_SPEED := 5.0         # interior/exterior blend rate (pitch AND dis
 var target: Node3D = null
 
 var _yaw := 0.0
-var _distance := DEFAULT_DISTANCE
+# P0-5 SEPARATE ZOOM STATES: `_user_distance` is the player's requested
+# boom length (mouse wheel); `_presentation_distance` is what the camera
+# actually renders RIGHT NOW. Interior mode pulls the PRESENTATION in to
+# INTERIOR_DISTANCE but never writes over the user's preference, so
+# leaving a building eases back out to exactly where they had it.
+var _user_distance := DEFAULT_DISTANCE
+var _presentation_distance := DEFAULT_DISTANCE
 var _pitch := PITCH_DEG
 var _interior := false
 var _shake := 0.0
@@ -53,8 +59,30 @@ func _ready() -> void:
 func _apply_camera_transform() -> void:
 	_camera.rotation_degrees = Vector3(_pitch, 0, 0)
 	var boom := Vector3(0, 0, 1).rotated(Vector3.RIGHT, deg_to_rad(_pitch))
-	_cam_base = boom * _distance
+	_cam_base = boom * _presentation_distance
 	_camera.position = _cam_base
+
+
+## P0-4: world position of the ACTUAL Camera3D lens (not the player-follow
+## rig origin) - facade sector logic must look from where the view really is.
+func camera_world_position() -> Vector3:
+	if _camera != null and is_instance_valid(_camera):
+		return _camera.global_position
+	return global_position
+
+
+## P0-4: unit XZ direction from the rig target toward the actual camera.
+## This is "where the viewer stands relative to the player", the input the
+## interior cutaway needs to decide which facade(s) to fade. Zero only when
+## no target/camera exists yet.
+func horizontal_view_direction() -> Vector2:
+	if _camera == null or not is_instance_valid(_camera):
+		return Vector2.ZERO
+	var d := _camera.global_position - global_position
+	var flat := Vector2(d.x, d.z)
+	if flat.length_squared() < 0.0001:
+		return Vector2.ZERO
+	return flat.normalized()
 
 
 ## Point the rig at a new target and snap there immediately (no lerp glide).
@@ -115,15 +143,17 @@ func _process(delta: float) -> void:
 
 	# Ease pitch AND distance toward the interior or exterior presentation
 	# with the SAME exponential blend: no zoom pop at the doorway - the boom
-	# shortens smoothly while the view steepens.
+	# shortens smoothly while the view steepens. Interior only ever CLAMPS
+	# the presentation; `_user_distance` keeps the player's zoom preference.
 	var target_pitch := INTERIOR_PITCH_DEG if _interior else PITCH_DEG
-	var target_dist := minf(_distance, INTERIOR_DISTANCE) if _interior \
-			else _distance
+	var target_dist: float = minf(_user_distance, INTERIOR_DISTANCE) \
+			if _interior else _user_distance
 	if not is_equal_approx(_pitch, target_pitch) \
-			or not is_equal_approx(_distance, target_dist):
+			or not is_equal_approx(_presentation_distance, target_dist):
 		var blend := 1.0 - exp(-PRESENT_SPEED * delta)
 		_pitch = lerpf(_pitch, target_pitch, blend)
-		_distance = lerpf(_distance, target_dist, blend)
+		_presentation_distance = lerpf(
+				_presentation_distance, target_dist, blend)
 		_apply_camera_transform()
 
 	# Explosion shake: jitter the lens around the boom BASE so the offset
@@ -145,8 +175,10 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				_distance = clampf(_distance - ZOOM_STEP, MIN_DISTANCE, MAX_DISTANCE)
+				_user_distance = clampf(_user_distance - ZOOM_STEP,
+						MIN_DISTANCE, MAX_DISTANCE)
 				_apply_camera_transform()
 			MOUSE_BUTTON_WHEEL_DOWN:
-				_distance = clampf(_distance + ZOOM_STEP, MIN_DISTANCE, MAX_DISTANCE)
+				_user_distance = clampf(_user_distance + ZOOM_STEP,
+						MIN_DISTANCE, MAX_DISTANCE)
 				_apply_camera_transform()

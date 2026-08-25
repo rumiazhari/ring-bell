@@ -122,15 +122,32 @@ func _run_all() -> void:
 	_check("chunk state transitions", _test_chunk_state_transitions())
 
 	print("[CityTest] DEBUG: Starting building-foundation acceptance tests")
-	# --- 11..17: P0 foundation contract tests ------------------------------------
+	# --- 11..19: P0 foundation contract tests ------------------------------------
 	_check("slab coverage = footprint minus shaft (numeric)", _test_slab_coverage())
 	_check("stair flight geometry (flush endpoints, slope, all storeys)",
 			_test_stair_geometry())
+	_check("stair zone opposite-edge mapping + entrance clearance",
+			_test_stair_zone_edges())
+	_check("stair ramp COLLIDER meets both landings (real spec bounds)",
+			_test_stair_collider_spec())
 	_check("furniture floor ownership + placement bounds", _test_furniture())
-	_check("facade apertures composed without solid backs", _test_facade_apertures())
+	_check("bookshelf wall-snapped footprint matches 1.6 x 0.34 geometry",
+			_test_shelf_placement())
+	_check("facade apertures composed without solid backs",
+			_test_facade_apertures())
+	_check("facade layer keys are building-scoped f<storey>:<side>",
+			_test_facade_layer_keys())
+	_check("floor slab paneling bounded 2D (~2.5 m both axes)",
+			_test_slab_granularity())
 	_check("structural damage accumulates by material", _test_damage_model())
+	_check("explosion-grade damage respects integrity (wood < concrete < steel)",
+			_test_explosion_integrity_ladder())
+	_check("glass calibration vs ItemDB weapon damage",
+			_test_glass_calibration())
 	_check("destruction deltas persist across rebuild + save/load",
 			_test_destruction_persistence())
+	_check("corner building doors face a street (NW/NE/SE/SW)",
+			_test_corner_door_edges())
 	_check("interior probe detection + facade sector math", _test_interior_probe())
 
 
@@ -237,8 +254,12 @@ func _test_stair_geometry() -> bool:
 
 # --- 13: Furniture floor ownership ----------------------------------------------
 func _test_furniture() -> bool:
-	# Emit one known multi-storey building and verify every furniture-class
-	# collider sits on ITS OWN storey's band and never on floor 0's.
+	# Emit one known multi-storey building and verify EVERY furniture-class
+	# collider sits exactly on ITS OWN storey's surface (P0-C contract):
+	# expected_floor_y == floor_i * fh. The old version collected unique
+	# Y heights and pattern-matched them against a whitelist - that can
+	# miss stacked/duplicated upper-floor furniture and passed on
+	# approximate matches. Specs now carry building_id/floor_i metadata.
 	var plan := CityPlan.new()
 	var spec := {}
 	for cell in plan.cells_in_rect(Rect2(-160, -160, 320, 320)):
@@ -260,52 +281,38 @@ func _test_furniture() -> bool:
 			(spec["rect"] as Rect2).get_center().y)
 	ChunkBuilder.fill_batcher(b, fp_local, coord)
 	var fh := float(spec["floor_h"])
-	var floors := mini(int(spec["floors"]), 8)
+	var tag := str(spec["id"])
 	var fp: Rect2 = spec["rect"]
-	# Furniture Y signatures: collect distinct base heights of colliders that
-	# match table/desk/shelf volumes and lie inside this footprint.
-	var heights := {}
-	for col in b.manifest()["colliders"]:
-		var pos: Vector3 = col["pos"]
-		var size: Vector3 = col["size"]
-		if size.y > 0.6 and size.y < 2.1 and pos.y > 0.3:
-			var lx := pos.x - fp.position.x
-			var lz := pos.z - fp.position.y
-			if lx < -0.5 or lz < -0.5 or lx > fp.size.x + 0.5 \
-					or lz > fp.size.y + 0.5:
-				continue
-			heights[snappedf(pos.y, 0.01)] = true
-	if heights.is_empty():
-		return true   # nothing furnished here; vacuously fine
-	# Furniture-height classifier (P0-C contract): every furniture-class
-	# collider must sit on the surface of SOME storey of THIS building:
-	#   h - floor_i*fh in {table/desk ~0.37, shelf 1.0, chair 0.23, rail .55,
-	#   lintel/sill bands, glass centers} - i.e. within a known furniture or
-	#   aperture band above a storey surface. Crucially NO height may map to
-	#   "between floors" (the old stacking bug put floor-1+ items at Y=0.37).
-	var win_sill := 0.85
-	var win_h := 1.35
-	var lintel_c: float = win_sill + win_h \
-			+ maxf(fh - win_sill - win_h, 0.0) * 0.5
-	var known_offsets := [0.05, 0.17, 0.23, 0.36, 0.37, 0.425, 0.55,
-			0.525, 1.0, 1.06, 1.31, 1.525, 0.9, 0.85, 0.7, lintel_c]
-	for h: float in heights.keys():
-		var ok := false
-		# Rails/guards live one storey HIGHER than the surface they protect
-		# (deck rails sit above the top slab), so scan fi in floors+1.
-		for fi in floors + 1:
-			var off := h - float(fi) * fh
-			if off < -0.01:
-				break
-			for ko: float in known_offsets:
-				if absf(off - ko) < 0.08:
-					ok = true
-					break
-			if ok:
-				break
-		if not ok:
-			print("[CityTest] furniture y=%.3f matches no storey band" % h)
+	# Furniture-class: colliding wood specs inside this footprint whose
+	# size.y is in the table/desk/shelf band (walls/slabs are concrete;
+	# rails are steel).
+	var checked := 0
+	for s in b.specs():
+		if StringName(s["material"]) != &"wood" or not bool(s["collide"]):
+			continue
+		var sz: Vector3 = s["size"]
+		if sz.y < 0.6 or sz.y > 2.1:
+			continue
+		var pos: Vector3 = s["pos"]
+		var lx := pos.x - fp.position.x
+		var lz := pos.z - fp.position.y
+		if lx < -0.5 or lz < -0.5 or lx > fp.size.x + 0.5 \
+				or lz > fp.size.y + 0.5:
+			continue   # some other building's furniture (same chunk)
+		if not s.has("building_id") or not s.has("floor_i"):
+			print("[CityTest] wood furniture spec lacks ownership metadata")
 			return false
+		if str(s["building_id"]) != tag:
+			continue   # neighboring building's item caught by the margin
+		var fi := int(s["floor_i"])
+		var expected_y := float(fi) * fh
+		# Collider center sits at floor_y + half its height.
+		var want := expected_y + sz.y * 0.5
+		if absf(pos.y - want) > 0.02:
+			print("[CityTest] furniture %s floor %d: y=%.3f want %.3f"
+					% [tag, fi, pos.y, want])
+			return false
+		checked += 1
 	return true
 
 
@@ -314,6 +321,9 @@ func _test_facade_apertures() -> bool:
 	# For a sample building: count glass specs and verify NO concrete collider
 	# occupies the same XZ band as a window pane at window height (the old
 	# bug: solid wall behind destructible glass).
+	# TEST QUALITY FIX: this used to funnel its result into a `_fail_flag`
+	# while RETURNING `found` - detected solid-backed glass still yielded
+	# PASS. The real validation result is now returned.
 	var plan := CityPlan.new()
 	var found := false
 	for cell in plan.cells_in_rect(Rect2(-160, -160, 320, 320)):
@@ -324,7 +334,9 @@ func _test_facade_apertures() -> bool:
 						(s["rect"] as Rect2).get_center().x,
 						(s["rect"] as Rect2).get_center().y)
 				ChunkBuilder.fill_batcher(b, CityPlan.new(), c)
-				manifest_check(b.manifest()["colliders"])
+				var ok := _manifest_check(b.manifest()["colliders"])
+				if not ok:
+					return false
 				found = true
 				break
 		if found:
@@ -332,7 +344,7 @@ func _test_facade_apertures() -> bool:
 	return found
 
 
-func manifest_check(colliders: Array) -> void:
+func _manifest_check(colliders: Array) -> bool:
 	# Group by quantized position; ensure glass boxes never share their
 	# aperture with a concrete box of matching width/height at the same spot.
 	var glasses: Array[Dictionary] = []
@@ -354,14 +366,524 @@ func manifest_check(colliders: Array) -> void:
 				if cs.x >= gs.x - 0.01 and cs.z >= gs.z - 0.01 \
 						and absf(cs.y - gs.y) < 0.01:
 					print("[CityTest] solid wall behind glass at ", gp)
-					_fail_flag = true
-					return
+					return false
+	return true
 
 
-var _fail_flag := false
+# --- 18: Stair zone opposite-edge mapping (P0-6) -------------------------------
+func _test_stair_zone_edges() -> bool:
+	# Deterministic: for ALL FOUR door edges the zone must sit on the
+	# OPPOSITE side of the footprint and stay fully inside it.
+	var fh := 3.1
+	var fp := Vector2(9.0, BuildingBuilder.stair_zone_len(fh) + 3.0)
+	var expectations := [
+		# [door_edge, zone_south_anchored, zone_east_anchored]
+		[0, true, false],    # N entrance -> SOUTH zone
+		[1, false, false],   # E entrance -> WEST zone
+		[2, false, false],   # S entrance -> NORTH zone
+		[3, false, true],    # W entrance -> EAST zone
+	]
+	for exp: Array in expectations:
+		var edge := int(exp[0])
+		var zone := BuildingBuilder.stair_zone_world({
+			"rect": Rect2(100.0, 100.0, fp.x, fp.y),
+			"floor_h": fh,
+			"door_edge": edge,
+		})
+		var local := Rect2(zone.position - Vector2(100.0, 100.0), zone.size)
+		if not Rect2(Vector2.ZERO, fp).encloses(local):
+			print("[CityTest] edge %d zone escapes footprint" % edge)
+			return false
+		# Anchored-in-half assertions: the zone must sit in the half
+		# OPPOSITE the entrance (small margin for the structural inset).
+		var south := local.get_center().y > fp.y * 0.4
+		var north := local.get_center().y < fp.y * 0.6
+		var west := local.get_center().x < fp.x * 0.6
+		var east := local.get_center().x > fp.x * 0.4
+		match edge:
+			0:
+				if not south:
+					print("[CityTest] N entrance must anchor zone SOUTH")
+					return false
+			1:
+				if not west:
+					print("[CityTest] E entrance must anchor zone WEST")
+					return false
+			2:
+				if not north:
+					print("[CityTest] S entrance must anchor zone NORTH")
+					return false
+			3:
+				if not east:
+					print("[CityTest] W entrance must anchor zone EAST")
+					return false
+	# Entrance corridor / stair clearance: on a minimal legal lot the door
+	# swing + walk-in lane must NOT reach into the stair zone.
+	var plan := CityPlan.new()
+	for cell in plan.cells_in_rect(Rect2(-200, -200, 400, 400)):
+		for s: Dictionary in plan.cell_block(cell)["buildings"]:
+			if int(s["floors"]) < 2 or not BuildingBuilder.has_stairs_for(
+					(s["rect"] as Rect2).size, float(s["floor_h"]),
+					int(s["floors"])):
+				continue
+			var lr: Rect2 = s["rect"]
+			var z2 := BuildingBuilder.stair_zone_world(s)
+			var mid_len := (lr.size.x if int(s["door_edge"]) == 0
+					or int(s["door_edge"]) == 2 else lr.size.y) * 0.5
+			var dp := _edge_point(lr, int(s["door_edge"]), mid_len)
+			var inward := _inward_for_edge(int(s["door_edge"]))
+			# Walk-in lane behind the door (~DOOR_W+2.4 long).
+			var lane_end := dp + inward * 3.9
+			var seg := Rect2(
+					Vector2(minf(dp.x, lane_end.x), minf(dp.y, lane_end.y)),
+					Vector2(absf(lane_end.x - dp.x), absf(lane_end.y - dp.y)))
+			if seg.intersects(z2):
+				print("[CityTest] entrance lane overlaps stair zone in %s"
+						% s["id"])
+				return false
+	return true
 
 
-# --- 15: Damage model ------------------------------------------------------------
+func _edge_point(lr: Rect2, edge: int, t: float) -> Vector2:
+	match edge:
+		0: return Vector2(lerpf(lr.position.x, lr.end.x, t), lr.position.y)
+		1: return Vector2(lr.end.x, lerpf(lr.position.y, lr.end.y, t))
+		2: return Vector2(lerpf(lr.position.x, lr.end.x, t), lr.end.y)
+		_: return Vector2(lr.position.x, lerpf(lr.position.y, lr.end.y, t))
+
+
+func _inward_for_edge(edge: int) -> Vector2:
+	match edge:
+		0: return Vector2(0, 1)
+		1: return Vector2(-1, 0)
+		2: return Vector2(0, -1)
+		_: return Vector2(1, 0)
+
+
+# --- 19: Stair ramp COLLIDER spec vs landings (P1-8) ----------------------------
+func _test_stair_collider_spec() -> bool:
+	# The old test validated ramp_height_at() (a helper). The REAL collider
+	# is shortened by `trim` while its center stays put - so we now inspect
+	# the actual generated rotated box spec and derive its top-face
+	# endpoints from basis/size/center.
+	var plan := CityPlan.new()
+	var tested := 0
+	for cell in plan.cells_in_rect(Rect2(-300, -300, 600, 600)):
+		if tested >= 12:
+			break
+		var block := plan.cell_block(cell)
+		for spec: Dictionary in block["buildings"]:
+			var n := int(spec["floors"])
+			if n < 2 or not BuildingBuilder.has_stairs_for(
+					(spec["rect"] as Rect2).size,
+					float(spec["floor_h"]), n):
+				continue
+			var b := MeshBatcher.new()
+			var coord := WorldSeed.chunk_coord(
+					(spec["rect"] as Rect2).get_center().x,
+					(spec["rect"] as Rect2).get_center().y)
+			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			var fh := float(spec["floor_h"])
+			var run := BuildingBuilder.flight_run(fh)
+			var ang := atan2(fh, run)
+			# P1-8: the walkable surface is NOT trimmed - full hypotenuse.
+			var hyp_eff := sqrt(run * run + fh * fh)
+			var found_flights := 0
+			for s in b.specs():
+				# Ramp colliders of THIS building only (one chunk batches
+				# many buildings): rotated concrete boxes of LANE width.
+				if StringName(s["material"]) != &"concrete" \
+						or s["basis"] == Basis.IDENTITY \
+						or not bool(s["collide"]) \
+						or str(s.get("building_id", "")) != str(spec["id"]):
+					continue
+				var sz: Vector3 = s["size"]
+				if absf(sz.x - (BuildingBuilder.LANE_W - 0.04)) > 0.02 \
+						or absf(sz.z - hyp_eff) > 0.05:
+					continue
+				found_flights += 1
+				var basis: Basis = s["basis"]
+				var center: Vector3 = s["pos"]
+				# Slope direction = local Z transformed by the basis.
+				var slope_dir := (basis * Vector3(0, 0, 1)).normalized()
+				if slope_dir.z < 0.0:
+					slope_dir = -slope_dir   # orient north->south
+				# Top-face endpoints from the REAL collider bounds: the top
+				# face is the center plane shifted by half the thickness
+				# along the box's local +Y (plane normal).
+				var thick_up := (basis * Vector3(0, 1, 0)).normalized()
+				var top_offset := thick_up * (sz.y * 0.5)
+				var p_low := center - slope_dir * (sz.z * 0.5) + top_offset
+				var p_high := center + slope_dir * (sz.z * 0.5) + top_offset
+				# P1-8 contract: BOTH top-face endpoints sit EXACTLY on
+				# their landing surfaces (flush - no lip a capsule cannot
+				# climb, no tuck gap). The seam is kept notch-free by the
+				# landing plates' LAND_TUCK overlap burying the ramp's end
+				# faces, NOT by shortening the walkable surface. Flights
+				# may start at any storey: derive the base from the lower
+				# endpoint.
+				var y_lo := minf(p_low.y, p_high.y)
+				var y_hi := maxf(p_low.y, p_high.y)
+				var base := roundf(y_lo / fh) * fh
+				if absf(y_lo - base) > 0.02 \
+						or absf(y_hi - (base + fh)) > 0.02:
+					print(("[CityTest] ramp collider endpoints off: "
+							+ "lo %.3f (base %.3f) hi %.3f want %.3f")
+									% [y_lo, base, y_hi, base + fh])
+					return false
+			if found_flights != n:
+				print("[CityTest] %s: %d ramp colliders for %d storeys"
+						% [spec["id"], found_flights, n])
+				return false
+			tested += 1
+	return tested >= 4
+
+
+# --- 20: Bookshelf placement (P1-12) ---------------------------------------------
+func _test_shelf_placement() -> bool:
+	# Deterministic across many seeds/buildings: every emitted shelf
+	# collider must be a 1.6 x 0.34 (x 2.0) box snapped DEPTH/2+GAP from
+	# its wall face, aligned to that wall, fully inside the interior.
+	var plan := CityPlan.new()
+	var checked := 0
+	for cell in plan.cells_in_rect(Rect2(-260, -260, 520, 520)):
+		if checked >= 30:
+			break
+		var block := plan.cell_block(cell)
+		for spec: Dictionary in block["buildings"]:
+			if checked >= 30:
+				break
+			var b := MeshBatcher.new()
+			var coord := WorldSeed.chunk_coord(
+					(spec["rect"] as Rect2).get_center().x,
+					(spec["rect"] as Rect2).get_center().y)
+			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			var fp: Rect2 = spec["rect"]
+			var w := fp.size.x
+			var d := fp.size.y
+			var gap := BuildingBuilder.SHELF_DEPTH * 0.5 + BuildingBuilder.SHELF_GAP
+			for s in b.specs():
+				if StringName(s["material"]) != &"wood":
+					continue
+				var sz: Vector3 = s["size"]
+				# Shelf carcass signature: 1.6 x 0.34 (x 2.0) (axis order
+				# may be swapped for E/W walls).
+				var is_shelf := (absf(sz.x - BuildingBuilder.SHELF_WIDTH)
+						< 0.02 and absf(sz.z
+						- BuildingBuilder.SHELF_DEPTH) < 0.02) \
+						or (absf(sz.x - BuildingBuilder.SHELF_DEPTH) < 0.02
+						and absf(sz.z - BuildingBuilder.SHELF_WIDTH) < 0.02)
+				if not is_shelf or absf(sz.y - 2.0) > 0.02:
+					continue
+				# Only THIS building's shelves: one chunk batches many
+				# buildings, and neighbors' furniture shares the spec list.
+				if str(s.get("building_id", "")) != str(spec["id"]):
+					continue
+				var pos: Vector3 = s["pos"]
+				var lx := pos.x - fp.position.x
+				var lz := pos.z - fp.position.y
+				# Which wall is it snapped to?
+				var dists := [absf(lx - (BuildingBuilder.WALL_T + gap)),
+						absf(w - BuildingBuilder.WALL_T - gap - lx),
+						absf(lz - (BuildingBuilder.WALL_T + gap)),
+						absf(d - BuildingBuilder.WALL_T - gap - lz)]
+				var best_side := 0
+				for i in 4:
+					if dists[i] < dists[best_side]:
+						best_side = i
+				if dists[best_side] > 0.03:
+					print("[CityTest] shelf not wall-snapped: lx=%.2f lz=%.2f"
+							% [lx, lz])
+					return false
+				# Width runs ALONG the chosen wall.
+				if (best_side <= 1 and absf(sz.x - 0.34) > 0.02) \
+						or (best_side >= 2 and absf(sz.z - 0.34) > 0.02):
+					print("[CityTest] shelf width not parallel to its wall")
+					return false
+				checked += 1
+	return checked >= 20
+
+
+# --- 21: Floor slab paneling granularity (P1-9) -----------------------------------
+func _test_slab_granularity() -> bool:
+	# Every floor-slab cell must be bounded in BOTH dimensions; measure
+	# collider counts per chunk while we are here.
+	var plan := CityPlan.new()
+	var max_cell := 0.0
+	var worst_chunk := 0
+	var chunks_measured := 0
+	for coord in [Vector2i(0, 0), Vector2i(-1, 1), Vector2i(2, -1),
+			Vector2i(-2, -2)]:
+		var b := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+		worst_chunk = maxi(worst_chunk, b.collider_count())
+		chunks_measured += 1
+		for s in b.specs():
+			if StringName(s["material"]) != &"concrete":
+				continue
+			var sz: Vector3 = s["size"]
+			# Floor slab cells: AXIS-ALIGNED thin horizontal plates at the
+			# exact SLAB_T thickness (excludes rotated ramps/rails, whose
+			# local size.y is also RAMP_T but whose basis is rotated).
+			if absf(sz.y - BuildingBuilder.SLAB_T) > 0.001 \
+					or s["basis"] != Basis.IDENTITY:
+				continue
+			max_cell = maxf(max_cell, maxf(sz.x, sz.z))
+	if chunks_measured == 0:
+		return false
+	if max_cell > BuildingBuilder.CELL_H + 0.01:
+		print("[CityTest] slab panel too large: %.2f m" % max_cell)
+		return false
+	print(("[CityTest] slab panels ok (max %.2f m), colliders/chunk worst "
+			+ "sampled: %d") % [max_cell, worst_chunk])
+	return true
+
+
+# --- 22: Explosion-grade integrity ladder (P0-1) ------------------------------------
+func _test_explosion_integrity_ladder() -> bool:
+	# Comparable wood/concrete structural cells take the SAME raw blast
+	# damage through MeshBatcher.damage_box(): wood must break first and
+	# concrete must NOT vanish from one rocket-grade hit.
+	var mk := func(mat: StringName) -> Array:
+		var bx := MeshBatcher.new()
+		bx.add_box_rotated(Vector3(0, 1.55, 0), Vector3(1.25, 3.1, 0.35),
+				Basis.IDENTITY, Color.RED, true, false, mat)
+		return [bx, int((bx.manifest()["colliders"] as Array)[0]["id"])]
+	var wood: Array = mk.call(&"wood")
+	var conc: Array = mk.call(&"concrete")
+	var steel: Array = mk.call(&"steel")
+	var bw: MeshBatcher = wood[0]
+	var bc: MeshBatcher = conc[0]
+	var bs: MeshBatcher = steel[0]
+	var id_w := int(wood[1])
+	var id_c := int(conc[1])
+	var id_s := int(steel[1])
+	# Rocket core grade: 130 raw.
+	var res_w: Dictionary = bw.damage_box(id_w, 130.0)
+	bc.damage_box(id_c, 130.0)
+	bs.damage_box(id_s, 130.0)
+	if not bool(res_w.get("shattered", false)):
+		print("[CityTest] wood wall module must break on a rocket-core hit")
+		return false
+	# Concrete/steel SURVIVE one hit but must carry OBSERVABLE accumulated
+	# damage (the persistence record exists) - no silent bypass.
+	if bc.is_destroyed(id_c) or bs.is_destroyed(id_s):
+		print("[CityTest] one explosion hit must not delete concrete/steel")
+		return false
+	var state_c: Dictionary = bc.damage_state()
+	var state_s: Dictionary = bs.damage_state()
+	if state_c.size() != 1 or state_s.size() != 1:
+		print(("[CityTest] explosion left no damage record on "
+				+ "concrete/steel (bypass?) %d/%d")
+						% [state_c.size(), state_s.size()])
+		return false
+	# Concrete accumulates: repeated rocket hits eventually break it.
+	var hits_c := 1
+	while hits_c < 50 and not bc.is_destroyed(id_c):
+		bc.damage_box(id_c, 130.0)
+		hits_c += 1
+	if not bc.is_destroyed(id_c):
+		print("[CityTest] concrete never broke under repeated blasts")
+		return false
+	var integ_w := MeshBatcher.cell_integrity(Vector3(1.25, 3.1, 0.35), &"wood")
+	var integ_c := MeshBatcher.cell_integrity(Vector3(1.25, 3.1, 0.35), &"concrete")
+	var integ_s := MeshBatcher.cell_integrity(Vector3(1.25, 3.1, 0.35), &"steel")
+	if not integ_w < integ_c or not integ_c < integ_s:
+		print("[CityTest] strength ladder broken: %.1f/%.1f/%.1f"
+				% [integ_w, integ_c, integ_s])
+		return false
+	# Sub-threshold damage must accumulate WITHOUT destroying (partial
+	# damage persists).
+	var b2 := MeshBatcher.new()
+	b2.add_box_rotated(Vector3(0, 1.55, 0), Vector3(1.25, 3.1, 0.35),
+			Basis.IDENTITY, Color.RED, true, false, &"concrete")
+	var cid := int((b2.manifest()["colliders"] as Array)[0]["id"])
+	for i in 3:
+		b2.damage_box(cid, 40.0)
+		if b2.is_destroyed(cid):
+			print("[CityTest] partial damage destroyed too early")
+			return false
+	if b2.damage_state().size() != 1:
+		print("[CityTest] partial damage not recorded for persistence")
+		return false
+	return true
+
+
+# --- 23: Glass calibration vs ItemDB weapons (P1-13) ---------------------------------
+func _test_glass_calibration() -> bool:
+	# Window pane geometry from the builder: WIN_W-0.06 x WIN_H-0.04.
+	var pane := Vector3(BuildingBuilder.WIN_W - 0.06,
+			BuildingBuilder.WIN_H - 0.04, BuildingBuilder.GLASS_T)
+	var mk := func() -> Array:
+		var bx := MeshBatcher.new()
+		bx.add_box_rotated(Vector3(0, 1.6, 0), pane, Basis.IDENTITY,
+				Color.BLUE, true, false, &"glass")
+		return [bx, int((bx.manifest()["colliders"] as Array)[0]["id"])]
+	var smg := float(ItemDB.ITEMS[&"smg"]["damage"])          # 9
+	var pellet := float(ItemDB.ITEMS[&"shotgun"]["damage"])   # 8 x7
+	var pellets := int(ItemDB.ITEMS[&"shotgun"]["pellets"])
+	var rocket := float(ItemDB.ITEMS[&"rocket_launcher"]["damage"])  # 130
+	# 1. A single SMG hit: crack OR stay intact - NEVER shatter.
+	var g1: Array = mk.call()
+	var r1: Dictionary = (g1[0] as MeshBatcher).damage_box(int(g1[1]), smg)
+	if bool(r1.get("shattered", false)):
+		print("[CityTest] single SMG round shattered a window")
+		return false
+	# 2. Several SMG rounds: crack progression then shatter.
+	var shatter_after := -1
+	for i in 12:
+		var rr: Dictionary = (g1[0] as MeshBatcher).damage_box(
+				int(g1[1]), smg)
+		if bool(rr.get("shattered", false)):
+			shatter_after = i + 2   # +1 for the first hit above
+			break
+	if shatter_after < 2 or shatter_after > 6:
+		print(("[CityTest] SMG shatters windows after %s rounds "
+				+ "(want 2..6)") % str(shatter_after))
+		return false
+	# 3. Close shotgun volley: likely shatter (all pellets on one pane).
+	var g2: Array = mk.call()
+	var r2: Dictionary = (g2[0] as MeshBatcher).damage_box(int(g2[1]),
+			pellet * pellets)
+	if not bool(r2.get("shattered", false)):
+		print("[CityTest] full shotgun volley should shatter a pane")
+		return false
+	# 4. Rocket: always shatter.
+	var g3: Array = mk.call()
+	var r3: Dictionary = (g3[0] as MeshBatcher).damage_box(int(g3[1]), rocket)
+	if not bool(r3.get("shattered", false)):
+		print("[CityTest] rocket must shatter glass")
+		return false
+	# 5. Crack threshold alignment: ONE SMG hit must reach the crack
+	# threshold (feedback before shatter) but two must NOT shatter yet.
+	var integ := MeshBatcher.cell_integrity(pane, &"glass")
+	if smg < integ * 0.4:
+		print("[CityTest] one SMG hit fails to crack glass (integ %.1f)"
+				% integ)
+		return false
+	if smg * 2 >= integ:
+		print("[CityTest] two SMG hits already shatter glass (integ %.1f)"
+				% integ)
+		return false
+	return true
+
+
+# --- 24: Facade layer keys building-scoped (P0-3) -------------------------------------
+func _test_facade_layer_keys() -> bool:
+	var plan := CityPlan.new()
+	for cell in plan.cells_in_rect(Rect2(-160, -160, 320, 320)):
+		for spec: Dictionary in plan.cell_block(cell)["buildings"]:
+			if int(spec["floors"]) < 2:
+				continue
+			var b := MeshBatcher.new()
+			var coord := WorldSeed.chunk_coord(
+					(spec["rect"] as Rect2).get_center().x,
+					(spec["rect"] as Rect2).get_center().y)
+			var holder := Node3D.new()
+			add_child(holder)
+			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			b.flush_into(holder)
+			var tag := str(spec["id"])
+			var n := mini(int(spec["floors"]), 8)
+			# All four facades of every storey exist as EXPLICIT keys.
+			for f in n:
+				for side in ["N", "E", "S", "W"]:
+					var key := "%s:f%d:%s" % [tag, f, side]
+					if not b.layer_nodes.has(key):
+						print("[CityTest] missing layer key ", key)
+						holder.free()
+						return false
+			# No legacy global keys may remain.
+			for key: String in b.layer_nodes.keys():
+				if key.begins_with("facade:"):
+					print("[CityTest] legacy global facade key ", key)
+					holder.free()
+					return false
+			# Gate probe mirrors ChunkManager.apply_floor_gate() on REAL
+			# generated layer nodes.
+			var hidden := {}
+			b.apply_floor_gate_probe(tag, 1, ["N"], hidden)
+			for key3: String in hidden.keys():
+				var expect_vis := true
+				if key3.begins_with(tag + ":"):
+					var suffix := key3.substr(tag.length() + 1)
+					if suffix.begins_with("roof"):
+						expect_vis = false
+					elif suffix.begins_with("f"):
+						var rest := suffix.substr(1)
+						var colon := rest.find(":")
+						if colon >= 0:
+							var fl := int(rest.substr(0, colon))
+							var fac := rest.substr(colon + 1)
+							expect_vis = not (fl > 1
+									or (fl == 1 and fac == "N"))
+						else:
+							expect_vis = int(rest) <= 1
+				if hidden[key3] != expect_vis:
+					print("[CityTest] gate visibility wrong for %s (%s)"
+							% [key3, "vis" if hidden[key3] else "hid"])
+					holder.free()
+					return false
+			holder.free()
+			return true   # one representative building is enough
+	return false
+
+
+# --- 25: Corner buildings face a street (P0-7) ---------------------------------------
+func _test_corner_door_edges() -> bool:
+	# Valid street-facing edges per block corner:
+	#   NW: N(0) or W(3) | NE: N(0) or E(1)
+	#   SE: S(2) or E(1) | SW: S(2) or W(3)
+	# SE must NEVER get an N entrance; SW must NEVER get an E entrance.
+	# Corner lots are identified GEOMETRICALLY (lot touching both perimeter
+	# faces of its corner); construction order guarantees they are the
+	# FIRST FOUR specs of every block.
+	var valid := [[0, 3], [0, 1], [2, 1], [2, 3]]
+	var names := ["NW", "NE", "SE", "SW"]
+	var seeds := [WorldSeed.get_world_seed(), WorldSeed.get_world_seed() + 111,
+			WorldSeed.get_world_seed() + 222]
+	var checked := 0
+	for seed_v: int in seeds:
+		WorldSeed.set_world_seed(seed_v)
+		var plan := CityPlan.new()
+		for cell in plan.cells_in_rect(Rect2(-400, -400, 800, 800)):
+			var block := plan.cell_block(cell)
+			if block["kind"] == &"park":
+				continue
+			var specs: Array = block["buildings"]
+			if specs.size() < 4:
+				continue
+			var br: Rect2 = block["rect"]
+			for ci in 4:
+				var spec: Dictionary = specs[ci]
+				var lot: Rect2 = spec["rect"]
+				# Geometric corner identity: touches BOTH perimeter faces.
+				var touch := {
+					"N": absf(lot.position.y - br.position.y) < 0.05,
+					"S": absf(lot.end.y - br.end.y) < 0.05,
+					"W": absf(lot.position.x - br.position.x) < 0.05,
+					"E": absf(lot.end.x - br.end.x) < 0.05,
+				}
+				var expect_touch: Array = [["N", "W"], ["N", "E"],
+						["S", "E"], ["S", "W"]][ci]
+				if not (bool(touch[expect_touch[0]])
+						and bool(touch[expect_touch[1]])):
+					continue   # degenerate block layout; skip this corner
+				var edge := int(spec["door_edge"])
+				if not valid[ci].has(edge):
+					print(("[CityTest] %s corner %s door edge %d "
+							+ "not street-facing (valid %s)")
+									% [names[ci], spec["id"], edge,
+											str(valid[ci])])
+					WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+					return false
+				checked += 1
+	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+	print("[CityTest] corner doors checked: %d" % checked)
+	return checked >= 40
+
+
+
 func _test_damage_model() -> bool:
 	var b := MeshBatcher.new()
 	b.push_layer("t:f0")

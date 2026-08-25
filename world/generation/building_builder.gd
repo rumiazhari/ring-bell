@@ -32,6 +32,7 @@ const STAIR_MARGIN_Z := 0.5
 const PITCH_DEG := 34.0              # within safe CharacterBody floor angle
 const RAMP_T := 0.22                 # ramp collider thickness
 const RAMP_OVERLAP := 0.2            # flight tucks onto landings (no step)
+const RAIL_SETBACK := 0.6            # rail stops this far short of each flight end
 const DOOR_W := 1.5
 const DOOR_H := 2.25
 const DOOR_FRAME := 0.06               # jamb clearance: aperture = DOOR_W + this
@@ -75,16 +76,25 @@ static func has_stairs_for(fp: Vector2, fh: float, n: int) -> bool:
 			and fp.y >= stair_zone_len(fh) + 2.0
 
 
-## Local-footprint rect of the stairwell zone: anchored in the corner
-## DIAGONALLY OPPOSITE the entrance facade, so stairs and the swinging
-## door leaf never share floor space on any lot.
+## Local-footprint rect of the stairwell zone: EXPLICIT per-edge mapping
+## (P0-6). The zone anchors to the side OPPOSITE the entrance facade so
+## stairs and the swinging door leaf never share floor space on any lot:
+##   N entrance (0) -> SOUTH stair zone     S entrance (2) -> NORTH stair zone
+##   E entrance (1) -> WEST stair zone      W entrance (3) -> EAST stair zone
+## Every edge is spelled out - no broad condition may collapse two opposite
+## edges onto the same anchor again.
 static func _zone_rect(fp_size: Vector2, fh: float, door_edge: int) -> Rect2:
-	var zx := STAIR_MARGIN_X   # west anchor by default
-	var zy := STAIR_MARGIN_Z   # north anchor by default
-	if door_edge == 1 or door_edge == 3:
-		zx = fp_size.x - STAIR_MARGIN_X - LANE_W * 2.0   # east anchor
-	if door_edge == 0 or door_edge == 2:
-		zy = fp_size.y - STAIR_MARGIN_Z - stair_zone_len(fh)  # south anchor
+	var zx := STAIR_MARGIN_X
+	var zy := STAIR_MARGIN_Z
+	match door_edge:
+		0:   # N entrance -> zone against the SOUTH wall
+			zy = fp_size.y - STAIR_MARGIN_Z - stair_zone_len(fh)
+		1:   # E entrance -> zone against the WEST wall
+			zx = STAIR_MARGIN_X
+		2:   # S entrance -> zone against the NORTH wall
+			zy = STAIR_MARGIN_Z
+		_:   # W entrance (3) -> zone against the EAST wall
+			zx = fp_size.x - STAIR_MARGIN_X - LANE_W * 2.0
 	return Rect2(zx, zy, LANE_W * 2.0, stair_zone_len(fh))
 
 
@@ -158,10 +168,10 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		if has_stairs:
 			_slab_with_hole(b, off, w, d, zone, lvl * fh)
 		else:
-			b.add_destructible_box(
-					off + Vector3(w * 0.5, lvl * fh - SLAB_T * 0.5, d * 0.5),
-					Vector3(w - WALL_T, SLAB_T, d - WALL_T), DECK_COLOR,
-					&"concrete")
+			_emit_slab_panels(b, off, Rect2(WALL_T, WALL_T,
+					maxf(w - 2.0 * WALL_T, 0.0),
+					maxf(d - 2.0 * WALL_T, 0.0)),
+					lvl * fh - SLAB_T * 0.5)
 		b.pop_layer()
 
 	# --- walls + windows + furniture ---------------------------------------------
@@ -172,7 +182,7 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		var y0 := f * fh
 		var col := PLINTH_COLOR if f == 0 else wall_c
 		_storey_walls(b, off, w, d, y0, fh, col, f,
-				door_edge if f == 0 else -1)
+				door_edge if f == 0 else -1, tag)
 		if f == 0:
 			# Shopfront dressing on the street-facing ground wall (visual).
 			_shopfront(b, off, w, d, spec)
@@ -206,19 +216,24 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 ## DESTRUCTION GRANULARITY (P0-F): piers are emitted as stacked ~1 m tall
 ## modules (CELL_H), so blasts carve out a few courses instead of deleting a
 ## whole multi-metre wall segment. Every module is its own integrity record.
+##
+## LAYER OWNERSHIP (P0-3): each facade pushes its EXPLICIT reveal key
+## "<building tag>:f<storey>:<N/E/S/W>" directly (no nesting tricks), so
+## ChunkManager.apply_floor_gate() can fade exactly one building's
+## camera-facing wall per storey.
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
-		y0: float, fh: float, col: Color, floor_i: int, door_edge: int) -> void:
+		y0: float, fh: float, col: Color, floor_i: int, door_edge: int,
+		tag: String) -> void:
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
-		# Per-facade reveal sublayer "<tag>:f<storey>:<facade>" lets the
-		# camera fade exactly the wall(s) between itself and the player.
-		b.push_layer("facade:%s" % facades[side])
+		b.push_layer("%s:f%d:%s" % [tag, floor_i, facades[side]])
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
 				door_edge == side)
 		b.pop_layer()
 
 
-const CELL_H := 2.5   # slab strip panel length (walls stay pier-segmented)
+const CELL_H := 2.5      # floor slab panel target edge (BOTH dimensions)
+const WALL_CELL := 1.25  # wall pier horizontal module target width
 
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).
@@ -294,12 +309,20 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 static func _emit_wall_seg(b: MeshBatcher, off: Vector3, side: int,
 		horizontal: bool, a: float, b2: float, y0: float, fh: float,
 		col: Color, w: float, d: float) -> void:
-	var mid_t := (a + b2) * 0.5
-	var p := _side_point(side, w, d, mid_t)
-	var size := Vector3(b2 - a, fh, WALL_T) if horizontal \
-			else Vector3(WALL_T, fh, b2 - a)
-	b.add_destructible_box(off + Vector3(p.x, y0 + fh * 0.5, p.y),
-			size, col, &"concrete")
+	# Horizontal wall modules (P1-9): piers longer than ~WALL_CELL split
+	# into even ~1.25 m destructible cells so blasts punch LOCAL holes.
+	# Vertical courses stay full-storey (documented compromise - keeps the
+	# collider count linear and small; asserted by --citytest).
+	var length := b2 - a
+	var cells := maxi(1, ceili(length / WALL_CELL))
+	var cw := length / float(cells)
+	for i in cells:
+		var mid_t := a + (float(i) + 0.5) * cw
+		var p := _side_point(side, w, d, mid_t)
+		var size := Vector3(cw, fh, WALL_T) if horizontal \
+				else Vector3(WALL_T, fh, cw)
+		b.add_destructible_box(off + Vector3(p.x, y0 + fh * 0.5, p.y),
+				size, col, &"concrete")
 
 
 ## Sill/lintel band of `bw` meters centered at opening center `oc`.
@@ -373,27 +396,27 @@ static func _slab_with_hole(b: MeshBatcher, off: Vector3, w: float, d: float,
 		hole: Rect2, y: float) -> void:
 	var cy := y - SLAB_T * 0.5
 	for r: Rect2 in slab_pieces(w, d, hole):
-		# 1D subdivision along the LONGER axis only: a rocket still carves a
-		# local hole through one ~CELL_H panel strip while collider count
-		# stays linear (not quadratic) in floor area.
-		if r.size.x >= r.size.y:
-			var cols := maxi(1, roundi(r.size.x / CELL_H))
-			var cw := r.size.x / float(cols)
-			for cx in cols:
-				var c := Vector2(r.position.x + (float(cx) + 0.5) * cw,
-						r.get_center().y)
-				b.add_destructible_box(off + Vector3(c.x, cy, c.y),
-						Vector3(cw, SLAB_T, r.size.y), DECK_COLOR,
-						&"concrete")
-		else:
-			var rows := maxi(1, roundi(r.size.y / CELL_H))
-			var ch := r.size.y / float(rows)
-			for cz in rows:
-				var c := Vector2(r.get_center().x,
-						r.position.y + (float(cz) + 0.5) * ch)
-				b.add_destructible_box(off + Vector3(c.x, cy, c.y),
-						Vector3(r.size.x, SLAB_T, ch), DECK_COLOR,
-						&"concrete")
+		_emit_slab_panels(b, off, r, cy)
+
+
+## Bounded 2D paneling of ONE slab strip (P1-9): ~CELL_H modules in BOTH
+## dimensions so a blast carves a LOCAL hole instead of a full-depth strip
+## across the floor. Panel counts derive from the strip size (deterministic,
+## no slivers - remainders fold into even cell widths); the count stays
+## LINEAR in floor area and far under the RID budget.
+static func _emit_slab_panels(b: MeshBatcher, off: Vector3, r: Rect2,
+		cy: float) -> void:
+	var cols := maxi(1, ceili(r.size.x / CELL_H))
+	var rows := maxi(1, ceili(r.size.y / CELL_H))
+	var cw := r.size.x / float(cols)
+	var ch := r.size.y / float(rows)
+	for cx in cols:
+		for cz in rows:
+			var c := Vector2(r.position.x + (float(cx) + 0.5) * cw,
+					r.position.y + (float(cz) + 0.5) * ch)
+			b.add_destructible_box(off + Vector3(c.x, cy, c.y),
+					Vector3(cw, SLAB_T, ch), DECK_COLOR,
+					&"concrete")
 
 
 # --- Stairs ------------------------------------------------------------------
@@ -453,35 +476,41 @@ static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 		var ascending_south := k % 2 == 0
 		var lane_c := cx_west if ascending_south else cx_east
 		var y0 := k * fh
-		# Single walkable ramp collider whose TOP surface runs from
-		# (z0, y0) to (z1, y0 + fh): center sits mid-span, dropped by half
-		# the slab thickness measured along the plane normal so the TOP
-		# face lands exactly on the endpoints. Tagged f<k>: always visible
-		# from the storey you board it on.
+		# Single walkable ramp collider. P1-8 GEOMETRY CONTRACT:
+		#   - The walkable TOP face lies EXACTLY on the flight plane
+		#     through (z0, y0) -> (z1, y0 + fh): the center is the plane
+		#     midpoint pushed down half a thickness along the plane NORMAL
+		#     (a pure-Y drop skews the box so only ONE endpoint meets its
+		#     landing). Both endpoints are therefore FLUSH with their
+		#     landing surfaces - no lip a capsule could not climb.
+		#   - The seam is kept notch-free WITHOUT trimming the walkable
+		#     surface: the landing plates extend LAND_TUCK under each
+		#     flight end, so the ramp's end faces and underside corners
+		#     are buried inside solid landing geometry (static overlaps
+		#     are harmless) and no right-angle pocket remains above any
+		#     walkable surface. Verified against the REAL collider bounds
+		#     by --citytest.
 		b.push_layer(tag + ":f%d" % k)
 		var hyp := sqrt(run * run + fh * fh)
 		var basis := Basis(Vector3.RIGHT, -ang if ascending_south else ang)
-		var center_y := y0 + fh * 0.5 - (RAMP_T * 0.5) / cos_a
-		# Pull each end back by the thickness measured along the slope so the
-		# UNDERSIDE corners sit above the landing plane: a capsule crossing
-		# the landing cannot get wedged in the seam notch, and the walkable
-		# top surface still meets both landings exactly.
-		var trim: float = RAMP_T * tan(ang)
-		var hyp_eff := maxf(hyp - trim, hyp * 0.5)
-		b.add_box_rotated(
-				off + Vector3(lane_c, center_y, (z0 + z1) * 0.5),
-				Vector3(LANE_W - 0.04, RAMP_T, hyp_eff), basis, DECK_COLOR,
-				true, false, &"concrete")
-		# Handrails both sides of the flight: slope-parallel slim bars at
-		# ~0.85 m above the ramp surface. SOLID - railings must stop bodies.
-		# Each rail stops ~0.5 m short of both flight ends: the landing
-		# funnel stays clear (a full-length rail's tip clips bodies that
-		# approach the 1.1 m lane gap diagonally from the 2.5 m landing).
+		var n_up := (basis * Vector3(0, 1, 0)).normalized()
+		var mid := off + Vector3(lane_c, y0 + fh * 0.5, (z0 + z1) * 0.5)
+		b.add_box_rotated(mid - n_up * (RAMP_T * 0.5),
+				Vector3(LANE_W - 0.04, RAMP_T, hyp), basis, DECK_COLOR,
+				true, false, &"concrete", tag, k)
+		# Handrails both sides of the flight: slope-parallel slim bars
+		# floating ~0.85 m above the ramp surface along the plane normal.
+		# SOLID - railings must stop bodies. Each rail stops RAIL_SETBACK
+		# short of BOTH flight ends so the landing funnel stays clear:
+		# a full-length rail's tip clips the body that rounds the
+		# switchback from the opposite lane (the lane gap is ~1.1 m).
+		var rail_len := maxf(hyp - 2.0 * RAIL_SETBACK, hyp * 0.55)
 		for rail_side in [-1.0, 1.0]:
+			var rail_lat := basis * Vector3(
+					rail_side * (LANE_W * 0.5 - 0.04), 0.0, 0.0)
 			b.add_box_rotated(
-					off + Vector3(lane_c + rail_side * (LANE_W * 0.5 - 0.04),
-							center_y + 0.85 / cos_a, (z0 + z1) * 0.5),
-					Vector3(0.07, 0.07, maxf(hyp - 1.0, hyp * 0.7)), basis,
+					mid + n_up * 0.85 + rail_lat,
+					Vector3(0.07, 0.07, rail_len), basis,
 					RAIL_COLOR, true, false, &"steel")
 		# Decorative treads (collision comes from the ramps) lying ON the
 		# ramp plane: each tread's center follows the same straight line as
@@ -612,8 +641,12 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		return
 
 	# --- keep-out OBBs: stair shaft, entrance swing, walk-in corridor ------
+	# The shaft keep-out is the EXACT zone rect: it already contains the
+	# builder's structural margins, so nothing overlaps the stairs them-
+	# selves. Growing it used to reach the perimeter walls on the zone's
+	# anchored side and reject EVERY wall-snapped bookcase there (P1-12).
 	var blocked: Array[Dictionary] = []
-	blocked.append(_rect_obb(zone.grow(0.7)))
+	blocked.append(_rect_obb(zone))
 	if door_edge >= 0:
 		var mid_len := (w if door_edge == 0 or door_edge == 2 else d) * 0.5
 		var dp := _side_point(door_edge, w, d, mid_len)
@@ -671,7 +704,7 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		if t == null:
 			break
 		var tp: Vector2 = t
-		_f_table(b, off + Vector3(tp.x, floor_y, tp.y))
+		_f_table(b, off + Vector3(tp.x, floor_y, tp.y), tag, floor_i)
 		for c in rng.randi_range(1, 2):
 			var ca := TAU * rng.randf()
 			var cp := tp + Vector2(cos(ca), sin(ca)) * 0.95
@@ -692,7 +725,7 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 			break
 		placed.append(s["obb"])
 		_f_shelf(b, off + Vector3(s["pos"].x, floor_y, s["pos"].y),
-				float(s["yaw"]), rng)
+				float(s["yaw"]), rng, tag, floor_i)
 	# Computer desks: accessories AND body share one rotated basis.
 	for i in rng.randi_range(0, 2):
 		var yaw := rng.randf_range(0.0, TAU)
@@ -700,7 +733,7 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		if dv == null:
 			break
 		var dp2: Vector2 = dv
-		_f_desk_pc(b, off + Vector3(dp2.x, floor_y, dp2.y), yaw)
+		_f_desk_pc(b, off + Vector3(dp2.x, floor_y, dp2.y), yaw, tag, floor_i)
 	# Plant vases tucked into leftovers (soft clutter - no collision).
 	for i in rng.randi_range(1, 3):
 		var pv: Variant = take_spot.call(Vector2(0.26, 0.26), 0.0)
@@ -710,39 +743,63 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		_f_plant(b, off + Vector3(pp.x, floor_y, pp.y))
 
 
-## Nearest-wall shelf placement: picks the wall, snaps the carcass against
-## the interior wall face, returns {pos: Vector2, yaw: float, obb} or {}.
+## Nearest-wall shelf placement (P1-12). The shelf is a 1.6 x 0.34 slab:
+## its local X axis is WIDTH, local Z axis is DEPTH. Wall-snapped against
+## the interior wall face (+ GAP), yaw turns the width to run ALONG the
+## chosen wall. Validation uses the shelf's REAL oriented footprint against
+## the interior bounds and keep-out zones - never a furniture-center
+## rectangle that excludes wall-adjacent placement.
+const SHELF_WIDTH := 1.6
+const SHELF_DEPTH := 0.34
+const SHELF_GAP := 0.02
+
+
 static func _shelf_spot(rng: RandomNumberGenerator, usable: Rect2,
 		w: float, d: float, blocked: Array[Dictionary],
 		placed: Array[Dictionary]) -> Dictionary:
-	const DEPTH := 0.34
-	const GAP := 0.02
+	const HALF_W := 0.8    # SHELF_WIDTH / 2
+	const DEPTH := SHELF_DEPTH
+	const GAP := SHELF_GAP
 	var side := rng.randi_range(0, 3)          # 0=W 1=E 2=N 3=S
 	var yaw := 0.0
 	var pos := Vector2.ZERO
 	match side:
-		0:
+		0:   # west wall: width runs along Z, depth extends +X inward
 			yaw = PI * 0.5
 			pos = Vector2(WALL_T + DEPTH * 0.5 + GAP,
-					rng.randf_range(usable.position.y + 0.9,
-							usable.end.y - 0.9))
-		1:
+					rng.randf_range(usable.position.y + HALF_W,
+							usable.end.y - HALF_W))
+		1:   # east wall
 			yaw = PI * 0.5
 			pos = Vector2(w - WALL_T - DEPTH * 0.5 - GAP,
-					rng.randf_range(usable.position.y + 0.9,
-							usable.end.y - 0.9))
-		2:
+					rng.randf_range(usable.position.y + HALF_W,
+							usable.end.y - HALF_W))
+		2:   # north wall: width runs along X, depth extends +Y inward
 			yaw = 0.0
-			pos = Vector2(rng.randf_range(usable.position.x + 0.9,
-					usable.end.x - 0.9), WALL_T + DEPTH * 0.5 + GAP)
-		_:
+			pos = Vector2(rng.randf_range(usable.position.x + HALF_W,
+					usable.end.x - HALF_W),
+					WALL_T + DEPTH * 0.5 + GAP)
+		_:   # south wall
 			yaw = 0.0
-			pos = Vector2(rng.randf_range(usable.position.x + 0.9,
-					usable.end.x - 0.9), d - WALL_T - DEPTH * 0.5 - GAP)
-	var half := Vector2(DEPTH * 0.5, 0.8) if side >= 2 \
-			else Vector2(0.8, DEPTH * 0.5)
+			pos = Vector2(rng.randf_range(usable.position.x + HALF_W,
+					usable.end.x - HALF_W),
+					d - WALL_T - DEPTH * 0.5 - GAP)
+	# OBB half-extents MATCH the visual/collider box (1.6 x 0.34) after the
+	# wall-aligned yaw: E/W shelves carry (depth/2 along X, width/2 along Y)
+	# in world terms; N/S shelves the transpose. The old code had these
+	# swapped for the E/W walls, so its overlap tests described a different
+	# object than the one drawn.
+	var half := Vector2(DEPTH * 0.5, HALF_W) if side <= 1 \
+			else Vector2(HALF_W, DEPTH * 0.5)
 	var obb := {"c": pos, "e": half, "r": yaw}
-	if not _obb_in_rect(obb, usable):
+	# P1-12: validate the wall-snapped footprint against the TRUE interior
+	# bounds (wall face inward) - not the furniture-center rectangle, which
+	# is heavily inset from the walls and rejected every valid snap. The
+	# snapped center sits DEPTH/2+GAP from the wall face, so this proves
+	# both full containment AND no overlap with the actual wall geometry.
+	var interior := Rect2(WALL_T, WALL_T,
+			maxf(w - 2.0 * WALL_T, 0.0), maxf(d - 2.0 * WALL_T, 0.0))
+	if not _obb_in_rect(obb, interior):
 		return {}
 	for bl in blocked:
 		if _obb_overlap(obb, bl):
@@ -812,9 +869,11 @@ static func _rect_obb(r: Rect2) -> Dictionary:
 
 
 ## Dining/work table: oak top on a dark apron base. Collides (walk around).
-static func _f_table(b: MeshBatcher, pos: Vector3) -> void:
+static func _f_table(b: MeshBatcher, pos: Vector3, owner_tag := "",
+		floor_i := -1) -> void:
 	b.add_destructible_box(pos + Vector3(0, 0.37, 0),
-			Vector3(1.15, 0.74, 0.78), FURN_WOOD_DARK, &"wood")
+			Vector3(1.15, 0.74, 0.78), FURN_WOOD_DARK, &"wood", true,
+			owner_tag, floor_i)
 	b.add_visual_box(pos + Vector3(0, 0.755, 0),
 			Vector3(1.25, 0.07, 0.88), FURN_WOOD)
 
@@ -829,11 +888,11 @@ static func _f_chair(b: MeshBatcher, pos: Vector3, yaw: float) -> void:
 
 ## Bookcase: walnut carcass (collides) with colored book rows on shelves.
 static func _f_shelf(b: MeshBatcher, pos: Vector3, yaw: float,
-		rng: RandomNumberGenerator) -> void:
+		rng: RandomNumberGenerator, owner_tag := "", floor_i := -1) -> void:
 	var basis := Basis(Vector3.UP, -yaw)
 	b.add_box_rotated(pos + Vector3(0, 1.0, 0),
-			Vector3(1.6, 2.0, 0.34), basis, FURN_WALNUT, true,
-			false, &"wood")
+			Vector3(SHELF_WIDTH, 2.0, SHELF_DEPTH), basis, FURN_WALNUT, true,
+			false, &"wood", owner_tag, floor_i)
 	for shelf_y in [0.55, 1.05, 1.55]:
 		b.add_box_rotated(pos + Vector3(0, shelf_y, 0.02),
 				Vector3(1.5, 0.04, 0.28), basis, FURN_WOOD, false)
@@ -853,11 +912,12 @@ static func _f_shelf(b: MeshBatcher, pos: Vector3, yaw: float,
 ## Desk with keyboard, monitor stand and dark screen. VISUAL/COLLIDER
 ## AGREEMENT (P0-D): the destructible desk BODY shares its accessories'
 ## rotated basis - collider and visuals describe the same oriented footprint.
-static func _f_desk_pc(b: MeshBatcher, pos: Vector3, yaw: float) -> void:
+static func _f_desk_pc(b: MeshBatcher, pos: Vector3, yaw: float,
+		owner_tag := "", floor_i := -1) -> void:
 	var basis := Basis(Vector3.UP, -yaw)
 	b.add_box_rotated(pos + Vector3(0, 0.36, 0),
 			Vector3(1.35, 0.72, 0.68), basis, FURN_DESK, true,
-			false, &"wood")
+			false, &"wood", owner_tag, floor_i)
 	b.add_box_rotated(pos + basis.z * 0.18 + Vector3(0, 0.79, 0),
 			Vector3(0.42, 0.05, 0.16), basis, FURN_KEYBOARD, false)
 	b.add_box_rotated(pos - basis.z * 0.16 + Vector3(0, 0.82, 0),

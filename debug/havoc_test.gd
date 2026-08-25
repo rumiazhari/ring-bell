@@ -44,14 +44,17 @@ func _run() -> void:
 	_check("door available", doors.size() > 0)
 	if doors.size() > 0:
 		var door: Node = doors[0]
+		var victim_id := String(door.name)
 		var before := _piece_count()
-		var doors_before := get_tree().get_nodes_in_group(&"doors").size()
+		var had_victim := _door_ids().has(victim_id)
 		door.call("take_structural_damage", 4000.0, &"player")
 		await _wait(0.3)
-		var doors_after := get_tree().get_nodes_in_group(&"doors").size()
+		# Identity-based: the victim's OWN id must leave the group. A
+		# global count races concurrent chunk streaming (new doors spawn
+		# while we wait).
 		_check("door destroyed leaves doors group",
-				doors_after == doors_before - 1,
-				"%d -> %d" % [doors_before, doors_after])
+				had_victim and not _door_ids().has(victim_id),
+				victim_id)
 		_check("wood debris spawned", _piece_count() > before,
 				"%d -> %d" % [before, _piece_count()])
 
@@ -188,8 +191,23 @@ func _run() -> void:
 	if weapons2 != null:
 		weapons2.select_slot(3)
 		var before := _piece_count()
-		weapons2.call("_launch_rocket", weapons2.current_def(),
-				player.global_position + Vector3(8, 0, 0))
+		# Aim at PLAN-GUARANTEED geometry: the nearest building center is
+		# always a solid wall mass. A blind fixed-direction shot can fly
+		# down an empty street and expire at max range without ever
+		# detonating (real flake seen in CI), and even ray-picked walls can
+		# be thin glass that shatters without spawning enough debris.
+		var aim_point: Vector3 = player.global_position + Vector3(8, 0, 0)
+		var best_d := INF
+		for bspec in mgr.plan.buildings_in_rect(Rect2(
+				player.global_position.x - 80.0,
+				player.global_position.z - 80.0, 160.0, 160.0)):
+			var bc: Vector2 = (bspec["rect"] as Rect2).get_center()
+			var d := Vector2(player.global_position.x,
+					player.global_position.z).distance_to(bc)
+			if d < best_d:
+				best_d = d
+				aim_point = Vector3(bc.x, 1.5, bc.y)
+		weapons2.call("_launch_rocket", weapons2.current_def(), aim_point)
 		var rocket_ref: RocketProjectile = null
 		for node in get_tree().current_scene.get_children():
 			if node is RocketProjectile:
@@ -202,6 +220,13 @@ func _run() -> void:
 			_check("rocket detonated into debris",
 					_piece_count() >= before + 2,
 					"pieces=%d baseline=%d" % [_piece_count(), before])
+
+	# --- 4b. Explosions go through structural integrity (P0-1) -----------------
+	_check("explosion respects material integrity",
+			await _explosion_integrity_path(mgr, player))
+	# --- 4c. Weapon-grade glass ladder through the runtime path (P1-13) --------
+	_check("glass damage ladder matches ItemDB weapons",
+			await _glass_runtime_ladder(mgr, player))
 
 	# --- 5. Camera Y follow + aim point ----------------------------------------
 	var rig := _camera_rig()
@@ -259,11 +284,165 @@ func _nearest_zombie(from: Vector3) -> Zombie:
 	return best
 
 
+func _door_ids() -> Array[String]:
+	var out: Array[String] = []
+	for d in get_tree().get_nodes_in_group(&"doors"):
+		out.append(String(d.name))
+	out.sort()
+	return out
+
+
 func _find_weapons(player: Survivor) -> WeaponSystem:
 	for child in player.get_children():
 		if child is WeaponSystem:
 			return child
 	return null
+
+
+## P0-1 REAL runtime path: fire DebrisManager.explosion() next to a known
+## concrete wall cell and verify the ray-hit cell takes PROGRESS, not an
+## instant delete. One explosion-grade hit must not remove a concrete
+## cell (accumulated damage may), while a wood-grade comparison breaks.
+func _explosion_integrity_path(mgr: ChunkManager, player: Node3D) -> bool:
+	# Find a resident chunk with a concrete wall cell near the player.
+	var target: Dictionary = {}
+	for c: Vector2i in mgr._chunks:
+		var rec: Dictionary = mgr._chunks[c]
+		var batcher: MeshBatcher = rec.get("batcher")
+		var st: Node = rec.get("static")
+		if batcher == null or st == null or not is_instance_valid(st):
+			continue
+		for s in batcher.specs():
+			if StringName(s["material"]) != &"concrete" \
+					or not bool(s["collide"]):
+				continue
+			var sz: Vector3 = s["size"]
+			# Wall-like: thin one axis, tall another.
+			if sz.y < 2.0 or (sz.x > 3.0 and sz.z > 3.0):
+				continue
+			target = {"coord": c, "id": int(s["id"]),
+					"pos": s["pos"], "size": sz}
+			break
+		if not target.is_empty():
+			break
+	if target.is_empty():
+		print("[Havoc] no concrete wall cell available for blast test")
+		return true   # nothing to prove on this seed; not a failure
+	var center: Vector3 = target["pos"]
+	# Park the player far from the blast so knockback cannot interfere.
+	var saved := player.global_position
+	player.global_position = center + Vector3(30.0, 0.5, 30.0)
+	await _wait(0.1)
+	# Blast AT THE WALL FACE (rays do not report shapes they start inside,
+	# so detonating inside the cell would discover nothing).
+	var szv: Vector3 = target["size"]
+	var face_off := Vector3(0, szv.y * 0.5 + 1.2, 0)
+	if szv.x <= szv.y and szv.x <= szv.z:
+		face_off = Vector3(szv.x * 0.5 + 1.2, 0.4, 0)
+	elif szv.z <= szv.x and szv.z <= szv.y:
+		face_off = Vector3(0, 0.4, szv.z * 0.5 + 1.2)
+	var blast_at: Vector3 = center + face_off
+	# BLAST #1 - the actual P0-1 assertion: ONE explosion-grade hit must
+	# NOT delete a concrete cell just because rays discovered it.
+	DebrisManager.explosion(
+			blast_at + Vector3(randf_range(-1.0, 1.0),
+					randf_range(-0.5, 1.0), randf_range(-1.0, 1.0)),
+			6.0, 130.0, &"player", &"concrete")
+	await _wait(0.5)
+	player.global_position = saved
+	await _wait(0.2)
+	var rec_mid: Dictionary = mgr._chunks[target["coord"]]
+	var batcher_mid: MeshBatcher = rec_mid["batcher"]
+	if batcher_mid.is_destroyed(int(target["id"])):
+		print(("[Havoc] ONE blast deleted concrete cell %d "
+				+ "(integrity bypassed)") % int(target["id"]))
+		return false
+	var rec0: Dictionary = mgr._chunks[target["coord"]]
+	var batcher0: MeshBatcher = rec0["batcher"]
+	var records_before: int = batcher0.damage_state().size()
+	var destroyed_before: int = batcher0._destroyed.size()
+	# Blasts #2/#3: repeated hits ACCUMULATE and may legitimately finish
+	# the module off - that is the model working as designed.
+	for i in 2:
+		player.global_position = center + Vector3(30.0, 0.5, 30.0)
+		DebrisManager.explosion(
+				blast_at + Vector3(randf_range(-1.0, 1.0),
+						randf_range(-0.5, 1.0), randf_range(-1.0, 1.0)),
+				6.0, 130.0, &"player", &"concrete")
+		await _wait(0.35)
+	player.global_position = saved
+	await _wait(0.3)
+	# Inspect the chunk AFTER the rebuild queue flushed.
+	var rec: Dictionary = mgr._chunks[target["coord"]]
+	var batcher: MeshBatcher = rec["batcher"]
+	# Structural progress must be OBSERVABLE somewhere in the chunk:
+	# accumulated damage records and/or integrity-threshold destructions.
+	var records_after: int = batcher.damage_state().size()
+	var destroyed_after: int = batcher._destroyed.size()
+	if records_after + destroyed_after <= records_before + destroyed_before:
+		print("[Havoc] explosion left no structural progress in the "
+				+ "chunk - path bypassed? records %d->%d destroyed %d->%d"
+						% [records_before, records_after,
+								destroyed_before, destroyed_after])
+		return false
+	print(("[Havoc] integrity ok: one blast left the concrete cell "
+			+ "standing; further blasts produced %d damage record(s), "
+			+ "%d destruction(s)")
+					% [records_after - records_before,
+							destroyed_after - destroyed_before])
+	return true
+
+
+## P1-13 through the runtime path: find glass panes in resident chunks and
+## drive ChunkManager.damage_box with ACTUAL ItemDB weapon damage values.
+func _glass_runtime_ladder(mgr: ChunkManager, player: Node3D) -> bool:
+	var smg := float(ItemDB.ITEMS[&"smg"]["damage"])
+	var shotgun_volley := float(ItemDB.ITEMS[&"shotgun"]["damage"]) \
+			* int(ItemDB.ITEMS[&"shotgun"]["pellets"])
+	var panes: Array = []
+	for c: Vector2i in mgr._chunks:
+		var rec: Dictionary = mgr._chunks[c]
+		var batcher: MeshBatcher = rec.get("batcher")
+		var st: Node = rec.get("static")
+		if batcher == null or st == null or not is_instance_valid(st):
+			continue
+		for sh in st.get_children():
+			if sh is CollisionShape3D and not (sh as CollisionShape3D).disabled \
+					and sh.has_meta("vox_id") \
+					and StringName(sh.get_meta("vox_material")) == &"glass":
+				panes.append({"node": sh, "batcher": batcher})
+			if panes.size() >= 3:
+				break
+		if panes.size() >= 3:
+			break
+	if panes.size() < 3:
+		print("[Havoc] fewer than 3 glass panes resident; skipping ladder")
+		return true
+	# Pane 1: one SMG round must crack (or at least NOT shatter) the pane.
+	var p1: Dictionary = panes[0]
+	var p1_id := int((p1["node"] as Node).get_meta("vox_id"))
+	var r1: Dictionary = (p1["batcher"] as MeshBatcher).damage_box(p1_id, smg)
+	if (p1["batcher"] as MeshBatcher).is_destroyed(p1_id):
+		print("[Havoc] one SMG round shattered a pane")
+		return false
+	# Pane 2: full shotgun volley must shatter.
+	var p2: Dictionary = panes[1]
+	var res2: Dictionary = (p2["batcher"] as MeshBatcher).damage_box(
+			int((p2["node"] as Node).get_meta("vox_id")), shotgun_volley)
+	if not bool(res2.get("shattered", false)):
+		print("[Havoc] shotgun volley failed to shatter a pane")
+		return false
+	# Pane 3: rocket damage must shatter.
+	var p3: Dictionary = panes[2]
+	var res3: Dictionary = (p3["batcher"] as MeshBatcher).damage_box(
+			int((p3["node"] as Node).get_meta("vox_id")),
+			float(ItemDB.ITEMS[&"rocket_launcher"]["damage"]))
+	if not bool(res3.get("shattered", false)):
+		print("[Havoc] rocket failed to shatter a pane")
+		return false
+	return true
+
+
 
 
 func _until(predicate: Callable, timeout: float) -> bool:
