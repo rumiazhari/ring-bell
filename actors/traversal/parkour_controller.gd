@@ -13,6 +13,9 @@ extends Node
 ## the body OVER the lip onto the surface (deterministic rooftop mantles when
 ## the grabbed wall is batched building structure, detected via the
 ## vox_material collider meta stamped by MeshBatcher.flush_into).
+## Phase F slice 2: a radial compass fan finds graspable lips in ANY direction
+## (NPCs chased off rooftops flee with their back to the parapet), and the
+## stamina cost scales with lip height instead of being flat.
 
 const JUMP_SPEED := 6.4                # apex ~1.14 m: clears crates, not walls
 const JUMP_STAMINA_COST := 6.0
@@ -41,8 +44,17 @@ const LEDGE_CLIMB_CLEARANCE := 0.35    # extra rise beyond the ledge lip
 const LEDGE_CLIMB_BOOST_MIN := 4.5
 const LEDGE_CLIMB_BOOST_MAX := 9.5
 const LEDGE_FORWARD_MULT := 1.35
-const LEDGE_STAMINA_COST := 4.0
 const LEDGE_COOLDOWN := 0.9
+# Phase F slice 2: pull-up effort scales with lip height (cheap low lips,
+# demanding full-reach lips) - an exhausted survivor can still catch a low
+# cornice but cannot chain maximum-reach mantles for free.
+const LEDGE_STAMINA_COST_LOW := 2.0   # lip at LEDGE_TOP_MIN above the feet
+const LEDGE_STAMINA_COST_HIGH := 6.0  # lip at full LEDGE_REACH_ABOVE
+# Radial ledge-seek: when the intended move/facing direction finds no wall,
+# sweep this many evenly spaced compass rays for any graspable lip. Survivors
+# chased off an edge (facing AWAY from the building) still catch the parapet
+# they are falling alongside - NPC zombie-chase escape hatch.
+const LEDGE_SEEK_RAYS := 8
 
 # Climb follow-through (Phase F): after a grab, briefly steer horizontal
 # velocity toward the wall so the body lands ON the ledge, not back at its base.
@@ -61,6 +73,7 @@ var _peak_y := 0.0
 var ledge_grabs := 0                   # lifetime counter (tests/HUD)
 var rooftop_mantles := 0               # grabs that mounted batched structure
 var last_grab_was_building := false    # HUD/test readout of the latest grab
+var last_stamina_cost := 0.0           # stamina charged by the latest grab
 var _ledge_cooldown := 0.0
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
 var _climb_dir := Vector3.ZERO
@@ -140,18 +153,38 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 
 
 ## Falling alongside a wall whose graspable top is within arm reach ->
-## grab it and climb. Two lateral chest-height rays confirm a broad wall,
-## a downward probe finds the lip. Returns true when a grab fired.
+## grab it and climb. The intended move/facing direction is probed first;
+## if no broad wall is found there, a radial compass fan sweeps for any
+## graspable lip - an NPC chased off an edge (back to the building) still
+## catches the parapet it is falling alongside.
 func _try_ledge_grab(move_dir: Vector3) -> void:
-	if _ledge_cooldown > 0.0 or _survivor.stamina < LEDGE_STAMINA_COST:
+	if _ledge_cooldown > 0.0 or _survivor.exhausted:
 		return
 	if _survivor.velocity.y > LEDGE_FALL_SPEED_MIN:
 		return
-	var dir := move_dir if move_dir.length_squared() > 0.01 else _survivor.facing
-	dir.y = 0.0
-	dir = dir.normalized()
-	if dir.length_squared() < 0.5:
+	var primary := move_dir if move_dir.length_squared() > 0.01 else _survivor.facing
+	primary.y = 0.0
+	primary = primary.normalized()
+	if primary.length_squared() < 0.5:
 		return
+	# Phase F slice 2: intended direction first (unchanged behaviour for
+	# intentional grabs), then evenly spaced fallback rays around the body.
+	var dirs: Array[Vector3] = [primary]
+	for i in range(1, LEDGE_SEEK_RAYS):
+		var ang := TAU * float(i) / float(LEDGE_SEEK_RAYS)
+		dirs.append(Vector3(cos(ang), 0.0, sin(ang)))
+	for d in dirs:
+		var probe := _probe_ledge(d)
+		if probe.is_empty():
+			continue
+		if _commit_grab(d, probe["wall"], probe["rise"]):
+			return
+
+
+## Ray probes for one direction: two lateral chest-height rays confirm a
+## broad wall face, then a downward probe finds the lip. Returns
+## {"wall": Dictionary, "rise": float} or {} when nothing is graspable here.
+func _probe_ledge(dir: Vector3) -> Dictionary:
 	var space := _survivor.get_world_3d().direct_space_state
 	var feet := _survivor.global_position
 	var side := Vector3(-dir.z, 0.0, dir.x)
@@ -167,7 +200,7 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 			wall_hit = hit
 			break
 	if wall_hit.is_empty():
-		return
+		return {}
 	# Downward probe from above expected reach to find the ledge lip.
 	var push := dir * 0.45
 	var start_x: float = float(wall_hit.position.x) + push.x
@@ -181,16 +214,25 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 	q2.collide_with_areas = false
 	var lip := space.intersect_ray(q2)
 	if lip.is_empty():
-		return
+		return {}
 	if float(lip.normal.y) < LEDGE_SURFACE_NORMAL_Y:
-		return
-	var lip_y: float = lip.position.y
-	var rise := lip_y - feet.y
+		return {}
+	var rise := float(lip.position.y) - feet.y
 	if rise < LEDGE_TOP_MIN or rise > LEDGE_REACH_ABOVE:
-		return
+		return {}
+	return {"wall": wall_hit, "rise": rise}
+
+
+## Apply a confirmed grab in direction dir. Returns false (no side effects)
+## when the survivor lacks the stamina this particular lip demands.
+func _commit_grab(dir: Vector3, wall_hit: Dictionary, rise: float) -> bool:
+	var cost := _ledge_stamina_cost(rise)
+	if _survivor.stamina < cost:
+		return false
 	# GRAB: pay stamina, launch into the climb, reset fall peak so the
 	# arrested descent does not charge fall damage.
-	_survivor.stamina -= LEDGE_STAMINA_COST
+	_survivor.stamina -= cost
+	last_stamina_cost = cost
 	var need := rise + LEDGE_CLIMB_CLEARANCE
 	var boost: float = sqrt(2.0 * _survivor.GRAVITY * need)
 	boost = clampf(boost, LEDGE_CLIMB_BOOST_MIN, LEDGE_CLIMB_BOOST_MAX)
@@ -210,6 +252,18 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 	_climb_speed = CORNICE_DRIVE_SPEED if is_building else CLIMB_DRIVE_SPEED
 	_climb_time_left = CLIMB_FOLLOW_TIME
 	ledge_grabbed.emit(is_building)
+	return true
+
+
+## Pull-up stamina demand for a lip `rise` meters above the feet: linearly
+## between LEDGE_STAMINA_COST_LOW at LEDGE_TOP_MIN and LEDGE_STAMINA_COST_HIGH
+## at LEDGE_REACH_ABOVE (clamped outside the window).
+func _ledge_stamina_cost(rise: float) -> float:
+	var t := clampf(
+			(rise - LEDGE_TOP_MIN)
+					/ maxf(0.001, LEDGE_REACH_ABOVE - LEDGE_TOP_MIN),
+			0.0, 1.0)
+	return lerpf(LEDGE_STAMINA_COST_LOW, LEDGE_STAMINA_COST_HIGH, t)
 
 
 ## True when a ray hit's shape belongs to batched building structure. Walls,

@@ -1,31 +1,44 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 9
+LAST_ITER: 10
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase F slice 1 COMPLETE: ledge-grab HUD cue + rooftop-mantle follow-through.
-ParkourController now emits ledge_grabbed(is_building); PlayerController
-flashes "Mantled onto the rooftop!" vs "Grabbed the ledge!". Building walls
-are recognized via the vox_material collider meta stamped by
-MeshBatcher.flush_into (&"concrete" on wall/parapet cells - no generation-path
-changes). After every grab a 0.6 s assisted drive steers horizontal velocity
-toward the wall (2.2 m/s props, 3.0 m/s cornices) so the arc lands ON the
-ledge deterministically; rooftop_mantles/last_grab_was_building exposed for
-HUD/tests. Gate ALL GREEN.
+Phase F slice 2 COMPLETE: radial ledge-seek + lip-height stamina scaling.
+_try_ledge_grab probes the intended move/facing direction first, then sweeps
+a radial compass fan (LEDGE_SEEK_RAYS=8) - survivors chased off rooftops
+(facing AWAY from the building) still catch the parapet they fall alongside,
+the NPC zombie-chase escape hatch. Stamina cost now scales linearly
+2.0->6.0 with lip rise across the grab window (_ledge_stamina_cost);
+exhausted survivors cannot pull up at all (matches try_jump semantics;
+latch clears at 25 stamina, unreachable mid-fall -> deterministic).
+last_stamina_cost exposed for tests/HUD. Gate ALL GREEN:
+smoke 37 / citytest / havoctest / cityruntime, all 0 failure(s).
 
 ## Backlog
-1. Phase D: semantic building use -> room layouts (residential/retail first),
-   furniture placement by room semantics + wall alignment.
+1. Phase D slice 2: semantic room layouts from room_type labels
+   (residential/retail furniture placement by wall alignment).
    Gate: citytest + smoke + cityruntime.
-2. Phase F slice 2: NPC survivors use follow-through to escape long falls
-   (zombie-chase edge cases), + stamina cost scaling by lip height.
-   Gate: smoke + havoctest.
+2. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
+   readout; or zombie chase steering so NPCs corner survivors toward edges.
+   Gate: smoke.
 3. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 10 (2026-08-26): Phase F slice 2 LANDED - radial ledge-seek + scaled
+  grab stamina. parkour_controller.gd: _try_ledge_grab probes the primary
+  move/facing dir first then an 8-ray radial fan (_probe_ledge extracted,
+  returns {wall, rise}); _commit_grab charges _ledge_stamina_cost(rise) -
+  linear 2.0->6.0 across the 0.9-2.1 m window - and refuses when
+  _survivor.exhausted (parity with try_jump; regen 15/s makes pure
+  stamina-floor refusals untestable mid-fall). New last_stamina_cost
+  readout. smoke_test.gd +6 checks: back-to-the-wall fall still grabs and
+  mounts (radial fan), charged cost inside the band, curve rises with
+  reach, exhausted survivor grabs NOTHING and lands on the ground.
+  Gate ALL GREEN: --smoke 37 / --citytest / --havoctest / --cityruntime,
+  all "finished with 0 failure(s)".
 - iter 9 (2026-08-26): Phase D LANDED - room type labels added to building specs.
   city_plan.gd: added room_type field to BuildingSpec style dict ("residential"/"retail"
   determined by cell.x parity). Gate ALL GREEN: --smoke 30 / --citytest 34, both

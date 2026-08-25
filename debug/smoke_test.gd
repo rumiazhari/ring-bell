@@ -226,6 +226,71 @@ func _run_all() -> void:
 						player.parkour.rooftop_mantles])
 		_check("survivor mounted cornice top", player.global_position.y > 2.0,
 				"y=%.2f" % player.global_position.y)
+		# --- Phase F slice 2: radial ledge-seek --------------------------------
+		# Survivor falls with its BACK to the wall (facing away): the primary
+		# probe sees nothing, only the radial fan can find the lip. This is
+		# the zombie-chase escape hatch for NPCs fleeing off rooftops.
+		var rad_pos := box_pos + Vector3(0.0, 0.0, 100.0)
+		var rad_body := StaticBody3D.new()
+		rad_body.global_position = rad_pos + Vector3(0.0, 1.2, 0.0)
+		var rad_shape := CollisionShape3D.new()
+		var rad_mesh := BoxShape3D.new()
+		rad_mesh.size = Vector3(3.0, 2.4, 3.0)
+		rad_shape.shape = rad_mesh
+		rad_body.add_child(rad_shape)
+		get_tree().current_scene.add_child(rad_body)
+		grabs_before = player.parkour.ledge_grabs
+		var rad_face_x := rad_pos.x - 1.5
+		player.global_position = Vector3(rad_face_x - 0.45, start_y, rad_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.LEFT   # back to the wall; primary probe blind
+		player.stamina = Survivor.STAMINA_MAX
+		player.exhausted = false
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("radial seek grabs wall behind survivor",
+				player.parkour.ledge_grabs == grabs_before + 1,
+				"grabs=%d expected=%d" % [player.parkour.ledge_grabs,
+						grabs_before + 1])
+		_check("radial grab mounted top", player.global_position.y > 2.0,
+				"y=%.2f" % player.global_position.y)
+		# Stamina now scales with lip height: the charged cost lies inside
+		# the scaled band and the curve rises as the lip gets higher.
+		_check("grab charged a lip-scaled stamina cost",
+				player.parkour.last_stamina_cost >= player.parkour.LEDGE_STAMINA_COST_LOW
+						and player.parkour.last_stamina_cost <= player.parkour.LEDGE_STAMINA_COST_HIGH,
+				"cost=%.2f band=[%.1f,%.1f]" % [player.parkour.last_stamina_cost,
+						player.parkour.LEDGE_STAMINA_COST_LOW,
+						player.parkour.LEDGE_STAMINA_COST_HIGH])
+		_check("lip-height stamina scaling rises with reach",
+				player.parkour._ledge_stamina_cost(1.0)
+						< player.parkour._ledge_stamina_cost(2.05),
+				"low_lip=%.2f high_lip=%.2f" % [
+						player.parkour._ledge_stamina_cost(1.0),
+						player.parkour._ledge_stamina_cost(2.05)])
+		# Exhausted survivor (latched: no strenuous moves until stamina
+		# recovers to 25 - unreachable during a sub-second fall, so this
+		# is deterministic despite idle regen) cannot pull up at all.
+		grabs_before = player.parkour.ledge_grabs
+		player.global_position = Vector3(rad_face_x - 0.45, start_y, rad_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.LEFT
+		player.stamina = 1.0   # below LEDGE_STAMINA_COST_LOW
+		player.exhausted = true
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("exhausted survivor cannot grab",
+				player.parkour.ledge_grabs == grabs_before,
+				"grabs before=%d after=%d" % [grabs_before,
+						player.parkour.ledge_grabs])
+		_check("exhausted survivor landed on ground",
+				player.global_position.y < 0.5,
+				"y=%.2f" % player.global_position.y)
+		player.stamina = Survivor.STAMINA_MAX
 		# Restore controller.
 		for c in player.get_children():
 			if c is PlayerController:
