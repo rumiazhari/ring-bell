@@ -84,11 +84,6 @@ func _run() -> void:
 	var mid := _door_mid(dm)                 # geometric opening center
 	var face: int = int(spec["door_edge"])
 	var face_dir := _inward_dir(face)
-	print(("[Walkthrough][GEO] bld=%s rect=%s zone=%s edge=%d mid=%s " +
-			"lane_w=%.2f z_n=%.2f fh=%.2f n=%d") % [
-				str(spec["id"]), str(lr), str(zone), face, str(mid),
-				zone.position.x + BuildingBuilder.LANE_W * 0.5,
-				zone.position.y + BuildingBuilder.LAND * 0.5, fh, n])
 
 	# === 1. Street drop-off OUTSIDE the entrance (the ONLY placement) ======
 	var spot := _free_spot(player, Vector3(mid.x, 0.15, mid.y) - face_dir * 2.2,
@@ -161,9 +156,6 @@ func _run() -> void:
 	var downs: Array[Vector3] = []
 	for idx in range(climb.size() - 1, -1, -1):
 		downs.append(climb[idx])
-	print(("[Walkthrough][DESCENT START] player=%s roof_y=%.2f n=%d "
-			+ "zone=%s")
-			% [player.global_position, roof_y, n, zone])
 	var down_radius := func(_i: int) -> float: return 0.9
 	_check("descended to ground floor",
 			await _follow_waypoints_r(player, downs, 140.0, down_radius,
@@ -440,10 +432,6 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 		# Progress watch: the CURRENT target must get nearer steadily.
 		win_t += get_physics_process_delta_time()
 		if win_t >= 2.0:
-			print(("[Walkthrough][SEG] wp=%d/W dist=%.2f pos=%s"
-					+ " tgt=%s")
-					% [i + 1, flat.length(),
-					player.global_position, wps[i]])
 			if flat.length() > ref_dist - 0.06:
 				# No steady approach over 2 s even though _clear_dir is
 				# sliding along obstacles - the waypoint is genuinely
@@ -453,7 +441,6 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 				skips += 1
 				print("[Walkthrough] skipping waypoint %d/%d"
 						% [i + 1, wps.size()])
-				_dbg_dump_blockers(player, target)
 				if skips > 2:
 					return false
 				i += 1
@@ -520,78 +507,6 @@ func _clear_dir(player: Node3D, desired: Vector3) -> Vector3:
 			best_dot = dot
 			best = h
 	return best
-
-## TEMP DIAGNOSTIC: name the shapes wedging the follower at a stall point.
-## Reports what we STAND ON, what TOUCHES the capsule, and what lies on the
-## line toward the stalled target, plus nearby small-box specs.
-func _dbg_dump_blockers(player: Node3D, target: Vector3) -> void:
-	var space := player.get_world_3d().direct_space_state
-	var p := player.global_position
-	# What am I standing on?
-	var dq := PhysicsRayQueryParameters3D.create(
-			p + Vector3.UP * 0.2, p + Vector3.DOWN * 1.5)
-	dq.exclude = [player.get_rid()]
-	var dhit := space.intersect_ray(dq)
-	if not dhit.is_empty():
-		print("[Walkthrough][GROUND] y=%.2f at %.2f,%.2f" % [
-				dhit["position"].y, dhit["position"].x, dhit["position"].z])
-	else:
-		print("[Walkthrough][GROUND] nothing below")
-	# What touches the capsule right now?
-	var sq := PhysicsShapeQueryParameters3D.new()
-	var cap := CapsuleShape3D.new()
-	cap.radius = 0.42
-	cap.height = 1.8
-	sq.shape = cap
-	sq.transform = Transform3D(Basis(), p)
-	sq.exclude = [player.get_rid()]
-	for hit in space.intersect_shape(sq, 6):
-		var col: Object = hit["collider"]
-		if col is CollisionObject3D:
-			print("[Walkthrough][TOUCH] %s:%s" % [col.get_class(),
-					str(col.get("name"))])
-	# Fan of rays toward the target.
-	var from := p + Vector3.UP * 0.45
-	var n := (Vector3(target.x, 0.0, target.z) - Vector3(p.x, 0.0, p.z))
-	n.y = 0.0
-	if n.length() > 0.01:
-		n = n.normalized()
-	for dz in [-0.5, 0.0, 0.5]:
-		for dx in [0.0, 0.35, -0.35]:
-			var q := PhysicsRayQueryParameters3D.create(
-					from, from + Vector3(dx * 2.0, 0.0,
-							1.1 + absf(dz) * 0.4) + n * 1.2)
-			q.exclude = [player.get_rid()]
-			q.collide_with_areas = false
-			var hit := space.intersect_ray(q)
-			if hit.is_empty():
-				continue
-			var col: Object = hit.get("collider")
-			var desc := "<null>"
-			if col is CollisionObject3D:
-				desc = col.get_class() + ":" + str(col.get("name"))
-			print("[Walkthrough][BLOCKER] d=(%s,%s) -> %s at %.2f,%.2f" % [
-					dx, dz, desc, hit["position"].x, hit["position"].z])
-	# Also dump nearby small-box specs (furniture-sized) from the chunk batcher.
-	var mgr := _manager()
-	if mgr == null:
-		return
-	var cc: Vector2i = WorldSeed.chunk_coord(p.x, p.z)
-	var b = null
-	var chunks = mgr.get("_chunks")
-	if chunks is Dictionary and chunks.has(cc):
-		b = chunks[cc].get("batcher")
-	if b == null:
-		return
-	for pr in b.specs():
-		var sz: Vector3 = pr["size"]
-		if sz.x > 2.5 or sz.y > 1.6 or sz.z > 2.5:
-			continue   # structural plates/walls only, not furniture
-		var c: Vector3 = pr["pos"]
-		if Vector2(c.x - p.x, c.z - p.z).length() < 6.0:
-			print("[Walkthrough][PROP] center=%.2f,%.2f size=%s bld=%s"
-					% [c.x, c.z, str(sz), str(pr.get("building_id"))])
-
 
 func _snap(file_name: String) -> void:
 	if DisplayServer.get_name() == "headless":

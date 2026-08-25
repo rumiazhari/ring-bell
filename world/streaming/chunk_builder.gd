@@ -21,6 +21,7 @@ const DASH_COLOR := Color("b9ae82")
 const SIDEWALK_HISTORIC := Color("a29a8b")
 const SIDEWALK_INNER := Color("98948a")
 const PLAZA_PAVE := Color("b3ab97")
+const ALLEY_FLOOR := Color("6f6759")
 const GRASS := Color("55693f")
 const TRUNK_COLOR := Color("4a3826")
 const CANOPY_COLOR := Color("3f5c30")
@@ -56,6 +57,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 				_pavement(b, block["rect"], rect, SIDEWALK_HISTORIC \
 						if block["district"] == CityPlan.DISTRICT_HISTORIC \
 						else SIDEWALK_INNER)
+				_alley(b, block, rect)
 			&"plaza":
 				_plaza(b, plan, block, rect, coord)
 			_:
@@ -189,6 +191,22 @@ static func _pavement(b: MeshBatcher, block_rect: Rect2, chunk_rect: Rect2,
 		return
 	b.add_visual_box(Vector3(r.get_center().x, 0.03, r.get_center().y),
 			Vector3(r.size.x, 0.06, r.size.y), color)
+
+
+## Paved floor of an intra-block passage (see CityPlan._passage_for_block),
+## clipped to this chunk. Sits a hair above the sidewalk and flush-ish with
+## the road so the cut reads as its own darker channel between the fronts.
+static func _alley(b: MeshBatcher, block: Dictionary,
+		chunk_rect: Rect2) -> void:
+	var p: Dictionary = block.get("passage", {})
+	if p.is_empty():
+		return
+	var band: Rect2 = (p["rect"] as Rect2).intersection(chunk_rect)
+	if band.size.x <= 0.01 or band.size.y <= 0.01:
+		return
+	b.add_visual_box(Vector3(band.get_center().x, 0.045,
+				band.get_center().y),
+			Vector3(band.size.x, 0.09, band.size.y), ALLEY_FLOOR)
 
 
 static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,

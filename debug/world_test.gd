@@ -148,6 +148,8 @@ func _run_all() -> void:
 			_test_destruction_persistence())
 	_check("corner building doors face a street (NW/NE/SE/SW)",
 			_test_corner_door_edges())
+	_check("intra-block passages pierce both fronts unobstructed",
+			_test_passages())
 	_check("interior probe detection + facade sector math", _test_interior_probe())
 
 
@@ -881,6 +883,51 @@ func _test_corner_door_edges() -> bool:
 	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
 	print("[CityTest] corner doors checked: %d" % checked)
 	return checked >= 40
+
+
+
+# --- 26: Intra-block passages ---------------------------------------------------
+func _test_passages() -> bool:
+	# Every seeded passage must span the FULL block extent on its axis
+	# (piercing both opposite building fronts), stay within the designed
+	# width band, and have NO parcel intruding into the cleared cut. Also
+	# asserts passages actually occur often enough to shape the city.
+	var found := 0
+	for seed_v: int in [WorldSeed.get_world_seed(),
+			WorldSeed.get_world_seed() + 777]:
+		WorldSeed.set_world_seed(seed_v)
+		var plan := CityPlan.new()
+		for cell in plan.cells_in_rect(Rect2(-450, -450, 900, 900)):
+			var block := plan.cell_block(cell)
+			var p: Dictionary = block.get("passage", {})
+			if p.is_empty():
+				continue
+			found += 1
+			var band: Rect2 = p["rect"]
+			var br: Rect2 = block["rect"]
+			var ok_span := false
+			if int(p["axis"]) == 0:
+				ok_span = absf(band.position.y - br.position.y) < 0.05 \
+						and absf(band.end.y - br.end.y) < 0.05 \
+						and band.size.x >= 3.0 and band.size.x <= 5.6
+			else:
+				ok_span = absf(band.position.x - br.position.x) < 0.05 \
+						and absf(band.end.x - br.end.x) < 0.05 \
+						and band.size.y >= 3.0 and band.size.y <= 5.6
+			if not ok_span:
+				print("[CityTest] passage band malformed in %s: %s"
+						% [block["id"], str(p)])
+				WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+				return false
+			for s: Dictionary in block["buildings"]:
+				if (s["rect"] as Rect2).grow(0.05).intersects(band):
+					print("[CityTest] %s intrudes into passage of %s"
+							% [s["id"], block["id"]])
+					WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+					return false
+	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+	print("[CityTest] passages checked: %d blocks pierced" % found)
+	return found >= 6
 
 
 

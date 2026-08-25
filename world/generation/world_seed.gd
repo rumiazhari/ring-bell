@@ -13,7 +13,7 @@ extends RefCounted
 ## never silently regenerated into something else.
 
 const CHUNK_SIZE := 64                 # meters per streaming chunk edge
-const GENERATOR_VERSION := 1
+const GENERATOR_VERSION := 2
 
 # ProjectSettings key so a seed can be forced via override files / CLI.
 const SEED_SETTING := "world/generation/seed"

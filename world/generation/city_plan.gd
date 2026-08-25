@@ -34,6 +34,13 @@ const AVENUE_CHANCE := 0.18             # a grid line becomes a wide avenue
 const NARROW_HALF := Vector2(4.2, 5.6)  # min/max half-width of normal streets
 const AVENUE_HALF := Vector2(6.6, 8.4)
 
+# Intra-block pedestrian cuts ("alleys"): a seeded minority of BUILT blocks
+# is pierced by ONE narrow passage crossing street-to-street, splitting the
+# perimeter ring. Half-width range keeps the open gap around 3-4 m wide;
+# PASSAGE_CLEAR is the minimum gap kept between the cut and corner lots.
+const PASSAGE_HALF := Vector2(1.8, 2.5)
+const PASSAGE_CLEAR := 0.6
+
 # Stair feasibility (must match BuildingBuilder geometry).
 
 const DISTRICT_HISTORIC := &"historic"
@@ -208,6 +215,9 @@ func cell_block(cell: Vector2i) -> Dictionary:
 		"kind": kind,
 		"district": district,
 		"buildings": [],
+		# Intra-block passage: {} or {axis:int, half:float, rect:Rect2}.
+		# Filled by _buildings_for_cell for built blocks only.
+		"passage": {},
 	}
 	# Perimeter rows frame BOTH ordinary blocks AND plazas: a real European
 	# square is enclosed by continuous building fronts, not an open field.
@@ -269,6 +279,14 @@ func _buildings_for_cell(block: Dictionary, cell: Vector2i) -> Array:
 		_building_cache[cell] = result
 		return result
 
+	# 0. Intra-block passage (built blocks only - plaza fronts stay
+	#    continuous to keep squares enclosed). Drawn from its OWN WorldSeed
+	# streams, so parcel rolls below are untouched for blocks without a cut.
+	if block["kind"] == &"built":
+		block["passage"] = _passage_for_block(
+				block, cell, d_w, d_e, d_n, d_s)
+	var avoid: Rect2 = block["passage"].get("rect", Rect2())
+
 	# 1. Corner buildings (edge ids C0..C3). Door edge MUST be one of the
 	# corner's TWO STREET-FACING facades (P0-7) - the other two faces look
 	# into the block interior. The longer street facade wins; equal
@@ -294,15 +312,15 @@ func _buildings_for_cell(block: Dictionary, cell: Vector2i) -> Array:
 		var edge: int = edges[0] if e0_len >= e1_len else edges[1]
 		result.append(_make_spec(lot, edge, cell, c, rng, true))
 
-	# 2. Edge rows between corners.
+	# 2. Edge rows between corners (skip lots inside the passage band).
 	result.append_array(_lots_for_edge(0, br, d_w, br.size.x - d_e, d_n,
-			rng, cell))
+			rng, cell, avoid))
 	result.append_array(_lots_for_edge(1, br, d_n, br.size.y - d_s, d_e,
-			rng, cell))
+			rng, cell, avoid))
 	result.append_array(_lots_for_edge(2, br, d_w, br.size.x - d_e, d_s,
-			rng, cell))
+			rng, cell, avoid))
 	result.append_array(_lots_for_edge(3, br, d_n, br.size.y - d_s, d_w,
-			rng, cell))
+			rng, cell, avoid))
 
 	# 3. Rear wing across the courtyard of large ordinary blocks.
 	if block["kind"] == &"built" and br.size.x > 54.0 and br.size.y > 48.0:
@@ -316,6 +334,9 @@ func _buildings_for_cell(block: Dictionary, cell: Vector2i) -> Array:
 			if (spec["rect"] as Rect2).grow(1.5).intersects(wing):
 				clear = false
 				break
+		if clear and avoid.size.x > 0.0 \
+				and avoid.grow(1.0).intersects(wing):
+			clear = false   # keep the rear wing out of the alley cut
 		if clear:
 			var spec := _make_spec(wing, 0, cell, 90 + result.size(), rng, false)
 			spec["id"] += "_W"
@@ -338,8 +359,12 @@ func _buildings_for_cell(block: Dictionary, cell: Vector2i) -> Array:
 
 
 ## Frontage row along one edge, subdividing [start_t, end_t] at `depth`.
+## Lots overlapping `avoid` (the passage band) are skipped entirely - the
+## frontage simply opens up around the alley mouth. Surviving lot ids keep
+## their sequence positions, so existing building ids stay stable.
 func _lots_for_edge(edge: int, br: Rect2, start_t: float, end_t: float,
-		depth: float, rng: RandomNumberGenerator, cell: Vector2i) -> Array:
+		depth: float, rng: RandomNumberGenerator, cell: Vector2i,
+		avoid := Rect2()) -> Array:
 	var lots: Array = []
 	var frontage_start := start_t
 	var k := 0
@@ -347,11 +372,58 @@ func _lots_for_edge(edge: int, br: Rect2, start_t: float, end_t: float,
 		var width := clampf(rng.randf_range(6.5, 11.5), 5.0, end_t - frontage_start)
 		var lot := _lot_rect(edge, br, frontage_start,
 				frontage_start + width, depth)
-		if lot.size.x >= 4.5 and lot.size.y >= 4.5:
+		var in_cut := avoid.size.x > 0.0 and avoid.size.y > 0.0 \
+				and lot.grow(0.3).intersects(avoid)
+		if lot.size.x >= 4.5 and lot.size.y >= 4.5 and not in_cut:
 			lots.append(_make_spec(lot, edge, cell, 10 + k, rng, false))
 		frontage_start += width
 		k += 1
 	return lots
+
+
+## Seeded intra-block cut for BUILT blocks. axis 0 = vertical strip (constant
+## X range spanning the full Z extent), axis 1 = horizontal strip. The center
+## is drawn strictly between the two relevant corner depths plus clearance,
+## so corner lots can never intrude into the passage; edge-row lots that
+## would overlap are dropped by _lots_for_edge instead. Returns {} when the
+## block misses the district-seeded roll or is too small to cut through.
+func _passage_for_block(block: Dictionary, cell: Vector2i, d_w: float,
+		d_e: float, d_n: float, d_s: float) -> Dictionary:
+	var br: Rect2 = block["rect"]
+	if br.size.x < 38.0 or br.size.y < 38.0:
+		return {}
+	var chance := 0.30
+	match String(block["district"]):
+		DISTRICT_HISTORIC:
+			chance = 0.55   # densest fabric, most cut-throughs
+		DISTRICT_INNER:
+			chance = 0.45
+	if WorldSeed.unit_float("passage", [cell.x, cell.y]) >= chance:
+		return {}
+	var half := lerpf(PASSAGE_HALF.x, PASSAGE_HALF.y,
+			WorldSeed.unit_float("passagew", [cell.x, cell.y]))
+	var vertical_first := WorldSeed.unit_float("passageax",
+			[cell.x, cell.y]) < 0.5
+	for vertical: bool in [vertical_first, not vertical_first]:
+		if vertical:
+			var v_lo := br.position.x + d_w + PASSAGE_CLEAR + half
+			var v_hi := br.end.x - d_e - PASSAGE_CLEAR - half
+			if v_hi <= v_lo:
+				continue
+			var vc := lerpf(v_lo, v_hi, WorldSeed.unit_float(
+					"passagepos", [cell.x, cell.y]))
+			return {"axis": 0, "half": half, "rect": Rect2(
+					vc - half, br.position.y, half * 2.0, br.size.y)}
+		else:
+			var h_lo := br.position.y + d_n + PASSAGE_CLEAR + half
+			var h_hi := br.end.y - d_s - PASSAGE_CLEAR - half
+			if h_hi <= h_lo:
+				continue
+			var hc := lerpf(h_lo, h_hi, WorldSeed.unit_float(
+					"passagepos", [cell.x, cell.y]))
+			return {"axis": 1, "half": half, "rect": Rect2(
+					br.position.x, hc - half, br.size.x, half * 2.0)}
+	return {}
 
 
 func _lot_rect(edge: int, br: Rect2, t0: float, t1: float, depth: float) -> Rect2:
