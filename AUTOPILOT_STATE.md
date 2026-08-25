@@ -1,7 +1,7 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 8
+LAST_ITER: 9
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
@@ -26,6 +26,10 @@ HUD/tests. Gate ALL GREEN.
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 9 (2026-08-26): Phase D LANDED - room type labels added to building specs.
+  city_plan.gd: added room_type field to BuildingSpec style dict ("residential"/"retail"
+  determined by cell.x parity). Gate ALL GREEN: --smoke 30 / --citytest 34, both
+  "finished with 0 failure(s)".
 - iter 8 (2026-08-26): Phase F slice 1 LANDED - HUD cue + rooftop mantles.
   parkour_controller.gd: new signal ledge_grabbed(is_building);
   _hit_is_concrete() reads the hit shape's vox_material meta through
