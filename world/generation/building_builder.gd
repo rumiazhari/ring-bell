@@ -498,14 +498,17 @@ static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 		b.add_box_rotated(mid - n_up * (RAMP_T * 0.5),
 				Vector3(LANE_W - 0.04, RAMP_T, hyp), basis, DECK_COLOR,
 				true, false, &"concrete", tag, k)
-		# Handrails both sides of the flight: slope-parallel slim bars
-		# floating ~0.85 m above the ramp surface along the plane normal.
-		# SOLID - railings must stop bodies. Each rail stops RAIL_SETBACK
-		# short of BOTH flight ends so the landing funnel stays clear:
-		# a full-length rail's tip clips the body that rounds the
-		# switchback from the opposite lane (the lane gap is ~1.1 m).
+		# Handrails: only on the OUTER edge of each lane (west lane -> the
+		# shaft's west edge against the building interior; east lane -> the
+		# shaft's east edge, already long-guarded). The INNER sides face the
+		# adjacent lane's solid landing/flight at every z, so no rail is
+		# needed there - and a rail would block the switchback crossing
+		# (the lane gap between inner rail tips is < the capsule width).
+		# Rails stop RAIL_SETBACK short of each flight end so the landing
+		# funnel stays clear.
 		var rail_len := maxf(hyp - 2.0 * RAIL_SETBACK, hyp * 0.55)
-		for rail_side in [-1.0, 1.0]:
+		var rail_sides := [-1.0] if ascending_south else [1.0]
+		for rail_side in rail_sides:
 			var rail_lat := basis * Vector3(
 					rail_side * (LANE_W * 0.5 - 0.04), 0.0, 0.0)
 			b.add_box_rotated(
