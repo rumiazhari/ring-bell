@@ -45,6 +45,14 @@ func _ready() -> void:
 	if args.has("--smoke") or args.has("--soak") or args.has("--legacy-block"):
 		_mode = WorldMode.LEGACY_BLOCK
 
+	# --import: bounded BOOT check. Reaching _ready means every global
+	# class parsed (a broken script fails the whole boot with SCRIPT ERROR),
+	# so report success and quit before building the heavy streamed city.
+	if args.has("--import"):
+		print("[Import] boot OK - all scripts parsed, world build skipped")
+		get_tree().quit(0)
+		return
+
 	if _mode == WorldMode.LEGACY_BLOCK:
 		_build_legacy_block()
 	else:
