@@ -211,12 +211,16 @@ func _physics_process(delta: float) -> void:
 	# Havoc impulses ride on top of locomotion and decay exponentially.
 	velocity += _knockback
 	_knockback *= exp(-5.5 * delta)
+
+	# Vault/mantle probes (Phase E slice 2): detect low obstacles ahead.
+	parkour.process_traversal(_move_dir, delta)
+
 	move_and_slide()
 
 	if _animator != null:
 		_animator.set_motion(
-				Vector2(velocity.x, velocity.z).length(),
-				not is_on_floor())
+			Vector2(velocity.x, velocity.z).length(),
+			not is_on_floor())
 
 	if moving:
 		facing = _move_dir.normalized()

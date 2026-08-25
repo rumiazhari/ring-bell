@@ -1,22 +1,31 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 5
+LAST_ITER: 6
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase E slice 2: geometry-probe traversal detection (knee/waist/head ray casts
-for vault + mantle on low obstacles), extending
-actors/traversal/parkour_controller.gd. Gate: citytest + smoke + cityruntime +
-havoctest (+ walkthrough if movement paths change).
+Phase E slice 3: ledge-grab detection (detect horizontal ledge edges while falling
+via down-left/down-right probes at chest height; initiate grab + climb-up).
+Extending actors/traversal/parkour_controller.gd. Gate: citytest + smoke +
+cityruntime + havoctest + walkthrough.
 
 ## Backlog
-1. Phase E slice 2 (above): vault/mantle probes.
+1. Phase E slice 3 (above): ledge-grab probes.
 2. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). Gate: citytest + smoke + cityruntime. [DONE in iter 2]
 3. Phase D: semantic building use -> room layouts (residential/retail first),
    furniture placement by room semantics + wall alignment.
    Gate: citytest + smoke + cityruntime.
+
+## Log
+- iter 6 (2026-08-26): Phase E slice 2 LANDED - automatic vault/mantle via
+  knee/waist/head ray casts. New process_traversal() in parkour_controller.gd
+  fires before move_and_slide() in Survivor._physics_process. Three horizontal
+  probes at 0.5/1.0/1.6 m from feet, 1.0 m ahead: knee hit + waist clear =
+  vault (y+=4.5, xz*=1.3); knee+waist hit + head clear = mantle (y+=6.0,
+  xz*=1.2). Gate ALL GREEN: --smoke 22 / --citytest 34 / --cityruntime 26 /
+  --havoctest 21 / --walkthrough 16, all "finished with 0 failure(s)".
 
 ## Log
 - iter 5 (2026-08-26): Phase E slice 1 LANDED - jump + fall damage.
