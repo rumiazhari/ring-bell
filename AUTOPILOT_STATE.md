@@ -1,24 +1,40 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 6
+LAST_ITER: 7
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase E slice 3: ledge-grab detection (detect horizontal ledge edges while falling
-via down-left/down-right probes at chest height; initiate grab + climb-up).
-Extending actors/traversal/parkour_controller.gd. Gate: citytest + smoke +
-cityruntime + havoctest + walkthrough.
+Phase E slice 3 COMPLETE: ledge-grab detection + climb-up. While falling
+alongside a wall whose graspable top is within arm reach (0.9-2.1 m above
+feet), a downward probe finds the ledge lip and the survivor grabs + climbs.
+Extends actors/traversal/parkour_controller.gd (_try_ledge_grab, called from
+process_traversal before move_and_slide when airborne). Resetting _peak_y on
+grab means the arrested fall does not charge fall damage. Gate ALL GREEN.
 
 ## Backlog
-1. Phase E slice 3 (above): ledge-grab probes.
+1. Phase F: wire ledge-grab into PlayerController HUD cue + a "mantle onto
+   rooftop" follow-through when the ledge is a building cornice. Gate: smoke + citytest.
 2. Phase B polish: irregular alleys + passages through blocks (intra-block
-   cuts). Gate: citytest + smoke + cityruntime. [DONE in iter 2]
+   cuts). [DONE in iter 2]
 3. Phase D: semantic building use -> room layouts (residential/retail first),
    furniture placement by room semantics + wall alignment.
    Gate: citytest + smoke + cityruntime.
 
 ## Log
+- iter 7 (2026-08-26): Phase E slice 3 LANDED - ledge-grab detection + climb-up.
+  New _try_ledge_grab() in parkour_controller.gd: while airborne and descending,
+  two lateral chest-height (1.2 m) forward rays confirm a broad wall, then a
+  downward probe (0.45 m inset) finds the ledge lip; if the top sits 0.9-2.1 m
+  above the feet and the surface normal is up, the survivor pays 4 stamina and
+  gets a ballistic climb boost (sqrt(2*g*(rise+0.35)), clamped 4.5-9.5) plus a
+  1.35x forward nudge. _peak_y is reset so the arrested fall deals NO fall
+  damage. 0.9 s cooldown prevents re-grab jitter. Added 5 deterministic checks
+  to debug/smoke_test.gd (suspended PlayerController; isolated 3x2.4 m ledge box
+  + tall-wall negative control at +600 m in empty space with a local floor):
+  grab fires, survivor mounts the ledge top, no fall damage, tall wall does NOT
+  grab, survivor lands on ground. Gate ALL GREEN: --smoke 27 / --citytest 34 /
+  --cityruntime 26 / --havoctest 21, all "finished with 0 failure(s)".
 - iter 6 (2026-08-26): Phase E slice 2 LANDED - automatic vault/mantle via
   knee/waist/head ray casts. New process_traversal() in parkour_controller.gd
   fires before move_and_slide() in Survivor._physics_process. Three horizontal
@@ -26,8 +42,6 @@ cityruntime + havoctest + walkthrough.
   vault (y+=4.5, xz*=1.3); knee+waist hit + head clear = mantle (y+=6.0,
   xz*=1.2). Gate ALL GREEN: --smoke 22 / --citytest 34 / --cityruntime 26 /
   --havoctest 21 / --walkthrough 16, all "finished with 0 failure(s)".
-
-## Log
 - iter 5 (2026-08-26): Phase E slice 1 LANDED - jump + fall damage.
   New actors/traversal/parkour_controller.gd (ParkourController node,
   preloaded via const PARKOUR_SCRIPT in survivor.gd - a fresh class_name is

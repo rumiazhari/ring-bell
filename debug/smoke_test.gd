@@ -109,6 +109,91 @@ func _run_all() -> void:
 			str(grief_tree.get("start", {}).get("text", "")).contains("didn't make it"),
 			str(grief_tree.get("start", {}).get("text", "")).left(40))
 
+	# --- 7b. Traversal: ledge grab arrests fall and prevents damage --------------
+	# Place fixtures far from the streamed city (active radius ~128 m) in empty space.
+	var anchor := player.global_position
+	if player != null:
+		# Suspend PlayerController so our injected request_move() isn't overwritten.
+		for c in player.get_children():
+			if c is PlayerController:
+				c.set_physics_process(false)
+				break
+		# Build a climbable ledge box in empty space.
+		var box_pos := anchor + Vector3(600.0, 0.0, 0.0)
+		# Local floor so the player does not fall through empty world at this offset.
+		var floor_body := StaticBody3D.new()
+		var floor_shape := CollisionShape3D.new()
+		var floor_mesh := BoxShape3D.new()
+		floor_mesh.size = Vector3(200.0, 1.0, 200.0)
+		floor_shape.shape = floor_mesh
+		floor_body.global_position = box_pos + Vector3(0.0, -0.5, 40.0)  # top at y=0
+		floor_body.add_child(floor_shape)
+		get_tree().current_scene.add_child(floor_body)
+		var box_body := StaticBody3D.new()
+		box_body.global_position = box_pos + Vector3(0.0, 1.2, 0.0)  # base on ground, half-height
+		var box_shape := CollisionShape3D.new()
+		var box_mesh := BoxShape3D.new()
+		box_mesh.size = Vector3(3.0, 2.4, 3.0)  # top at y=2.4, grab window feet in [0.3, 1.5]
+		box_shape.shape = box_mesh
+		box_body.add_child(box_shape)
+		get_tree().current_scene.add_child(box_body)
+		# Position player airborne beside the box face (no forward drift: the
+		# grab's own forward boost carries it up). Set facing so the probe
+		# direction is known even with zero move input.
+		var face_x := box_pos.x - 1.5  # box left face
+		var start_y := 4.2  # drop 4.2 m -> would deal fall damage without grab
+		player.global_position = Vector3(face_x - 0.45, start_y, box_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.RIGHT
+		player.stamina = Survivor.STAMINA_MAX
+		player.exhausted = false
+		if player.needs != null:
+			player.needs.hunger = 0.0
+			player.needs.thirst = 0.0
+			player.needs.fatigue = 0.0
+		# Stationary fall: let gravity + grab do the work.
+		player.request_move(Vector3.ZERO, false)
+		# Physics frames to fall and trigger grab.
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("ledge grab triggered during fall", player.parkour.ledge_grabs > 0,
+			"grabs=%d" % player.parkour.ledge_grabs)
+		# After grab, player should be on top of the box (y ~ 2.4), not on ground (y ~ 0).
+		_check("survivor mounted ledge top", player.global_position.y > 2.0,
+			"y=%.2f" % player.global_position.y)
+		# Fall damage from a 4.2 m drop would be (4.2-3.5)*9 = 6.3; grab resets peak so no damage.
+		_check("no fall damage from arrested fall", player.health.current_health == player.health.max_health,
+			"hp=%.1f/%.1f" % [player.health.current_health, player.health.max_health])
+		# Negative control: tall wall (no ledge within reach) should NOT trigger grab.
+		var wall_pos := box_pos + Vector3(0.0, 0.0, 80.0)
+		var wall_body := StaticBody3D.new()
+		wall_body.global_position = wall_pos + Vector3(0.0, 6.0, 0.0)
+		var wall_shape := CollisionShape3D.new()
+		var wall_mesh := BoxShape3D.new()
+		wall_mesh.size = Vector3(3.0, 12.0, 3.0)  # top at y=12, far above reach
+		wall_shape.shape = wall_mesh
+		wall_body.add_child(wall_shape)
+		get_tree().current_scene.add_child(wall_body)
+		var grabs_before: int = player.parkour.ledge_grabs
+		var face_x2 := wall_pos.x - 1.5
+		player.global_position = Vector3(face_x2 - 0.45, start_y, wall_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.RIGHT
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("tall wall does not trigger ledge grab", player.parkour.ledge_grabs == grabs_before,
+			"grabs before=%d after=%d" % [grabs_before, player.parkour.ledge_grabs])
+		_check("survivor landed on ground (not wall)", player.global_position.y < 0.5,
+			"y=%.2f" % player.global_position.y)
+		# Restore controller.
+		for c in player.get_children():
+			if c is PlayerController:
+				c.set_physics_process(true)
+				break
+
 	# --- 8. Save/load preserves death + clock -------------------------------
 	var saved_day := GameClock.get_day()
 	GameClock.advance(500.0)
