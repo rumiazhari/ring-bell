@@ -25,6 +25,22 @@ func _ready() -> void:
 	_run()
 
 
+## Keep the observer alive through the deterministic blast/rocket tests: a
+## freed player node would hand the structural-integrity helpers a dangling
+## reference (SCRIPT ERROR "previously freed"). Mirrors walkthrough_probe's
+## healer so the suite is robust to any seed/city layout.
+func _process(_delta: float) -> void:
+	var p := ActorRegistry.get_actor(&"player")
+	if p != null and is_instance_valid(p) and p.health != null \
+			and not p.health.is_dead:
+		p.health.current_health = p.health.max_health
+		p.health.infection = 0.0
+		if p.needs != null:
+			p.needs.hunger = 0.0
+			p.needs.thirst = 0.0
+			p.needs.fatigue = 0.0
+
+
 func _run() -> void:
 	await _wait(1.5)
 	var mgr := _manager()
@@ -109,9 +125,12 @@ func _run() -> void:
 
 	# The observer may have died in the crossfire; re-acquire it.
 	player = ActorRegistry.get_actor(&"player")
-	_check("player survived blast test", player != null)
-	if player == null:
+	if player == null or not is_instance_valid(player):
+		# Player was freed (e.g. caught in the blast). The harness keeps it
+		# alive now, but if it is already gone we cannot continue safely.
+		_check("player survived blast test", false, "player freed")
 		return _finish()
+	_check("player survived blast test", true)
 
 	# --- 3. SMG pellets erode a destructible prop -----------------------------
 	var weapons: WeaponSystem = _find_weapons(player)

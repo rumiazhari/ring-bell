@@ -1,11 +1,13 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 1
+LAST_ITER: 3
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-(none — work the backlog top-down; choose freely within freedom scope)
+Backlog #2 (Phase E): split parkour into actors/traversal/parkour_controller.gd
++ geometry-query detector (probes, no trigger volumes). Gate: citytest + smoke
++ cityruntime + havoctest.
 
 ## Backlog
 1. Phase B polish: irregular alleys + passages through blocks (intra-block
@@ -34,3 +36,14 @@ UPDATED: 2026-08-26 (JST, cron run)
   walkthrough_probe). Landing gate: citytest, smoke, cityruntime, havoctest
   ALL green ("finished with 0 failure(s)" each). Harness installed at
   tools/run_suite.py (logs tools/out_<flag>.txt, gitignored).
+- iter 2 (2026-08-26): added intra-block pedestrian passages (alleys). Gate:
+  --citytest + --smoke green. 183 blocks pierced across two seeds; alley floor
+  rendered as distinct cobble strip. Backlog #1 complete.
+- iter 3 (2026-08-26): landed the probe-hardening set left uncommitted by an
+  interrupted run: havoc_test observer-healer (_process keeps player alive
+  through blast/rocket tests, no more freed-reference script errors),
+  walkthrough_probe wall-follow fallback when boxed in + exit route re-derived
+  as exact reverse of entry (valid for any door edge) + climb radius 0.9 -> 1.1
+  + GEO debug line. Verified fresh on this tree: walkthrough 16/16, havoc 21,
+  citytest 34, smoke 22 - all "finished with 0 failure(s)". override.cfg
+  (local Godot seed pin) gitignored.

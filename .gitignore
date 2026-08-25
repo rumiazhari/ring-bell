@@ -11,3 +11,6 @@ tools/out_*.txt
 
 # Autopilot run lock
 .autopilot.lock
+
+# Local Godot override (test seed pin etc.) - never commit
+override.cfg

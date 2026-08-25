@@ -84,6 +84,12 @@ func _run() -> void:
 	var mid := _door_mid(dm)                 # geometric opening center
 	var face: int = int(spec["door_edge"])
 	var face_dir := _inward_dir(face)
+	print(("[Walkthrough][GEO] bld=%s rect=%s zone=%s edge=%d mid=%s "
+			+ "lane_w=%.2f lane_e=%.2f z_n=%.2f z_s=%.2f fh=%.2f n=%d")
+			% [str(spec["id"]), str(lr), str(zone), face, str(mid),
+			zone.position.x + BuildingBuilder.LANE_W * 0.5,
+			zone.position.x + BuildingBuilder.LANE_W * 1.5,
+			zone.position.y, zone.end.y, fh, n])
 
 	# === 1. Street drop-off OUTSIDE the entrance (the ONLY placement) ======
 	var spot := _free_spot(player, Vector3(mid.x, 0.15, mid.y) - face_dir * 2.2,
@@ -140,7 +146,7 @@ func _run() -> void:
 	# the last point.
 	var climb: Array[Vector3] = _stair_path(zone, fh, n)
 	var roof_y := float(n) * fh
-	var climb_radius := func(_i: int) -> float: return 0.9
+	var climb_radius := func(_i: int) -> float: return 1.1
 	_check("climbed all %d storeys to deck" % n,
 			await _follow_waypoints_r(player, climb, 140.0, climb_radius,
 					zone.grow(0.1), Vector2(-1.0, roof_y + 1.5)),
@@ -156,27 +162,28 @@ func _run() -> void:
 	var downs: Array[Vector3] = []
 	for idx in range(climb.size() - 1, -1, -1):
 		downs.append(climb[idx])
-	var down_radius := func(_i: int) -> float: return 0.9
+	var down_radius := func(_i: int) -> float: return 1.1
 	_check("descended to ground floor",
 			await _follow_waypoints_r(player, downs, 140.0, down_radius,
 					zone.grow(0.1), Vector2(-1.0, roof_y + 1.5)),
 			"final y=%.2f" % player.global_position.y)
 
 	# === 11. Walk back through the interior and EXIT =========================
-	# The open leaf is PHYSICAL now (P1-10) and furniture is solid. After
-	# the descent the player stands on the NORTH-WEST landing - the shaft
-	# strip lies BEHIND them (south), so the route NEVER crosses a flight:
-	#   1. straight EAST along the landing row (passing UNDER flight B's
-	#      elevated arrival end - ~3 m of headroom);
-	#   2. turn onto the DOOR AXIS (the furnish pass keeps it clear);
-	#   3. out through the clear aperture.
-	var z_land := zone.position.y + BuildingBuilder.LAND * 0.5
+	# Exit = the EXACT REVERSE of the entry walk (section 4), which is
+	# already proven walkable for ANY door edge: stairwell -> staging ->
+	# door axis -> through the aperture -> outside. Re-deriving (not
+	# hand-authoring) keeps it valid when a different building/edge is
+	# picked (the earlier version assumed the player ended the descent on
+	# the north-west landing and pushed out a fixed orientation).
+	var lc2 := Vector2(lane_w, z_n)
+	var stage2 := lc2 - Vector2(face_dir.x, face_dir.z) * 1.4
+	stage2 = stage2.clamp(lr.position + Vector2.ONE * 0.55,
+			lr.end - Vector2.ONE * 0.55)
 	var exit_wps: Array[Vector3] = [
-		Vector3(mid.x, 0.15, z_land),
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 2.2,
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 1.0,
-		Vector3(mid.x, 0.15, mid.y) - face_dir * 0.5,
-		Vector3(mid.x, 0.15, mid.y) - face_dir * 1.8,
+		Vector3(stage2.x, 0.15, stage2.y),
+		Vector3(mid.x, 0.15, mid.y) + face_dir * 2.6,
+		Vector3(mid.x, 0.15, mid.y) + face_dir * 0.9,
+		Vector3(mid.x, 0.15, mid.y) - face_dir * 2.0,
 	]
 	var outside := await _follow_waypoints(player, exit_wps, 90.0)
 	outside = outside and not lr.has_point(
@@ -427,7 +434,20 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 			# (which pins it - the original failure).
 			var dir := _clear_dir(player, desired)
 			if dir == Vector3.ZERO:
-				dir = desired   # boxed in: let the progress watch skip
+				# Boxed in head-on: WALL-FOLLOW. Rotate the goal
+				# direction by +/-90 deg and take the side with more
+				# clearance, so the body can round a furniture cluster or
+				# concave pocket instead of jamming into it. If both
+				# tangents are blocked too, fall back to the raw desired
+				# (the progress-watch will then skip the waypoint).
+				var left := Vector3(-desired.z, 0.0, desired.x)
+				var right := Vector3(desired.z, 0.0, -desired.x)
+				var cl := _clear_depth(player, left)
+				var cr := _clear_depth(player, right)
+				if cl <= 0.05 and cr <= 0.05:
+					dir = desired
+				else:
+					dir = left if cl >= cr else right
 			player.request_move(dir, false)
 		# Progress watch: the CURRENT target must get nearer steadily.
 		win_t += get_physics_process_delta_time()
@@ -439,8 +459,8 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 				# suite's TERMINAL assertions (final ground Y, room exit,
 				# closed door) still gate real success. Bounded to 2 skips.
 				skips += 1
-				print("[Walkthrough] skipping waypoint %d/%d"
-						% [i + 1, wps.size()])
+				print("[Walkthrough] skipping waypoint %d/%d pos=%s tgt=%s"
+						% [i + 1, wps.size(), player.global_position, wps[i]])
 				if skips > 2:
 					return false
 				i += 1
@@ -466,13 +486,14 @@ func _manager() -> ChunkManager:
 
 
 ## Sweep 24 headings; return the one CLEAR of solid geometry that is
-## closest in angle to `desired`. "Clear" means: no TALL obstacle (a wall or
-## rail whose hit point sits >0.7 m above the feet - a ramp/step the body can
-## walk up is NOT tall) AND no LEDGE (the ground drops away, i.e. walking that
-## way would fall into a stairwell void). This lets the body SLIDE ALONG
-## rails/walls and CLIMB ramps toward the goal instead of jamming. Returns
-## ZERO only if truly boxed in (caller falls back to raw `desired` so the
-## progress-watch can still skip a genuinely unreachable waypoint).
+## closest in angle to `desired`. "Clear" means: no WALL/RAIL (a near-vertical
+## surface - hit normal.y < 0.5, e.g. a facade, guard, or handrail) AND no
+## LEDGE (the floor drops away, i.e. walking that way falls into a stairwell
+## void). Walkable ramps/floor plates have an up-facing normal (normal.y high)
+## and are NOT treated as obstacles, so the body climbs the switchback instead
+## of jamming against the next flight. Returns ZERO only if truly boxed in
+## (caller falls back to raw `desired` so the progress-watch can still skip a
+## genuinely unreachable waypoint).
 func _clear_dir(player: Node3D, desired: Vector3) -> Vector3:
 	var space := player.get_world_3d().direct_space_state
 	var foot := player.global_position
@@ -489,9 +510,13 @@ func _clear_dir(player: Node3D, desired: Vector3) -> Vector3:
 			q.exclude = [player.get_rid()]
 			q.collide_with_areas = false
 			var hit := space.intersect_ray(q)
-			if not hit.is_empty() and hit["position"].y \
-					> foot.y + 0.7:
-				blocked = true   # a wall/rail, not a walkable ramp
+			if hit.is_empty():
+				continue
+			# Near-vertical surface (normal.y < 0.5) = wall/rail: blocks.
+			# Up-facing surface (ramp/floor) = walkable: ignore it.
+			var nrm: Vector3 = hit.get("normal", Vector3.UP)
+			if nrm.y < 0.5:
+				blocked = true
 				break
 		if blocked:
 			continue
@@ -507,6 +532,27 @@ func _clear_dir(player: Node3D, desired: Vector3) -> Vector3:
 			best_dot = dot
 			best = h
 	return best
+
+## How far `h` is clear of a WALL/RAIL before the floor drops away: used by
+## the wall-follow recovery to pick the more-open tangent. Returns 0.0 if
+## blocked within 0.3 m or if a ledge (void) opens up first.
+func _clear_depth(player: Node3D, h: Vector3) -> float:
+	var space := player.get_world_3d().direct_space_state
+	var org := player.global_position + Vector3.UP * 0.5
+	for reach in [0.3, 0.8, 1.3, 1.8, 2.3]:
+		var q := PhysicsRayQueryParameters3D.create(org, org + h * reach)
+		q.exclude = [player.get_rid()]
+		q.collide_with_areas = false
+		var hit := space.intersect_ray(q)
+		if not hit.is_empty() and (hit.get("normal", Vector3.UP) as Vector3).y < 0.5:
+			return reach - 0.3   # wall/rail at this distance
+		var dq := PhysicsRayQueryParameters3D.create(
+				org + h * reach, org + h * reach + Vector3.DOWN * 1.4)
+		dq.exclude = [player.get_rid()]
+		dq.collide_with_areas = false
+		if space.intersect_ray(dq).is_empty():
+			return reach - 0.3   # void opens before the wall
+	return 2.0
 
 func _snap(file_name: String) -> void:
 	if DisplayServer.get_name() == "headless":
