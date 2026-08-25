@@ -1,27 +1,43 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 7
+LAST_ITER: 8
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase E slice 3 COMPLETE: ledge-grab detection + climb-up. While falling
-alongside a wall whose graspable top is within arm reach (0.9-2.1 m above
-feet), a downward probe finds the ledge lip and the survivor grabs + climbs.
-Extends actors/traversal/parkour_controller.gd (_try_ledge_grab, called from
-process_traversal before move_and_slide when airborne). Resetting _peak_y on
-grab means the arrested fall does not charge fall damage. Gate ALL GREEN.
+Phase F slice 1 COMPLETE: ledge-grab HUD cue + rooftop-mantle follow-through.
+ParkourController now emits ledge_grabbed(is_building); PlayerController
+flashes "Mantled onto the rooftop!" vs "Grabbed the ledge!". Building walls
+are recognized via the vox_material collider meta stamped by
+MeshBatcher.flush_into (&"concrete" on wall/parapet cells - no generation-path
+changes). After every grab a 0.6 s assisted drive steers horizontal velocity
+toward the wall (2.2 m/s props, 3.0 m/s cornices) so the arc lands ON the
+ledge deterministically; rooftop_mantles/last_grab_was_building exposed for
+HUD/tests. Gate ALL GREEN.
 
 ## Backlog
-1. Phase F: wire ledge-grab into PlayerController HUD cue + a "mantle onto
-   rooftop" follow-through when the ledge is a building cornice. Gate: smoke + citytest.
-2. Phase B polish: irregular alleys + passages through blocks (intra-block
-   cuts). [DONE in iter 2]
-3. Phase D: semantic building use -> room layouts (residential/retail first),
+1. Phase D: semantic building use -> room layouts (residential/retail first),
    furniture placement by room semantics + wall alignment.
    Gate: citytest + smoke + cityruntime.
+2. Phase F slice 2: NPC survivors use follow-through to escape long falls
+   (zombie-chase edge cases), + stamina cost scaling by lip height.
+   Gate: smoke + havoctest.
+3. Phase B polish: irregular alleys + passages through blocks (intra-block
+   cuts). [DONE in iter 2]
 
 ## Log
+- iter 8 (2026-08-26): Phase F slice 1 LANDED - HUD cue + rooftop mantles.
+  parkour_controller.gd: new signal ledge_grabbed(is_building);
+  _hit_is_concrete() reads the hit shape's vox_material meta through
+  shape_find_owner/shape_owner_get_owner so batched city structure is told
+  apart from plain crates/test boxes without touching generation code;
+  _tick_climb_follow() (CLIMB_FOLLOW_TIME 0.6 s, steer lerp 12/s) drives the
+  body over the lip after a grab - fixes nondeterministic mounts from
+  stationary falls. player_controller.gd connects the signal in setup() and
+  flashes the matching HUD notice. debug/smoke_test.gd: +4 checks (plain box
+  NOT flagged as building; concrete-meta cornice fixture at +120 z -> grab
+  fires, flagged as rooftop mantle, top mounted). Gate ALL GREEN:
+  --smoke 30 / --citytest 34, both "finished with 0 failure(s)".
 - iter 7 (2026-08-26): Phase E slice 3 LANDED - ledge-grab detection + climb-up.
   New _try_ledge_grab() in parkour_controller.gd: while airborne and descending,
   two lateral chest-height (1.2 m) forward rays confirm a broad wall, then a

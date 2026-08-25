@@ -8,6 +8,11 @@ extends Node
 ## horizontal probes detect a broad wall face; a downward probe finds a ledge
 ## lip within arm reach (0.9-2.1 m above feet). If found, climb boost is applied
 ## and _peak_y is reset so the arrested fall does not inflict fall damage.
+## Phase F: every successful grab emits ledge_grabbed(is_building) - the
+## player's HUD flashes a cue - and a short assisted horizontal drive carries
+## the body OVER the lip onto the surface (deterministic rooftop mantles when
+## the grabbed wall is batched building structure, detected via the
+## vox_material collider meta stamped by MeshBatcher.flush_into).
 
 const JUMP_SPEED := 6.4                # apex ~1.14 m: clears crates, not walls
 const JUMP_STAMINA_COST := 6.0
@@ -39,10 +44,27 @@ const LEDGE_FORWARD_MULT := 1.35
 const LEDGE_STAMINA_COST := 4.0
 const LEDGE_COOLDOWN := 0.9
 
+# Climb follow-through (Phase F): after a grab, briefly steer horizontal
+# velocity toward the wall so the body lands ON the ledge, not back at its base.
+const CLIMB_FOLLOW_TIME := 0.6         # seconds of assisted drive after a grab
+const CLIMB_FOLLOW_STEER := 12.0       # lerp rate toward the drive velocity
+const CLIMB_DRIVE_SPEED := 2.2         # m/s toward a plain crate/box ledge
+const CORNICE_DRIVE_SPEED := 3.0       # stronger drive onto building rooftops
+
+## Fires on every successful ledge grab. is_building is true when the grabbed
+## wall belongs to batched city structure (vox_material == &"concrete"), i.e.
+## the survivor mantled onto a rooftop/cornice rather than a crate.
+signal ledge_grabbed(is_building: bool)
+
 var _survivor: Survivor
 var _peak_y := 0.0
 var ledge_grabs := 0                   # lifetime counter (tests/HUD)
+var rooftop_mantles := 0               # grabs that mounted batched structure
+var last_grab_was_building := false    # HUD/test readout of the latest grab
 var _ledge_cooldown := 0.0
+var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
+var _climb_dir := Vector3.ZERO
+var _climb_speed := 0.0
 
 
 ## Wire to the owning body. Call once, right after add_child().
@@ -71,6 +93,7 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 	if _survivor == null or _survivor.health.is_dead:
 		return
 	_ledge_cooldown = maxf(0.0, _ledge_cooldown - delta)
+	_tick_climb_follow(delta)
 	if not _survivor.is_on_floor():
 		_try_ledge_grab(move_dir)
 		return
@@ -177,6 +200,51 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 	_ledge_cooldown = LEDGE_COOLDOWN
 	_peak_y = _survivor.global_position.y
 	ledge_grabs += 1
+	# Phase F: classify the wall (batched building structure vs plain prop),
+	# announce it, and arm the assisted drive that carries us over the lip.
+	var is_building := _hit_is_concrete(wall_hit)
+	last_grab_was_building = is_building
+	if is_building:
+		rooftop_mantles += 1
+	_climb_dir = dir
+	_climb_speed = CORNICE_DRIVE_SPEED if is_building else CLIMB_DRIVE_SPEED
+	_climb_time_left = CLIMB_FOLLOW_TIME
+	ledge_grabbed.emit(is_building)
+
+
+## True when a ray hit's shape belongs to batched building structure. Walls,
+## parapets and bulkheads are emitted as destructible cells carrying the
+## vox_material meta (see MeshBatcher.flush_into); plain props, ground slabs
+## and ad-hoc test boxes have no such meta.
+func _hit_is_concrete(hit: Dictionary) -> bool:
+	var collider: Object = hit.get("collider")
+	if not (collider is CollisionObject3D):
+		return false
+	var body := collider as CollisionObject3D
+	var shape_idx := int(hit.get("shape", -1))
+	if shape_idx < 0:
+		return false
+	var shape_node := body.shape_owner_get_owner(
+			body.shape_find_owner(shape_idx)) as CollisionShape3D
+	if shape_node == null:
+		return false
+	return StringName(shape_node.get_meta("vox_material", &"")) == &"concrete"
+
+
+## Phase F follow-through: for a short window after a grab, steer horizontal
+## velocity toward the grabbed wall so the ballistic arc lands ON the ledge
+## top instead of dropping back at its base. Ends early on touchdown.
+func _tick_climb_follow(delta: float) -> void:
+	if _climb_time_left < 0.0 or _survivor == null:
+		return
+	_climb_time_left -= delta
+	if _climb_time_left < 0.0 or _survivor.is_on_floor():
+		_climb_time_left = -1.0
+		return
+	var target := _climb_dir * _climb_speed
+	var k: float = minf(1.0, CLIMB_FOLLOW_STEER * delta)
+	_survivor.velocity.x = lerpf(_survivor.velocity.x, target.x, k)
+	_survivor.velocity.z = lerpf(_survivor.velocity.z, target.z, k)
 
 
 ## Track airtime peaks; charge fall damage on hard landings.

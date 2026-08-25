@@ -30,6 +30,17 @@ func setup(hud: Node) -> void:
 				func(weapon_name: String) -> void:
 					_hud.call(&"set_weapon_label", weapon_name))
 		_hud.call(&"set_weapon_label", _weapons.weapon_label())
+	if _survivor.parkour != null:
+		_survivor.parkour.ledge_grabbed.connect(_on_ledge_grabbed)
+
+
+## Phase F: traversal feedback - flash a HUD notice whenever the survivor
+## grabs a ledge mid-fall, distinguishing rooftop cornices from plain props.
+func _on_ledge_grabbed(is_building: bool) -> void:
+	if _hud == null:
+		return
+	var text := "Mantled onto the rooftop!" if is_building else "Grabbed the ledge!"
+	_hud.call("flash_notice", text)
 
 
 func _physics_process(delta: float) -> void:

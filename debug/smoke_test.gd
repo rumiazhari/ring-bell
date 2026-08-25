@@ -165,6 +165,10 @@ func _run_all() -> void:
 		# Fall damage from a 4.2 m drop would be (4.2-3.5)*9 = 6.3; grab resets peak so no damage.
 		_check("no fall damage from arrested fall", player.health.current_health == player.health.max_health,
 			"hp=%.1f/%.1f" % [player.health.current_health, player.health.max_health])
+		# Phase F: a plain test box is NOT batched building structure.
+		_check("plain crate ledge not flagged as rooftop",
+				not player.parkour.last_grab_was_building,
+				"last_building=%s" % player.parkour.last_grab_was_building)
 		# Negative control: tall wall (no ledge within reach) should NOT trigger grab.
 		var wall_pos := box_pos + Vector3(0.0, 0.0, 80.0)
 		var wall_body := StaticBody3D.new()
@@ -188,6 +192,40 @@ func _run_all() -> void:
 			"grabs before=%d after=%d" % [grabs_before, player.parkour.ledge_grabs])
 		_check("survivor landed on ground (not wall)", player.global_position.y < 0.5,
 			"y=%.2f" % player.global_position.y)
+		# Phase F: grabbing a batched-building wall (vox_material meta, as
+		# stamped by MeshBatcher.flush_into) counts as a rooftop mantle and
+		# the follow-through drive must mount the top deterministically.
+		var cor_pos := box_pos + Vector3(0.0, 0.0, 120.0)
+		var cor_body := StaticBody3D.new()
+		cor_body.global_position = cor_pos + Vector3(0.0, 1.2, 0.0)
+		var cor_shape := CollisionShape3D.new()
+		var cor_mesh := BoxShape3D.new()
+		cor_mesh.size = Vector3(3.0, 2.4, 3.0)   # top at y=2.4
+		cor_shape.shape = cor_mesh
+		cor_shape.set_meta("vox_material", &"concrete")   # mimic building cells
+		cor_body.add_child(cor_shape)
+		get_tree().current_scene.add_child(cor_body)
+		grabs_before = player.parkour.ledge_grabs
+		var mantles_before: int = player.parkour.rooftop_mantles
+		player.global_position = Vector3(cor_pos.x - 1.95, start_y, cor_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.RIGHT
+		player.stamina = Survivor.STAMINA_MAX
+		player.exhausted = false
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("cornice grab triggered during fall",
+				player.parkour.ledge_grabs == grabs_before + 1,
+				"grabs=%d expected=%d" % [player.parkour.ledge_grabs, grabs_before + 1])
+		_check("cornice grab flagged as rooftop mantle",
+				player.parkour.last_grab_was_building
+						and player.parkour.rooftop_mantles == mantles_before + 1,
+				"building=%s mantles=%d" % [player.parkour.last_grab_was_building,
+						player.parkour.rooftop_mantles])
+		_check("survivor mounted cornice top", player.global_position.y > 2.0,
+				"y=%.2f" % player.global_position.y)
 		# Restore controller.
 		for c in player.get_children():
 			if c is PlayerController:
