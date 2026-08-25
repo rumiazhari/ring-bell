@@ -453,6 +453,7 @@ func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 			"roof": rng.randi_range(0, ROOF_PALETTES - 1),
 			"balcony": rng.randf() < 0.45,
 			"attic": rng.randf() < 0.7,
+			"room_type": "residential" if cell.x % 2 == 0 else "retail",
 		},
 		"doors": [_door_manifest(spec_id(cell, edge, k), lot, edge)],
 	}
