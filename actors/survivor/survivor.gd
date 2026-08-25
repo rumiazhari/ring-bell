@@ -30,11 +30,16 @@ const EXHAUSTED_RECOVER_AT := 25.0     # stamina needed to clear exhaustion
 const GRAVITY := 18.0                  # airborne arcs from knockback
 const KNOCKBACK_MAX := 9.0             # clamp so blasts shove, not launch
 
+# Preload (not global class_name lookup): keeps headless suites green even
+# before the editor rescans the global script-class cache.
+const PARKOUR_SCRIPT := preload("res://actors/traversal/parkour_controller.gd")
+
 var identity: IdentityComponent
 var health: HealthComponent
 var needs: NeedsComponent
 var inventory: InventoryComponent
 var interactable: InteractableComponent
+var parkour: PARKOUR_SCRIPT            # vertical mobility + fall damage
 
 var equipped_weapon_id: StringName = &""
 var stamina := STAMINA_MAX
@@ -88,6 +93,10 @@ func _ready() -> void:
 		add_child(interactable)
 		ActorRegistry.register(self, identity.persistent_id)
 	health.died.connect(_on_health_died)
+
+	parkour = PARKOUR_SCRIPT.new()
+	add_child(parkour)
+	parkour.setup(self)
 
 
 func _setup_components_from_config() -> void:
@@ -212,6 +221,8 @@ func _physics_process(delta: float) -> void:
 	if moving:
 		facing = _move_dir.normalized()
 	_visual_root.rotation.y = atan2(facing.x, facing.z)
+
+	parkour.tick(delta)
 
 	tick_survival(delta)
 

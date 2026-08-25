@@ -55,6 +55,8 @@ func _physics_process(delta: float) -> void:
 	var raw := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var dir := Vector3(raw.x, 0.0, raw.y).rotated(Vector3.UP, yaw)
 	_survivor.request_move(dir, Input.is_action_pressed(&"sprint"))
+	if Input.is_action_just_pressed(&"jump"):
+		_survivor.parkour.try_jump()
 
 	for i in 4:
 		if Input.is_action_just_pressed(StringName("weapon_%d" % (i + 1))):
