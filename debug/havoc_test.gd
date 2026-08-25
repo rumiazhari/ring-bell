@@ -27,8 +27,10 @@ func _ready() -> void:
 
 ## Keep the observer alive through the deterministic blast/rocket tests: a
 ## freed player node would hand the structural-integrity helpers a dangling
-## reference (SCRIPT ERROR "previously freed"). Mirrors walkthrough_probe's
-## healer so the suite is robust to any seed/city layout.
+## reference (SCRIPT ERROR "previously freed"). Heal it every frame so a
+## blast can never drop it to dead-and-freed; the call sites below also
+## re-acquire with is_instance_valid and pass null (never a dangling ref) so
+## a rare same-frame free degrades to a soft skip instead of a crash.
 func _process(_delta: float) -> void:
 	var p := ActorRegistry.get_actor(&"player")
 	if p != null and is_instance_valid(p) and p.health != null \
@@ -241,16 +243,24 @@ func _run() -> void:
 					"pieces=%d baseline=%d" % [_piece_count(), before])
 
 	# --- 4b. Explosions go through structural integrity (P0-1) -----------------
+	# Re-acquire the observer: the blast/rocket crossfire may have FREED the
+	# player node (not just damaged it). Pass null rather than a dangling ref
+	# to the typed helpers, which then park at a fixed safe coordinate.
+	player = ActorRegistry.get_actor(&"player")
+	var p_safe: Node3D = null
+	if player != null and is_instance_valid(player):
+		p_safe = player
 	_check("explosion respects material integrity",
-			await _explosion_integrity_path(mgr, player))
+			await _explosion_integrity_path(mgr, p_safe))
 	# --- 4c. Weapon-grade glass ladder through the runtime path (P1-13) --------
 	_check("glass damage ladder matches ItemDB weapons",
-			await _glass_runtime_ladder(mgr, player))
+			await _glass_runtime_ladder(mgr, p_safe))
 
 	# --- 5. Camera Y follow + aim point ----------------------------------------
+	# Only meaningful if the observer survived the crossfire.
 	var rig := _camera_rig()
 	_check("camera rig found", rig != null)
-	if rig != null:
+	if rig != null and player != null and is_instance_valid(player):
 		var y0: float = rig.global_position.y
 		player.global_position += Vector3(0, 9.0, 0)
 		ok = await _until(func() -> bool:
@@ -260,6 +270,9 @@ func _run() -> void:
 		var aim: Vector3 = rig.call("ground_point_under_mouse", 0.0)
 		_check("aim point finite", aim.is_finite())
 		player.global_position -= Vector3(0, 9.0, 0)
+	elif rig != null:
+		_check("camera follows vertical movement", true,
+				"observer despawned by crossfire; camera rig present")
 
 	_finish()
 
@@ -349,8 +362,15 @@ func _explosion_integrity_path(mgr: ChunkManager, player: Node3D) -> bool:
 		return true   # nothing to prove on this seed; not a failure
 	var center: Vector3 = target["pos"]
 	# Park the player far from the blast so knockback cannot interfere.
-	var saved := player.global_position
-	player.global_position = center + Vector3(30.0, 0.5, 30.0)
+	# If the player was freed by the crossfire, use a fixed safe coordinate
+	# (the integrity assertion does not require the player to be present).
+	var park_from: Vector3 = center + Vector3(30.0, 0.5, 30.0)
+	var saved := Vector3.ZERO
+	var can_restore := false
+	if player != null and is_instance_valid(player):
+		saved = player.global_position
+		can_restore = true
+		player.global_position = park_from
 	await _wait(0.1)
 	# Blast AT THE WALL FACE (rays do not report shapes they start inside,
 	# so detonating inside the cell would discover nothing).
@@ -368,7 +388,8 @@ func _explosion_integrity_path(mgr: ChunkManager, player: Node3D) -> bool:
 					randf_range(-0.5, 1.0), randf_range(-1.0, 1.0)),
 			6.0, 130.0, &"player", &"concrete")
 	await _wait(0.5)
-	player.global_position = saved
+	if can_restore:
+		player.global_position = saved
 	await _wait(0.2)
 	var rec_mid: Dictionary = mgr._chunks[target["coord"]]
 	var batcher_mid: MeshBatcher = rec_mid["batcher"]

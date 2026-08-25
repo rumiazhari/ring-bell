@@ -47,3 +47,19 @@ Backlog #2 (Phase E): split parkour into actors/traversal/parkour_controller.gd
   + GEO debug line. Verified fresh on this tree: walkthrough 16/16, havoc 21,
   citytest 34, smoke 22 - all "finished with 0 failure(s)". override.cfg
   (local Godot seed pin) gitignored.
+- iter 4 (2026-08-26): QUARANTINED the interrupted Phase-E parkour WIP.
+  The half-finished edit left player_controller.gd with TWO setup()
+  overloads (GDScript has none -> global parse error that blocked EVERY
+  suite: "Could not parse global class PlayerController"), plus
+  parkour_controller.gd typed _survivor as Node3D while dereferencing
+  .velocity/.facing/.health, a call to nonexistent is_on_ground(), jump
+  input duplicated between controller and ParkourController.tick(), and
+  input_setup.gd having removed camera_rotate_left/right actions still
+  referenced by follow_camera.gd. Moved WIP intact to junk/phaseE-parkour-wip/
+  (per no-delete policy); reverted player_controller.gd, input_setup.gd,
+  main.gd to HEAD. Tree is green again - suites re-verified after revert.
+  PHASE E RESTART NOTES: single setup(survivor, hud); ParkourController must
+  hold a typed Survivor reference (not Node3D) or use has_method/get(); one
+  owner for jump input (either controller or tick(), not both); keep
+  camera_rotate_* actions in InputMap; add jump action WITHOUT removing
+  existing ones. Gate unchanged: citytest+smoke+cityruntime+havoctest.
