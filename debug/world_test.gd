@@ -155,6 +155,8 @@ func _run_all() -> void:
 			_test_roof_props())
 	_check("rooftop clutter: HVAC duct run, solar panel, satellite dish",
 			_test_roof_clutter())
+	_check("rooftop water-tower landmark on large retail decks",
+			_test_roof_tower())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -302,6 +304,103 @@ func _test_roof_clutter() -> bool:
 				% [hits])
 		return false
 	return true
+
+
+# --- 24c: Rooftop water-tower landmark (Phase G) -----------------------------
+func _test_roof_tower() -> bool:
+	# A large retail flat deck MUST grow a water tower (legs + tank + cap
+	# + ladder rungs, all colliding steel tagged "tower"). The tower must sit
+	# inside the parapet-inset usable deck, stand clearly above the walkable
+	# deck plane (tall vantage), and a rebuild is byte-identical (seeded).
+	# A SMALL retail deck and a residential deck must NOT grow one.
+	var large := {
+		"rect": Rect2(0, 0, 30, 26),
+		"floor_h": 3.0, "floors": 3, "id": "towertest-big",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false,
+				"room_type": "retail"},
+	}
+	var b_big := MeshBatcher.new()
+	BuildingBuilder.build(b_big, large)
+	var tower_big := _collect_tower(b_big)
+	if tower_big.is_empty():
+		print("[CityTest] tower: large retail deck grew no water tower")
+		return false
+	var usable := BuildingBuilder.usable_roof_rect(large["rect"])
+	for s: Dictionary in tower_big:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5,
+				sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), usable):
+			print("[CityTest] tower: box outside usable deck %s" % [r])
+			return false
+		if pos.y <= 9.09:   # must stand above the deck plane (total_h 9.0)
+			print("[CityTest] tower: box sunk into deck at %s" % [pos])
+			return false
+	# Tank top must reach a real elevated vantage (>= 3.5 m above deck).
+	var max_top := 0.0
+	for s2: Dictionary in tower_big:
+		max_top = maxf(max_top, float(s2["pos"].y) + s2["size"].y * 0.5)
+	if max_top < 3.4:
+		print("[CityTest] tower: not tall enough (top=%.2f)" % max_top)
+		return false
+
+	# Determinism: rebuild is byte-identical.
+	var b_big2 := MeshBatcher.new()
+	BuildingBuilder.build(b_big2, large)
+	var tower_big2 := _collect_tower(b_big2)
+	if tower_big.size() != tower_big2.size():
+		print("[CityTest] tower: nondeterministic count %d vs %d"
+				% [tower_big.size(), tower_big2.size()])
+		return false
+	for i in tower_big.size():
+		if tower_big[i]["pos"] != tower_big2[i]["pos"] \
+				or tower_big[i]["size"] != tower_big2[i]["size"]:
+			print("[CityTest] tower: nondeterministic box %d" % i)
+			return false
+
+	# Gating: small retail deck and residential deck get no tower.
+	var small := {
+		"rect": Rect2(0, 0, 8, 7),
+		"floor_h": 3.0, "floors": 2, "id": "towertest-small",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false,
+				"room_type": "retail"},
+	}
+	var b_small := MeshBatcher.new()
+	BuildingBuilder.build(b_small, small)
+	if not _collect_tower(b_small).is_empty():
+		print("[CityTest] tower: small retail deck wrongly grew a tower")
+		return false
+	var resid := {
+		"rect": Rect2(0, 0, 16, 14),
+		"floor_h": 3.0, "floors": 3, "id": "towertest-res",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false,
+				"room_type": "residential"},
+	}
+	var b_res := MeshBatcher.new()
+	BuildingBuilder.build(b_res, resid)
+	if not _collect_tower(b_res).is_empty():
+		print("[CityTest] tower: residential deck wrongly grew a tower")
+		return false
+	return true
+
+
+## Colliding steel specs tagged "tower" standing above the deck plane.
+func _collect_tower(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if StringName(s["material"]) != &"steel" \
+				or not bool(s["collide"]):
+			continue
+		if String(s.get("building_id", "")) != "tower":
+			continue
+		out.append(s)
+	return out
+
 
 
 

@@ -44,6 +44,8 @@ const GLASS_T := 0.2                   # pane thickness inside the WALL_T apertu
 const PARAPET_H := 0.9
 const PROP_CLEARANCE := 0.35       # minimum gap between adjacent roof props
 const BULKHEAD_RING := 1.2         # approach ring around the stair bulkhead
+const TOWER_FOOTPRINT := Vector2(1.8, 1.8)  # water-tower leg spread (base)
+const TOWER_MIN_AREA := 90.0       # only the largest retail decks get one
 
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
@@ -1134,6 +1136,15 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 			b.add_roof_visual_box(off + Vector3(w * 0.5, total_h + 0.02, d * 0.5),
 					Vector3(w - WALL_T, 0.04, d - WALL_T), roof_c)
 		_roof_props(b, off, fp, style, total_h, zone, has_stairs)
+		# Phase G: landmark rooftop water tower on the largest RETAIL flat
+		# decks only - a tall standable steel tank on four legs, giving a
+		# fresh elevated vantage and a tall ledge-grab lip. Skipped on
+		# pitched (attic) roofs and on small/non-retail decks, and never
+		# placed where it would block the stair bulkhead roof exit.
+		if not style.get("attic", false) and is_retail_deck(style) \
+				and (w * d) >= TOWER_MIN_AREA:
+			_tower_landmark(b, off, usable_roof_rect(fp), total_h,
+					keepout_roof(zone, has_stairs))
 
 
 ## Flat-roof dressing: thin VISUAL membrane around the shaft hole (no
@@ -1144,8 +1155,87 @@ static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 		d: float, hole: Rect2, y: float, color: Color) -> void:
 	for r: Rect2 in slab_pieces(w, d, hole):
 		b.add_roof_visual_box(
-				off + Vector3(r.get_center().x, y, r.get_center().y),
-				Vector3(r.size.x, 0.04, r.size.y), color)
+			off + Vector3(r.get_center().x, y, r.get_center().y),
+			Vector3(r.size.x, 0.04, r.size.y), color)
+
+
+## Phase G helpers: the landmark rooftop water tower is gated to the
+## LARGEST RETAIL FLAT decks (no stairs, no pitched attic shell) so it reads
+## as a district landmark rather than random clutter. These keep the gate
+## readable and shared between `_roof` and the tests.
+static func is_retail_deck(style: Dictionary) -> bool:
+	return str(style.get("room_type", "residential")) == "retail"
+
+
+## Parapet-inset walkable deck rect (matches `_roof_props` inset).
+static func usable_roof_rect(fp: Rect2) -> Rect2:
+	var inset := WALL_T + 0.55
+	return Rect2(inset, inset,
+			maxf(fp.size.x - 2.0 * inset, 0.0),
+			maxf(fp.size.y - 2.0 * inset, 0.0))
+
+
+## Bulkhead keep-out ring carried by the roof builder (empty when the
+## building has no stair bulkhead). Towers never appear on stair buildings,
+## but the rect is computed for completeness/testing.
+static func keepout_roof(zone: Rect2, has_stairs: bool) -> Rect2:
+	return zone.grow(BULKHEAD_RING + PROP_CLEARANCE) if has_stairs else Rect2()
+
+
+## Phase G: landmark rooftop water tower. A tall standable steel tank on
+## four legs placed on a large retail flat deck (NO stair bulkhead there),
+## giving a fresh elevated vantage and a tall ledge-grab lip for the parkour
+## system. Deterministic placement (seeded by the deck rect); legs + tank +
+## cap are destructible steel (collide), ladder rungs up one leg double as a
+## grabbable lip. All tower boxes carry owner_tag "tower" so tests can
+## isolate them from the rest of the roof dressing.
+static func _tower_landmark(b: MeshBatcher, off: Vector3, usable: Rect2,
+		total_h: float, keepout: Rect2) -> void:
+	if usable.size.x < TOWER_FOOTPRINT.x + 0.6 \
+			or usable.size.y < TOWER_FOOTPRINT.y + 0.6:
+		return
+	var rng := WorldSeed.rng_for("tower",
+		[int(usable.position.x * 13.0), int(usable.position.y * 13.0),
+		 int(usable.size.x * 7.0)])
+	var half := TOWER_FOOTPRINT * 0.5
+	var cx := rng.randf_range(usable.position.x + half.x,
+			maxf(usable.end.x - half.x, usable.position.x + half.x))
+	var cz := rng.randf_range(usable.position.y + half.y,
+			maxf(usable.end.y - half.y, usable.position.y + half.y))
+	var foot := Rect2(cx - half.x, cz - half.y,
+			TOWER_FOOTPRINT.x, TOWER_FOOTPRINT.y)
+	if keepout.size.x > 0.0 and keepout.size.y > 0.0 \
+			and foot.intersects(keepout):
+		return
+	var y := total_h + 0.04
+	var leg_h := 2.6
+	var tank_h := 1.8
+	var tank_r := 0.85
+	# Four legs at the footprint corners (steel, collides/standable base).
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			var lx: float = cx + sx * (TOWER_FOOTPRINT.x * 0.5 - 0.18)
+			var lz: float = cz + sz * (TOWER_FOOTPRINT.y * 0.5 - 0.18)
+			b.add_destructible_box(off + Vector3(lx, y + leg_h * 0.5, lz),
+					Vector3(0.16, leg_h, 0.16), Color("7c8288"),
+					&"steel", true, "tower", -1)
+	# Cylindrical tank faked as a steel box + a slightly wider rim cap.
+	var tank_base := y + leg_h
+	b.add_destructible_box(off + Vector3(cx, tank_base + tank_h * 0.5, cz),
+			Vector3(tank_r * 2.0, tank_h, tank_r * 2.0),
+			Color("3e5a6e"), &"steel", true, "tower", -1)
+	b.add_destructible_box(off + Vector3(cx, tank_base + tank_h + 0.06, cz),
+			Vector3(tank_r * 2.0 + 0.1, 0.12, tank_r * 2.0 + 0.1),
+			Color("2f4250"), &"steel", true, "tower", -1)
+	# Ladder rungs climbing one leg - a fresh ledge-grab lip to the top.
+	for i in 5:
+		var ry := y + 0.4 + float(i) * 0.5
+		b.add_destructible_box(
+				off + Vector3(cx + TOWER_FOOTPRINT.x * 0.5 - 0.18,
+						ry, cz + TOWER_FOOTPRINT.y * 0.5 - 0.18),
+				Vector3(0.06, 0.06, 0.4), Color("565d63"),
+				&"steel", true, "tower", -1)
+
 
 
 ## Flat-roof prop dressing (Phase D slice 4/5/6): AC condensers, a water
