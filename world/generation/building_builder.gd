@@ -1145,11 +1145,14 @@ static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 				Vector3(r.size.x, 0.04, r.size.y), color)
 
 
-## Flat-roof prop dressing (Phase D slice 4/5): AC condensers, a water tank,
-## vent pipes and an antenna mast scattered over the walkable roof deck.
-## Phase D slice 5 adds ROOF-TYPE VARIETY: retail roofs get BILLBOARDS
+## Flat-roof prop dressing (Phase D slice 4/5/6): AC condensers, a water
+## tank, vent pipes and an antenna mast scattered over the walkable roof
+## deck. Phase D slice 5 adds ROOF-TYPE VARIETY: retail roofs get BILLBOARDS
 ## (tall vertical ad panels), residential roofs get LAUNDRY LINES (horizontal
-## cables with struts) and PIGEON COOPS (small wooden hutches). Props are
+## cables with struts) and PIGEON COOPS (small wooden hutches). Phase D
+## slice 6 adds CLUTTER: one linear HVAC duct run lining a parapet-side edge,
+## SOLAR THERMAL PANELS (tilted dark glass, residential) and SATELLITE DISHES
+## (retail). Props are
 ## DESTRUCTIBLE boxes - standable cover that doubles as fresh ledge-grab
 ## lips for the Phase E parkour system. Placement is deterministic
 ## (WorldSeed.rng_for, same pattern as the chimney), confined to the deck
@@ -1171,13 +1174,33 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 	var budget := mini(int(usable.get_area() / 18.0), 4)
 	var target := 1 + rng.randi_range(0, maxi(budget - 1, 0))
 	var placed: Array[Dictionary] = []
+	# Phase D slice 6: one linear HVAC duct run lining a parapet-side edge
+	# (a ready-made perimeter parkour lip), placed before the scatter so it
+	# claims deck space ahead of the freestanding props.
+	var duct_r := _hvac_rect(usable, keepout, rng)
+	if duct_r.size.x > 0.0 and duct_r.size.y > 0.0:
+		placed.append(_rect_obb(duct_r))
+		_rp_hvac_duct(b, off, duct_r, total_h + 0.04)
 	var attempts := 0
 	var room_type := str(style.get("room_type", "residential"))
 	var is_retail := room_type == "retail"
 	while placed.size() < target and attempts < 40:
 		attempts += 1
-		# kind selection weighted by room_type for variety
-		var kind := rng.randi_range(0, 5 if is_retail else 4)  # 0-5 retail (adds billboard), 0-4 residential (adds pigeon coop)
+		# kind pool filtered by room_type (Phase D slices 5/6):
+		#   shared 0-4 | retail-only 7 (satellite dish) |
+		#   residential-only 5 (pigeon coop) + 6 (solar panel);
+		#   kind 4 morphs: billboard (retail) / laundry line (residential)
+		var kinds: Array[int] = []
+		for k in 8:
+			if k == 7:
+				if is_retail:
+					kinds.append(k)
+			elif k == 5 or k == 6:
+				if not is_retail:
+					kinds.append(k)
+			else:
+				kinds.append(k)
+		var kind: int = kinds[rng.randi_range(0, kinds.size() - 1)]
 		var footprint := Vector2(0.95, 0.75)      # AC condenser
 		if kind == 1:
 			footprint = Vector2(1.25, 1.25)       # water tank
@@ -1189,6 +1212,10 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 			footprint = Vector2(2.0, 0.3)         # billboard (retail) / laundry line (residential)
 		elif kind == 5:
 			footprint = Vector2(1.1, 1.1)         # pigeon coop (residential only)
+		elif kind == 6:
+			footprint = Vector2(1.9, 1.05)        # solar thermal panel (residential only)
+		elif kind == 7:
+			footprint = Vector2(0.75, 0.75)       # satellite dish (retail only)
 		var px := rng.randf_range(usable.position.x,
 				maxf(usable.end.x - footprint.x, usable.position.x))
 		var pz := rng.randf_range(usable.position.y,
@@ -1214,6 +1241,8 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 			3: _rp_antenna(b, off, r, y)
 			4: _rp_billboard_or_laundry(b, off, r, y, is_retail)
 			5: _rp_pigeon_coop(b, off, r, y)
+			6: _rp_solar_panel(b, off, r, y)
+			7: _rp_satellite_dish(b, off, r, y)
 
 
 static func _rp_ac_unit(b: MeshBatcher, off: Vector3, r: Rect2,
@@ -1307,6 +1336,127 @@ static func _rp_pigeon_coop(b: MeshBatcher, off: Vector3, r: Rect2, y: float) ->
 	# Entry hole (visual only).
 	b.add_visual_box(off + Vector3(c.x, y + h * 0.6, c.y + d * 0.5),
 			Vector3(0.3, 0.3, 0.06), Color("1a1a20"))
+
+
+## Phase D slice 6: pick the rect for an HVAC duct run hugging one side of
+## the usable deck (the parapet walkway line). Tries the four edges in a
+## seeded shuffled order; returns Rect2() when no edge clears the bulkhead
+## keep-out ring.
+static func _hvac_rect(usable: Rect2, keepout: Rect2,
+		rng: RandomNumberGenerator) -> Rect2:
+	var th := 0.42
+	var margin := 0.5
+	var order: Array[int] = [0, 1, 2, 3]
+	for i in range(3, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp := order[i]
+		order[i] = order[j]
+		order[j] = tmp
+	for e: int in order:
+		var r := Rect2()
+		if e == 0 or e == 1:
+			var avail_x := usable.size.x - 2.0 * margin
+			if avail_x < 1.8:
+				continue
+			var len_x := minf(avail_x, rng.randf_range(2.4, 4.2))
+			var x0 := usable.position.x + margin \
+					+ rng.randf_range(0.0, maxf(avail_x - len_x, 0.0))
+			if e == 0:
+				r = Rect2(x0, usable.position.y, len_x, th)
+			else:
+				r = Rect2(x0, usable.end.y - th, len_x, th)
+		else:
+			var avail_z := usable.size.y - 2.0 * margin
+			if avail_z < 1.8:
+				continue
+			var len_z := minf(avail_z, rng.randf_range(2.4, 4.2))
+			var z0 := usable.position.y + margin \
+					+ rng.randf_range(0.0, maxf(avail_z - len_z, 0.0))
+			if e == 2:
+				r = Rect2(usable.position.x, z0, th, len_z)
+			else:
+				r = Rect2(usable.end.x - th, z0, th, len_z)
+		if keepout.size.x > 0.0 and keepout.size.y > 0.0 \
+				and r.intersects(keepout):
+			continue
+		return r
+	return Rect2()
+
+
+## HVAC duct run (Phase D slice 6): linear galvanized chase on low steel
+## stands lining the parapet walkway. Destructible - standable cover and a
+## perimeter ledge-grab lip for Phase E parkour routes.
+## HVAC duct run (Phase D slice 6): linear galvanized chase on low steel
+## stands lining the parapet walkway. Destructible - standable cover and a
+## perimeter ledge-grab lip for Phase E parkour routes.
+static func _rp_hvac_duct(b: MeshBatcher, off: Vector3, r: Rect2,
+		y: float) -> void:
+	var c := r.get_center()
+	var horizontal: bool = r.size.x >= r.size.y
+	var stand_h := 0.32
+	for i in 3:
+		var t := (float(i) + 0.5) / 3.0
+		var px := lerpf(r.position.x + 0.25, r.end.x - 0.25, t)
+		var pz := lerpf(r.position.y + 0.25, r.end.y - 0.25, t)
+		if horizontal:
+			pz = c.y
+		else:
+			px = c.x
+		b.add_destructible_box(off + Vector3(px, y + stand_h * 0.5, pz),
+			Vector3(0.14, stand_h, 0.14), Color("7c8288"), &"steel")
+	var duct_y := y + stand_h + 0.19
+	b.add_destructible_box(off + Vector3(c.x, duct_y, c.y),
+		Vector3(r.size.x, 0.38, r.size.y), Color("aab0b6"), &"steel")
+	for i in 2:
+		var t := (float(i) + 1.0) / 3.0
+		var rx := lerpf(r.position.x, r.end.x, t)
+		var rz := lerpf(r.position.y, r.end.y, t)
+		if horizontal:
+			rz = c.y
+		else:
+			rx = c.x
+		var rs := Vector3(0.07, 0.05, 0.52)
+		if not horizontal:
+			rs = Vector3(0.52, 0.05, 0.07)
+		b.add_visual_box(off + Vector3(rx, duct_y + 0.21, rz), rs,
+			Color("8f959b"))
+
+
+## Solar thermal panel (residential, Phase D slice 6): dark glass absorber
+## on two steel legs - a tall rear rail and short front rail fake the tilt.
+## The absorber slab is DESTRUCTIBLE and standable (low ledge-grab lip).
+static func _rp_solar_panel(b: MeshBatcher, off: Vector3, r: Rect2,
+		y: float) -> void:
+	var c := r.get_center()
+	var w := r.size.x
+	var d := r.size.y
+	b.add_destructible_box(
+			off + Vector3(c.x, y + 0.30, c.y - d * 0.5 + 0.15),
+			Vector3(w * 0.9, 0.60, 0.12), Color("565d63"), &"steel")
+	b.add_destructible_box(
+			off + Vector3(c.x, y + 0.13, c.y + d * 0.5 - 0.15),
+			Vector3(w * 0.9, 0.26, 0.12), Color("565d63"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 0.48, c.y),
+			Vector3(w, 0.08, d), Color("101820"), &"glass")
+
+
+## Satellite dish (retail corners, Phase D slice 6): concrete footplate +
+## steel pedestal + two stacked plates faking a concave bowl + feed arm.
+## All DESTRUCTIBLE; the pedestal top is a fresh ledge-grab lip.
+static func _rp_satellite_dish(b: MeshBatcher, off: Vector3, r: Rect2,
+		y: float) -> void:
+	var c := r.get_center()
+	b.add_destructible_box(off + Vector3(c.x, y + 0.07, c.y),
+			Vector3(r.size.x * 0.85, 0.14, r.size.y * 0.85),
+			PLINTH_COLOR, &"concrete")
+	b.add_destructible_box(off + Vector3(c.x, y + 0.55, c.y),
+			Vector3(0.12, 0.96, 0.12), Color("565d63"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 1.02, c.y - 0.10),
+			Vector3(0.66, 0.34, 0.10), Color("c8ccd0"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 1.24, c.y + 0.06),
+			Vector3(0.46, 0.24, 0.10), Color("b4b9be"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 1.18, c.y - 0.26),
+			Vector3(0.05, 0.05, 0.34), Color("565d63"), &"steel")
 
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,

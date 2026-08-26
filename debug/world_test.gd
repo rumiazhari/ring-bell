@@ -153,6 +153,8 @@ func _run_all() -> void:
 	_check("interior probe detection + facade sector math", _test_interior_probe())
 	_check("flat-roof props placed, bounded, deterministic; attic decks bare",
 			_test_roof_props())
+	_check("rooftop clutter: HVAC duct run, solar panel, satellite dish",
+			_test_roof_clutter())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -247,6 +249,55 @@ func _collect_roof_props(b: MeshBatcher, total_h: float, usable: Rect2,
 			continue
 		out.append(s)
 	return out
+
+
+# --- 24b: Rooftop clutter pass (Phase D slice 6) -------------------------------
+func _test_roof_clutter() -> bool:
+	# HVAC rect picker: rects land inside the usable deck, and the picker
+	# gives up (empty Rect2) when the bulkhead keep-out swallows every edge.
+	var usable := Rect2(0.9, 0.9, 10.2, 8.2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 12345
+	for i in 6:
+		var hr := BuildingBuilder._hvac_rect(usable, Rect2(), rng)
+		if hr.size.x <= 0.0 or hr.size.y <= 0.0:
+			print("[CityTest] clutter: hvac rect empty on a free deck")
+			return false
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(hr), usable):
+			print("[CityTest] clutter: hvac rect outside usable %s" % [hr])
+			return false
+	if not (BuildingBuilder._hvac_rect(
+				usable, usable.grow(-0.01),
+				RandomNumberGenerator.new()) == Rect2()):
+			print("[CityTest] clutter: hvac rect ignored total keep-out")
+			return false
+
+	# The three new builders emit colliding boxes standing above the deck.
+	var y := 9.04   # deck plane at total_h 9.0 + membrane offset
+	var b := MeshBatcher.new()
+	BuildingBuilder._rp_hvac_duct(b, Vector3.ZERO,
+			Rect2(1.0, 0.9, 3.6, 0.42), y)
+	BuildingBuilder._rp_solar_panel(b, Vector3.ZERO,
+			Rect2(4.0, 4.0, 1.9, 1.05), y)
+	BuildingBuilder._rp_satellite_dish(b, Vector3.ZERO,
+			Rect2(4.5, 7.0, 0.75, 0.75), y)
+	var hits := 0
+	for s in b.specs():
+		if not bool(s["collide"]):
+			continue
+		hits += 1
+		var pos: Vector3 = s["pos"]
+		if pos.y <= 9.09:   # must stand above the walkable deck plane
+			print("[CityTest] clutter: box sunk into deck at %s" % [pos])
+			return false
+	if hits < 12:   # duct 4 + solar 3 + dish 5
+		print("[CityTest] clutter: expected >=12 colliding boxes, got %d"
+				% [hits])
+		return false
+	return true
+
+
 
 
 # --- 11: Slab coverage ---------------------------------------------------------
