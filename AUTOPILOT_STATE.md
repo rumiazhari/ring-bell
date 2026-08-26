@@ -1,25 +1,29 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 23
+LAST_ITER: 24
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 23: Phase I bulkhead plant-room details. On stair buildings only, the
-bulkhead cap (already BH_CAP_OVERHANG overhang + Phase H "bhexit" rim)
-now grows a serviced-plant-room set on the cap surface: a steel access
-hatch lid (0.95 m) + two galvanized vent louvers (0.5 x 0.25 m), all
-destructible steel tagged "bhplant", resting ON cap_top (above the
-doorway lane, inside the railed enclosure). Reads as a real mechanical
-room rather than a bare lid; adds extra carveable cover + small standable
-lips. Added `--citytest` assertion `_test_bulkhead_plant` (exactly 3
-colliding steel "bhplant" boxes on the cap, footprint inside the cap
-zone, deterministic, non-stair building grows none).
+Iter 24: Phase J bulkhead roof-access ladder — a vertical run of destructible
+steel rungs on the hut's +Z face climbing from just above the deck up to the
+Phase H rim top, so the serviced plant-room roof (Phase H rim + Phase I hatch)
+is actually CLIMBABLE rather than a mantle-only target. Rungs tagged "bhladder",
+deterministic, gated to stair buildings. Added `--citytest` assertion
+`_test_bulkhead_ladder` (>=4 ascending steel "bhladder" rungs, footprints
+inside the cap zone, bottom near deck + top at cap, deterministic, non-stair
+buildings grow none).
 
 ## This iteration
+[autopilot] iter 24: Phase J bulkhead roof-access ladder — vertical steel
+rung ladder on the hut's +Z face from the deck to the rim top (climbable, not
+just a mantle target), destructible steel tagged "bhladder", gated to stair
+buildings. citytest + smoke green (0 failures); new `_test_bulkhead_ladder`
+assertion passes.
+
 [autopilot] iter 23: Phase I bulkhead plant-room details — steel hatch lid
 + 2 vent louvers on the cap surface (above doorway lane, inside the Phase
-H rim), tagged "bhplant", gated to stair buildings. citytest + smoke green
+H rim), tagged "bhplant", gated to stairs. citytest + smoke green
 (0 failures); new `_test_bulkhead_plant` assertion passes.
 
 [autopilot] iter 22: Phase H bulkhead roof-exit rim railing — 4-segment
@@ -72,3 +76,23 @@ at dense roof packing. citytest + smoke green (0 failures).
    cap rim — a steel rung ladder (destructible "bhplant") so the
    plant-room roof is actually climbable, not just a mantle target.
    Gate: --citytest.
+
+## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
+Supersedes current goal priorities after the in-flight Phase E slice lands:
+
+1. ONE handcrafted great map (no multi-seed requirement): a Prague-style
+   European historic core done to Assassin's-Creed standard.
+2. REALISTIC ARCHITECTURE & SCALE: apartments with bedrooms/dining/kitchens/
+   toilets; offices with office interiors; shops, grocery stores, malls,
+   workshops, schools, universities — each building type with logical interior
+   layout, and TOILETS/logical service rooms in every building. Human-scale
+   floor heights (~3 m), believable room dimensions.
+3. SPATIAL PARKOUR MECHANICS like AC: ledges, fences, gates, pillars, awnings,
+   balconies, scaffolding, rooftops — the city is climbable as a traversal
+   space, integrated with the Phase-E parkour controller.
+4. POST-APOC EUROPEAN AESTHETIC — NO MORE WHITE-DUMMY LOOK: proper textures,
+   shading/shadow/light systems, bloom, reflections, water rendering. Eerie
+   horror zombie-apocalypse mood: decayed facades, graffiti, rust, overgrowth.
+5. LIGHT AS GAMEPLAY: night is genuinely dark; lanterns/flashlights/fire/torch
+   matter for visibility — light/darkness becomes a survival mechanic.
+Keep gates green (citytest/smoke/cityruntime/havoctest/walkthrough).

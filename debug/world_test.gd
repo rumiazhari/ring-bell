@@ -161,6 +161,8 @@ func _run_all() -> void:
 			_test_bulkhead_rails())
 	_check("bulkhead plant-room details: hatch+vents on cap, gated to stairs",
 			_test_bulkhead_plant())
+	_check("bulkhead access ladder: climbable rungs deck->rim, gated to stairs",
+			_test_bulkhead_ladder())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -563,6 +565,106 @@ func _test_bulkhead_plant() -> bool:
 	BuildingBuilder.build(b3, nostair)
 	if not _collect_bhplant(b3).is_empty():
 		print("[CityTest] bhplant: non-stair building grew plant details")
+		return false
+	return true
+
+
+## Colliding steel specs tagged "bhladder" (Phase J bulkhead access ladder).
+func _collect_bhladder(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if StringName(s["material"]) != &"steel" \
+				or not bool(s["collide"]):
+			continue
+		if String(s.get("building_id", "")) != "bhladder":
+			continue
+		out.append(s)
+	return out
+
+
+func _test_bulkhead_ladder() -> bool:
+	# A stair building MUST finish its bulkhead with Phase J access ladder:
+	# a vertical run of >=4 colliding steel "bhladder" rungs on the hut's
+	# +Z face spanning from just above the deck up to the rim top, so the
+	# plant-room cap (Phase H rim + Phase I hatch) is climbable rather than
+	# a mantle-only target. Every rung rests ABOVE the doorway lane, the
+	# rung footprints sit inside the bulkhead cap zone (within the Phase H
+	# railed enclosure), the rungs are ordered strictly ascending in y, and
+	# a rebuild is byte-identical. A building WITHOUT stairs grows none.
+	var spec := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0, "floors": 3, "id": "bhladdertest",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b := MeshBatcher.new()
+	BuildingBuilder.build(b, spec)
+	var rungs := _collect_bhladder(b)
+	if rungs.size() < 4:
+		print("[CityTest] bhladder: expected >=4 rungs, got %d" % rungs.size())
+		return false
+	var total_h := 9.0
+	var bh_h := 2.4
+	var cap_top := total_h + bh_h + 0.18
+	var cap_zone: Rect2 = BuildingBuilder._zone_rect(
+		(spec["rect"] as Rect2).size, 3.0, 0).grow(0.14 + 0.15 + 0.05)
+	var prev_y := -INF
+	var min_y := INF
+	var max_y := -INF
+	for s: Dictionary in rungs:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		# Rung footprint confined to the bulkhead cap zone (on the hut
+		# face, within the Phase H railed enclosure footprint).
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5,
+				sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), cap_zone):
+			print("[CityTest] bhladder: rung outside bulkhead cap %s" % [r])
+			return false
+		# Strictly ascending so it reads as a climbable ladder.
+		if pos.y <= prev_y:
+			print("[CityTest] bhladder: rungs not ascending at %s" % [pos])
+			return false
+		prev_y = pos.y
+		min_y = minf(min_y, pos.y - sz.y * 0.5)
+		max_y = maxf(max_y, pos.y + sz.y * 0.5)
+	# Bottom rung must start near the deck (climbable from the roof deck),
+	# top rung must reach the cap so the plant-room roof is reachable.
+	if min_y > total_h + 0.7:
+		print("[CityTest] bhladder: bottom rung too high above deck (%f)"
+				% min_y)
+		return false
+	if max_y < cap_top:
+		print("[CityTest] bhladder: top rung below cap (%f < %f)"
+				% [max_y, cap_top])
+		return false
+
+	# Determinism: rebuild is byte-identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, spec)
+	var rungs2 := _collect_bhladder(b2)
+	if rungs.size() != rungs2.size():
+		print("[CityTest] bhladder: nondeterministic count %d vs %d"
+				% [rungs.size(), rungs2.size()])
+		return false
+	for i in rungs.size():
+		if rungs[i]["pos"] != rungs2[i]["pos"] \
+				or rungs[i]["size"] != rungs2[i]["size"]:
+			print("[CityTest] bhladder: nondeterministic rung %d" % i)
+			return false
+
+	# Gating: a flat deck WITHOUT stairs grows no ladder.
+	var nostair := {
+		"rect": Rect2(0, 0, 30, 26),
+		"floor_h": 3.0, "floors": 1, "id": "bhladder-nostair",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nostair)
+	if not _collect_bhladder(b3).is_empty():
+		print("[CityTest] bhladder: non-stair building grew a ladder")
 		return false
 	return true
 

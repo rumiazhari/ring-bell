@@ -1172,6 +1172,24 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 					Vector3(0.5, 0.25, 0.16)]
 			b.add_destructible_box(off + vent[0], vent[1], plant_c,
 					&"steel", true, "bhplant", -1)
+		# Phase J: rooftop access ladder from the deck up to the bulkhead
+		# cap rim, so the serviced plant-room roof (Phase H rim + Phase I
+		# hatch) is actually CLIMBABLE, not just a mantle target. A vertical
+		# run of steel rungs on the hut's +Z face: bottom rung clears the
+		# deck, top rung reaches the rim top so the player steps over onto
+		# the cap. Destructible steel (grabbable parkour lip), deterministic,
+		# gated to stair buildings, tagged "bhladder" for tests.
+		var ladder_color := Color("6b6f73")
+		var ladder_z := cz + hd - 0.05          # just inside the +Z rim face
+		var ladder_y0 := total_h + 0.3          # first rung clears the deck
+		var ladder_y1 := cap_top + BH_RAIL_H    # top rung at the rim top
+		var n_rungs := maxi(int(round((ladder_y1 - ladder_y0) / 0.4)), 1)
+		for ri: int in n_rungs:
+			var lr := ladder_y0 + float(ri) * 0.4
+			b.add_destructible_box(
+				off + Vector3(cx, lr, ladder_z),
+				Vector3(0.4, 0.06, 0.09), ladder_color,
+				&"steel", true, "bhladder", -1)
 
 	if style.get("attic", false):
 		_pitched_shell(b, off, w, d, total_h, roof_c, style)
