@@ -1,7 +1,7 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 11
+LAST_ITER: 12
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
@@ -23,7 +23,7 @@ Gate ALL GREEN: smoke 41 / citytest / cityruntime, all 0 failure(s).
 ## Backlog
 1. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
    readout; or zombie chase steering so NPCs corner survivors toward edges.
-   Gate: smoke.
+   Gate: smoke. [DONE in iter 12]
 2. Phase D slice 3 (idea): ground-floor shopfront dressing (_shopfront) is
    currently applied to ALL buildings when attic+long facade - gate it to
    room_type=="retail" so homes stop wearing signboards. Gate: citytest.
@@ -31,6 +31,19 @@ Gate ALL GREEN: smoke 41 / citytest / cityruntime, all 0 failure(s).
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 12 (2026-08-26): Phase F slice 3 LANDED - HUD stamina-bar flash on
+  ledge grab + lifetime grab/rooftop counter readout.
+  ui/hud.gd: flash_stamina_bar() tween-modulates the stamina ProgressBar
+  to bright yellow-white (2.0, 2.0, 1.3) for 0.55 s and increments
+  stamina_flashes counter; set_grab_counter(grabs, mantles) renders
+  "Grabs: N   Rooftop mantles: M" under vitals; _update_bars() auto-syncs
+  from player.parkour. actors/survivor/player_controller.gd:
+  _on_ledge_grabbed() now also calls flash_stamina_bar(). smoke_test.gd
+  +5 checks (end of section 7b): emitting ledge_grabbed(true) bumps
+  stamina_flashes, sets a rooftop notice, makes bar modulate non-white,
+  set_grab_counter(4,2) renders both numbers, and one frame later the
+  HUD auto-readout reflects parkour.ledge_grabs/rooftop_mantles.
+  Gate ALL GREEN: --smoke 41 / --citytest 34, both "finished with 0 failure(s)".
 - iter 11 (2026-08-26): Phase D slice 2 LANDED - semantic room layouts.
   building_builder.gd: _furnish() now takes style.room_type and branches
   the furniture program - retail floors get wall-run _f_counter carcasses
