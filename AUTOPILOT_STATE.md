@@ -1,7 +1,7 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 14
+LAST_ITER: 15
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
@@ -11,12 +11,18 @@ antenna masts - all DESTRUCTIBLE boxes (standable cover + fresh ledge-grab
 lips for Phase E parkour), placed inside the parapet inset with a keep-out
 ring around the stair bulkhead so the roof exit never blocks. Pitched/attic
 roofs stay bare.
-Gate ALL GREEN: citytest (incl. new roofprops contract check) / smoke /
-cityruntime, all "finished with 0 failure(s)".
+
+Phase G slice 1 COMPLETE: zombie pack steering (flank-arc chase + deterministic
+flank sides). Zombies no longer form a single-file conga line behind the prey —
+instead they converge on the survivor from both flanks while far out, committing
+to the direct line up close. This enables natural crowd surround and cornering
+behavior. Gate ALL GREEN: --citytest 35 / --smoke 41 / --cityruntime 26, all
+"finished with 0 failure(s)".
 
 ## Backlog
 1. Phase G idea: zombie chase steering so NPCs corner survivors toward
    edges/blocks instead of pure straight-line pursuit. Gate: smoke.
+   [COMPLETE in iter 15]
 2. Phase D slice 5 idea: rooftop variety pass - retail roofs get billboards,
    residential gets laundry lines/pigeon coops (reuse _roof_props seeding).
    Gate: citytest.
@@ -38,6 +44,13 @@ cityruntime, all "finished with 0 failure(s)".
   inset AND clear of keep-out, rebuild determinism (identical pos+size),
   and attic variant stays undressed; helper _collect_roof_props filters
   layer ":roof" + collide + above-deck + inside-region specs. Gate ALL
+  GREEN: --citytest 35 / --smoke 41 / --cityruntime 26, all "finished with
+  0 failure(s)".
+- iter 15 (2026-08-26): Phase G slice 1 LANDED - zombie pack steering with
+  flank-arc chase steering and deterministic flank sides. Zombies no longer
+  form a single-file conga line behind the survivor — instead they converge
+  on the victim from both flanks while far out, committing to the direct
+  line up close for natural crowd surround and cornering behavior. Gate ALL
   GREEN: --citytest 35 / --smoke 41 / --cityruntime 26, all "finished with
   0 failure(s)".
 - iter 13 (2026-08-26): Phase D slice 3 LANDED - shopfront dressing gated to retail room_type.
