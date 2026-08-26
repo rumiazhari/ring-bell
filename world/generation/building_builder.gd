@@ -172,6 +172,13 @@ const JAMB_T := 0.04                   # thin stone jamb thickness protruding be
 const JAMB_MIN_SIDE := 5.0             # skip on facades shorter than this
 const JAMB_PROB := 0.56                # chance a historic window grows a pair of stone jambs
 
+# --- Phase AE: Prague window stone keystones (central header stone above historic windows) --
+const KEYSTONE_W := 0.28               # keystone width along facade (central, narrow)
+const KEYSTONE_H := 0.18               # keystone height (taller than lintel band)
+const KEYSTONE_T := 0.055              # thin stone keystone thickness protruding beyond wall
+const KEYSTONE_MIN_SIDE := 5.0         # skip on facades shorter than this
+const KEYSTONE_PROB := 0.52            # chance a historic window grows a keystone
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -411,6 +418,17 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# Together with Phase AB lintels + AC sills they complete the classical
 	# stone window surround without touching collision.
 	_facade_window_jambs(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AE: Prague window stone keystones -- central header stone above
+	# historic windows, visual-only thin stone block (KEYSTONE_W 0.28 x
+	# KEYSTONE_H 0.18 x KEYSTONE_T 0.055) centered above each window opening
+	# at y = y0+WIN_SILL+WIN_H+0.24 (just above the AB lintel's top, slightly
+	# embedded). Deterministic per (building, side, floor, window) via
+	# WorldSeed window_keystone, gated to historic + long facade. Gives the
+	# Prague core its classic keystoned window headers without touching
+	# collision or glass; together with sills/jambs/lintels the stone
+	# window surround is now 5-sided (4 surrounds + keystone crown).
+	_facade_window_keystones(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1372,6 +1390,59 @@ static func _facade_window_jambs(b: MeshBatcher, off: Vector3, w: float, d: floa
 					b.add_box_rotated(off + Vector3(cx, cy, cz),
 							Vector3(aw, WIN_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "jamb", f_idx)
 					b.pop_layer()
+
+## Phase AE: Prague window stone keystones -- central header stone above historic windows.
+## Visual-only thin stone block (KEYSTONE_W 0.28 x KEYSTONE_H 0.18 x KEYSTONE_T 0.055)
+## centered above each window at y = y0+WIN_SILL+WIN_H+0.24 (just crowning the AB
+## lintel, slightly embedded so the header reads as one stone assembly).
+## Deterministic per (building, side, floor, window) via WorldSeed "window_keystone",
+## gated to historic + long facade (>=5.0). Each qualifying window rolls
+## KEYSTONE_PROB 0.52 independently; on success it grows a single central
+## keystone (wider than the jamb, narrower than the lintel) whose bottom is
+## ~1cm below the lintel top so the two stones read as a continuous header.
+## Mirrors the window layout computed by _facade_with_openings so keystones
+## sit exactly above glass.
+static func _facade_window_keystones(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for f_idx in n:
+		var y0 := f_idx * fh
+		var cy := y0 + WIN_SILL + WIN_H + 0.24
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < KEYSTONE_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var tr := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(tr - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(tr)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("window_keystone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= KEYSTONE_PROB:
+					continue
+				var stone_c := Color("c4b8a0").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.02)
+				stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+				var eps := 0.050
+				var cx: float = 0.0
+				var cz: float = 0.0
+				var aw: float = 0.0
+				var ad: float = 0.0
+				match side:
+					0: cx = t_center; cz = -KEYSTONE_T * 0.5 - eps; aw = KEYSTONE_W; ad = KEYSTONE_T
+					1: cx = w + KEYSTONE_T * 0.5 + eps; cz = t_center; aw = KEYSTONE_T; ad = KEYSTONE_W
+					2: cx = t_center; cz = d + KEYSTONE_T * 0.5 + eps; aw = KEYSTONE_W; ad = KEYSTONE_T
+					_: cx = -KEYSTONE_T * 0.5 - eps; cz = t_center; aw = KEYSTONE_T; ad = KEYSTONE_W
+				b.push_layer(tag + ":f%d" % f_idx)
+				b.add_box_rotated(off + Vector3(cx, cy, cz),
+						Vector3(aw, KEYSTONE_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "keystone", f_idx)
+				b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
