@@ -144,6 +144,14 @@ const SHUTTER_GAP := 0.04        # gap from window edge to shutter inner edge
 const SHUTTER_MIN_SIDE := 5.0    # skip on facades shorter than this
 const SHUTTER_PROB := 0.52       # chance a historic window grows a pair of shutters
 
+# --- Phase AA: Prague window flower boxes (trailing greenery under sills) ---
+const FLOWER_W := 1.38           # trough width along facade (WIN_W 1.15 + 0.23 overhang)
+const FLOWER_H := 0.18           # trough height
+const FLOWER_D := 0.22           # trough depth protrusion beyond wall face
+const FLOWER_BLOOM_H := 0.12     # foliage/bloom mass height atop trough
+const FLOWER_MIN_SIDE := 5.0     # skip on facades shorter than this
+const FLOWER_PROB := 0.42        # chance a historic window grows a sill flower box
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -352,6 +360,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# window) via WorldSeed shutter, gated to historic + long facade. Gives
 	# the Prague core its shuttered-window rhythm without touching collision.
 	_facade_shutters(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AA: Prague window flower boxes — trailing greenery under historic
+	# sills, visual-only trough + bloom mass pressed just outside the wall
+	# under each window, deterministic per (building, side, floor, window)
+	# via WorldSeed flowerbox, gated to historic + long facade. Gives the
+	# Prague core its lived-in sill gardens without touching collision.
+	_facade_flower_boxes(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1074,7 +1089,84 @@ static func _facade_shutters(b: MeshBatcher, off: Vector3, w: float, d: float,
 							Vector3(aw, SHUTTER_H, ad), Basis.IDENTITY, col, false, false, &"", "shutter", f_idx)
 					b.pop_layer()
 
-## One facade: openings list -> pier / sill / lintel segments (+ panes).
+
+## Phase AA: Prague window flower boxes — terracotta trough + trailing bloom under historic sills.
+## Visual-only boxes pressed just outside the wall under each window sill,
+## deterministic per (building, side, floor, window) via WorldSeed "flowerbox",
+## gated to historic + long facade (>= FLOWER_MIN_SIDE 5.0). Each qualifying
+## window rolls FLOWER_PROB 0.42 independently; on success it grows a
+## terracotta trough (FLOWER_W 1.38 x FLOWER_H 0.18 x FLOWER_D 0.22, protruding
+## beyond the wall face) plus a foliage bloom mass (slightly inset,
+## FLOWER_W*0.92 x FLOWER_BLOOM_H 0.12 x FLOWER_D*0.88) sitting atop the trough.
+## Both are visual-only, no collision, tagged "flowerbox" per floor. Mirrors
+## the window layout computed by _facade_with_openings so boxes sit exactly
+## under glass, at sill height.
+static func _facade_flower_boxes(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var trough_base := Color("b06238").darkened(0.04)
+	var bloom_palette: Array[Color] = [
+		Color("4a7a3a"), Color("6e4a3a"), Color("c73a2e"),
+		Color("e8a040"), Color("5a6e4a"), Color("8a7a30"),
+	]
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for f_idx in n:
+		var y0 := f_idx * fh
+		var trough_cy := y0 + WIN_SILL - FLOWER_H * 0.5
+		var bloom_cy := y0 + WIN_SILL + FLOWER_BLOOM_H * 0.5
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < FLOWER_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(t)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("flowerbox", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= FLOWER_PROB:
+					continue
+				var trough_c: Color = trough_base.lightened(rng.randf_range(-0.06, 0.06))
+				var bloom_c: Color = bloom_palette[rng.randi_range(0, bloom_palette.size() - 1)]
+				bloom_c = bloom_c.lightened(rng.randf_range(-0.07, 0.07)).darkened(0.02)
+				bloom_c = bloom_c.lerp(Color(0.62, 0.64, 0.58), 0.18)
+				var eps := 0.045
+				var trough_w := FLOWER_W
+				var trough_d := FLOWER_D
+				var bloom_w := FLOWER_W * 0.92
+				var bloom_d := FLOWER_D * 0.88
+				var cx_t: float = 0.0
+				var cz_t: float = 0.0
+				var aw_t: float = 0.0
+				var ad_t: float = 0.0
+				match side:
+					0: cx_t = t_center; cz_t = -trough_d * 0.5 - eps; aw_t = trough_w; ad_t = trough_d
+					1: cx_t = w + trough_d * 0.5 + eps; cz_t = t_center; aw_t = trough_d; ad_t = trough_w
+					2: cx_t = t_center; cz_t = d + trough_d * 0.5 + eps; aw_t = trough_w; ad_t = trough_d
+					_: cx_t = -trough_d * 0.5 - eps; cz_t = t_center; aw_t = trough_d; ad_t = trough_w
+				b.push_layer(tag + ":f%d" % f_idx)
+				b.add_box_rotated(off + Vector3(cx_t, trough_cy, cz_t),
+						Vector3(aw_t, FLOWER_H, ad_t), Basis.IDENTITY, trough_c, false, false, &"", "flowerbox", f_idx)
+				var cx_b: float = 0.0
+				var cz_b: float = 0.0
+				var aw_b: float = 0.0
+				var ad_b: float = 0.0
+				match side:
+					0: cx_b = t_center; cz_b = -bloom_d * 0.5 - eps; aw_b = bloom_w; ad_b = bloom_d
+					1: cx_b = w + bloom_d * 0.5 + eps; cz_b = t_center; aw_b = bloom_d; ad_b = bloom_w
+					2: cx_b = t_center; cz_b = d + bloom_d * 0.5 + eps; aw_b = bloom_w; ad_b = bloom_d
+					_: cx_b = -bloom_d * 0.5 - eps; cz_b = t_center; aw_b = bloom_d; ad_b = bloom_w
+				b.add_box_rotated(off + Vector3(cx_b, bloom_cy, cz_b),
+						Vector3(aw_b, FLOWER_BLOOM_H, ad_b), Basis.IDENTITY, bloom_c, false, false, &"", "flowerbox", f_idx)
+				b.pop_layer()
+
+## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
 ## ENTITY from the CityPlan manifest fills it at runtime.
 static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,

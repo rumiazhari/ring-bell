@@ -191,6 +191,8 @@ func _run_all() -> void:
 		_test_facade_drainpipes())
 	_check("facade shutters: Prague wooden shutters flanking historic windows (deterministic)",
 		_test_facade_shutters())
+	_check("facade flower boxes: Prague terracotta trough + bloom under historic sills (deterministic)",
+		_test_facade_flowerbox())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -802,6 +804,15 @@ func _collect_shutter(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "shutter":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "flowerbox" (Phase AA Prague window flower boxes).
+func _collect_flowerbox(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "flowerbox":
 			continue
 		out.append(s)
 	return out
@@ -1878,6 +1889,158 @@ func _test_facade_shutters() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] shutter: no historic chunk in ring had shutters")
+		return false
+	return true
+
+
+# --- 24k5: Facade flower boxes (Phase AA) — Prague terracotta trough + bloom under sills --
+func _test_facade_flowerbox() -> bool:
+	# Historic long facades should grow flower boxes under window sills:
+	# each qualifying window (per side/floor/window via WorldSeed "flowerbox"
+	# with FLOWER_PROB 0.42) grows a terracotta trough (FLOWER_W 1.38 x FLOWER_H 0.18
+	# x FLOWER_D 0.22, protruding beyond the wall) plus a foliage bloom mass
+	# (FLOWER_W*0.92 x FLOWER_BLOOM_H 0.12 x FLOWER_D*0.88) sitting atop the trough
+	# at sill height. Visual-only, deterministic, gated to historic >=5.0,
+	# always in trough+bloom pairs (even count), each pair centered under a window.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "flowertest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["flowertest", "flowertest2", "flowertest3", "flowertest4", "flowertest5", "flowertest6", "flowertest7", "flowertest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_flowerbox(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] flowerbox: historic building grew no flower boxes (tried 8 ids)")
+		return false
+	var fh: float = float(found_spec["floor_h"])
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] flowerbox: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] flowerbox: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "flowerbox":
+			print("[CityTest] flowerbox: building_id %s != flowerbox" % [s.get("building_id", "")])
+			return false
+		# Must be either trough (FLOWER_H) or bloom (FLOWER_BLOOM_H)
+		var is_trough := absf(sz.y - BuildingBuilder.FLOWER_H) < 0.015
+		var is_bloom := absf(sz.y - BuildingBuilder.FLOWER_BLOOM_H) < 0.015
+		if not is_trough and not is_bloom:
+			print("[CityTest] flowerbox: height %.3f not trough %.3f nor bloom %.3f at %s" % [sz.y, BuildingBuilder.FLOWER_H, BuildingBuilder.FLOWER_BLOOM_H, pos])
+			return false
+		if is_trough:
+			# trough: planar 1.38 vs 0.22, check either orientation
+			var trough_w_ok := absf(sz.x - BuildingBuilder.FLOWER_W) < 0.015 or absf(sz.z - BuildingBuilder.FLOWER_W) < 0.015
+			var trough_d_ok := absf(sz.x - BuildingBuilder.FLOWER_D) < 0.015 or absf(sz.z - BuildingBuilder.FLOWER_D) < 0.015
+			if not trough_w_ok or not trough_d_ok:
+				print("[CityTest] flowerbox trough: size %s not %.2f x %.2f at %s" % [sz, BuildingBuilder.FLOWER_W, BuildingBuilder.FLOWER_D, pos])
+				return false
+		else:
+			# bloom: 1.38*0.92=1.2696 vs 0.22*0.88=0.1936
+			var bloom_w := BuildingBuilder.FLOWER_W * 0.92
+			var bloom_d := BuildingBuilder.FLOWER_D * 0.88
+			var bloom_w_ok := absf(sz.x - bloom_w) < 0.02 or absf(sz.z - bloom_w) < 0.02
+			var bloom_d_ok := absf(sz.x - bloom_d) < 0.02 or absf(sz.z - bloom_d) < 0.02
+			if not bloom_w_ok or not bloom_d_ok:
+				print("[CityTest] flowerbox bloom: size %s not %.2f x %.2f at %s" % [sz, bloom_w, bloom_d, pos])
+				return false
+		# Must sit just outside a wall face (pressed outward 0.045 + half depth)
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+		if not near_wall:
+			print("[CityTest] flowerbox: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Y must be at sill height: trough center = WIN_SILL - FLOWER_H/2, bloom center = WIN_SILL + FLOWER_BLOOM_H/2 above floor
+		var floor_i := int(floor(pos.y / fh + 0.001))
+		var expected_y_trough := float(floor_i) * fh + BuildingBuilder.WIN_SILL - BuildingBuilder.FLOWER_H * 0.5
+		var expected_y_bloom := float(floor_i) * fh + BuildingBuilder.WIN_SILL + BuildingBuilder.FLOWER_BLOOM_H * 0.5
+		if is_trough:
+			if absf(pos.y - expected_y_trough) > 0.02:
+				print("[CityTest] flowerbox trough: y %.3f not at sill %.3f (floor %d) at %s" % [pos.y, expected_y_trough, floor_i, pos])
+				return false
+		else:
+			if absf(pos.y - expected_y_bloom) > 0.02:
+				print("[CityTest] flowerbox bloom: y %.3f not at sill+bloom %.3f (floor %d) at %s" % [pos.y, expected_y_bloom, floor_i, pos])
+				return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] flowerbox: unexpected alpha %f" % col.a)
+			return false
+	# Each qualifying window grows a trough+bloom pair; count must be even and >=2
+	if found.size() % 2 != 0:
+		print("[CityTest] flowerbox: count %d not even (trough+bloom pairs)" % found.size())
+		return false
+	if found.size() < 2:
+		print("[CityTest] flowerbox: count %d < 2" % found.size())
+		return false
+	# Determinism: rebuild identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_flowerbox(b2)
+	if found.size() != got2.size():
+		print("[CityTest] flowerbox: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] flowerbox: nondeterministic box %d" % i)
+			return false
+	# Gating: non-historic building must grow none.
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "flower-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_flowerbox(b3).is_empty():
+		print("[CityTest] flowerbox: non-historic building wrongly grew %d" % _collect_flowerbox(b3).size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "flower-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_flowerbox(b4b).is_empty():
+		print("[CityTest] flowerbox: tiny-facade building wrongly grew flower boxes")
+		return false
+	# Spot check city chunks: historic ring should have flower boxes
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "flowerbox":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] flowerbox: no historic chunk in ring had flower boxes")
 		return false
 	return true
 
