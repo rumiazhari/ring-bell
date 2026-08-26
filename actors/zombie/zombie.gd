@@ -31,6 +31,14 @@ const ROAM_MIN_DIST := 6.0         # road-roam annulus around current spot
 const ROAM_MAX_DIST := 24.0
 const STUCK_TIME := 2.0            # seconds without progress -> new target
 
+# Phase G pack steering: instead of beelining, a chasing zombie hugs its
+# assigned flank while far out and commits to the direct line up close -
+# converging crowds envelop the survivor from both sides instead of forming
+# a single-file conga line behind the leader.
+const FLANK_NEAR := 2.5         # inside this range: straight-line commitment
+const FLANK_FAR := 6.0          # at/above this range: full arc strength
+const FLANK_ARC := 0.85         # max tangential blend (~40 deg off the line)
+
 enum State { WANDER, CHASE, INVESTIGATE }
 
 static var _spawn_counter := 0
@@ -52,6 +60,8 @@ var _roam_rng := RandomNumberGenerator.new()
 var _stuck_timer := 0.0
 var _knockback := Vector3.ZERO         # havoc impulses (explosions, shots)
 var _death_impulse := Vector3.ZERO     # snapshot of the killing blow's push
+var _flank_sign := 1.0                 # preferred approach side (-1 / +1)
+var _flank_strength := 0.7             # 0..1 how hard this zombie arcs wide
 var _model_root: Node3D
 var _animator: HumanoidAnimator
 var _visual_yaw := 0.0                 # smoothed facing from movement
@@ -88,6 +98,19 @@ func _ready() -> void:
 	else:
 		look_rng.randomize()
 	_model_root = HumanoidModel.build_zombie(look_rng)
+
+	# Phase G: flank assignment - deterministic per id for city zombies.
+	if requested_id != &"":
+		_flank_sign = flank_sign_for(zombie_id)
+		var frng := RandomNumberGenerator.new()
+		frng.seed = WorldSeed.combine([
+				WorldSeed.str_hash("zflankstr"),
+				WorldSeed.str_hash(str(zombie_id))])
+		_flank_strength = frng.randf_range(0.55, 1.0)
+	else:
+		_flank_sign = 1.0 if randf() < 0.5 else -1.0
+		_flank_strength = randf_range(0.55, 1.0)
+
 	_animator = HumanoidAnimator.new()
 	add_child(_animator)
 	_animator.add_child(_model_root)
@@ -108,6 +131,16 @@ func _ready() -> void:
 
 func take_damage(amount: float, source_id: StringName) -> void:
 	health.damage(amount, source_id)
+
+
+## Deterministic per-id flank side: the same city id hugs the same side of
+## its prey every run (like rot/look), while mixed ids in a crowd split
+## around the survivor from BOTH sides - that is what makes packs corner.
+static func flank_sign_for(id: StringName) -> float:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = WorldSeed.combine([
+			WorldSeed.str_hash("zflank"), WorldSeed.str_hash(str(id))])
+	return 1.0 if rng.randf() < 0.5 else -1.0
 
 
 ## Havoc physics: radial impulses from explosions and heavy hits.
@@ -239,8 +272,18 @@ func _do_chase() -> void:
 	to_target.y = 0.0
 	var distance := to_target.length()
 	if distance > ATTACK_RANGE:
-		velocity.x = to_target.x / distance * SPEED_CHASE
-		velocity.z = to_target.z / distance * SPEED_CHASE
+		var dir := Vector3(to_target.x / distance, 0.0, to_target.z / distance)
+		# Phase G pack steering: blend the direct line with a tangential
+		# drift toward this zombie's assigned flank. Far out the arc is at
+		# full strength (scaled by per-zombie boldness); inside FLANK_NEAR
+		# it fades to zero so the kill lunge stays a straight commitment.
+		var arc := clampf(inverse_lerp(FLANK_NEAR, FLANK_FAR, distance),
+				0.0, 1.0)
+		arc *= _flank_strength * FLANK_ARC
+		var steer := dir + Vector3(-dir.z, 0.0, dir.x) * (_flank_sign * arc)
+		var steer_xz := steer.normalized()
+		velocity.x = steer_xz.x * SPEED_CHASE
+		velocity.z = steer_xz.z * SPEED_CHASE
 	else:
 		velocity.x = 0.0
 		velocity.z = 0.0

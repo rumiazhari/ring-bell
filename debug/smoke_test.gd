@@ -385,6 +385,72 @@ func _run_all() -> void:
 			int(found["retail"]["beds"]) == 0,
 			str(found["retail"]))
 
+	# --- 7d. Phase G: zombie pack steering (flank arc + deterministic sides) ---
+	# Pure math checks on velocity steering (no physics tick needed).
+	var ztest := Zombie.new()
+	get_tree().current_scene.add_child(ztest)
+	ztest.set_physics_process(false)
+	ztest.global_position = Vector3(-600.0, 0.3, 0.0)
+	var survivor := player
+	ztest.target = survivor
+	ztest.state = Zombie.State.CHASE
+
+	# Far (8 m) -> lateral arc component non-zero, still closing.
+	survivor.global_position = ztest.global_position + Vector3(8.0, 0.0, 0.0)
+	ztest._do_chase()
+	var v_far := Vector3(ztest.velocity.x, 0.0, ztest.velocity.z)
+	var los_far := Vector3(1.0, 0.0, 0.0)
+	var lateral_far := absf(v_far.dot(Vector3(0.0, 0.0, 1.0)))
+	_check("far chase arcs off the direct line",
+		lateral_far > 0.05,
+		"lateral=%.3f" % lateral_far)
+	_check("far arc still closes on survivor",
+		v_far.dot(los_far) > 0.0,
+		"forward=%.3f" % v_far.dot(los_far))
+
+	# Near (2.0 m, > ATTACK_RANGE 1.25 but < FLANK_NEAR 2.5) -> pure LOS.
+	survivor.global_position = ztest.global_position + Vector3(2.0, 0.0, 0.0)
+	ztest._do_chase()
+	var v_near := Vector3(ztest.velocity.x, 0.0, ztest.velocity.z)
+	var lateral_near := absf(v_near.dot(Vector3(0.0, 0.0, 1.0)))
+	_check("near chase commits straight to target",
+		lateral_near < 0.001,
+		"lateral=%.6f" % lateral_near)
+
+	# Determinism: same id twice -> same sign.
+	var sign_a := Zombie.flank_sign_for(&"z_gtest_001")
+	var sign_b := Zombie.flank_sign_for(&"z_gtest_001")
+	_check("flank_sign_for deterministic per id",
+		sign_a == sign_b, "a=%.1f b=%.1f" % [sign_a, sign_b])
+
+	# Coverage: sample many ids -> both sides appear.
+	var has_pos := false
+	var has_neg := false
+	for i in 24:
+		var s := Zombie.flank_sign_for(&"zz_%d" % i)
+		if s > 0.0:
+			has_pos = true
+		else:
+			has_neg = true
+	_check("mixed city ids split around survivor (both sides)",
+		has_pos and has_neg,
+		"pos=%s neg=%s" % [has_pos, has_neg])
+
+	# Instance agreement: seeded zombie matches static helper.
+	ActorRegistry.unregister(ztest.zombie_id)
+	ztest.remove_from_group(&"zombies")
+	ztest.queue_free()
+	var z2 := Zombie.new()
+	z2.requested_id = &"z_gtest_002"
+	get_tree().current_scene.add_child(z2)
+	z2.set_physics_process(false)
+	_check("id-seeded zombie agrees with static helper",
+		z2._flank_sign == Zombie.flank_sign_for(&"z_gtest_002"),
+		"instance=%.1f static=%.1f" % [z2._flank_sign, Zombie.flank_sign_for(&"z_gtest_002")])
+	ActorRegistry.unregister(z2.zombie_id)
+	z2.remove_from_group(&"zombies")
+	z2.queue_free()
+
 	# --- 8. Save/load preserves death + clock -------------------------------
 	var saved_day := GameClock.get_day()
 	GameClock.advance(500.0)
