@@ -1,24 +1,45 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 13
+LAST_ITER: 14
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase D slice 3 COMPLETE: shopfront dressing (_shopfront) now gated to room_type=="retail". Ground-floor signboards only appear on retail buildings; residential homes no longer wear signboards.
-Gate ALL GREEN: citytest / cityruntime / smoke, all "finished with 0 failure(s)".
+Phase D slice 4 COMPLETE: flat-roof prop dressing (_roof_props). Walkable
+flat decks now carry seeded AC condensers / water tanks / vent clusters /
+antenna masts - all DESTRUCTIBLE boxes (standable cover + fresh ledge-grab
+lips for Phase E parkour), placed inside the parapet inset with a keep-out
+ring around the stair bulkhead so the roof exit never blocks. Pitched/attic
+roofs stay bare.
+Gate ALL GREEN: citytest (incl. new roofprops contract check) / smoke /
+cityruntime, all "finished with 0 failure(s)".
 
 ## Backlog
-1. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
-   readout; or zombie chase steering so NPCs corner survivors toward edges.
-   Gate: smoke. [DONE in iter 12]
-2. Phase D slice 3 (idea): ground-floor shopfront dressing (_shopfront) is
-   currently applied to ALL buildings when attic+long facade - gate it to
-   room_type=="retail" so homes stop wearing signboards. Gate: citytest. [DONE in iter 13]
+1. Phase G idea: zombie chase steering so NPCs corner survivors toward
+   edges/blocks instead of pure straight-line pursuit. Gate: smoke.
+2. Phase D slice 5 idea: rooftop variety pass - retail roofs get billboards,
+   residential gets laundry lines/pigeon coops (reuse _roof_props seeding).
+   Gate: citytest.
 3. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 14 (2026-08-26): Phase D slice 4 LANDED - flat-roof prop dressing.
+  building_builder.gd: _roof() else-branch now calls new _roof_props() -
+  WorldSeed.rng_for("roofprops", [wall, roof, round(d*10)]) picks 1-4 spots
+  (budget = deck area/18, cap 4) via OBB rejection sampling (reuses
+  _rect_obb/_obb_overlap); footprints confined to Rect2 inset WALL_T+0.55
+  from the parapet line, excluding zone.grow(1.2) bulkhead ring; emitters
+  _rp_ac_unit (steel 0.84 m + fan cap), _rp_water_tank (concrete plinth +
+  1.4 m steel tank), _rp_vents (2 concrete pipes), _rp_antenna (2.3 m mast +
+  crossbar). debug/world_test.gd: +1 check "_test_roof_props" - synthetic
+  12x10 3-storey flat spec built straight through BuildingBuilder asserts
+  >=1 colliding roof-layer prop above deck, every prop fully inside usable
+  inset AND clear of keep-out, rebuild determinism (identical pos+size),
+  and attic variant stays undressed; helper _collect_roof_props filters
+  layer ":roof" + collide + above-deck + inside-region specs. Gate ALL
+  GREEN: --citytest 35 / --smoke 41 / --cityruntime 26, all "finished with
+  0 failure(s)".
 - iter 13 (2026-08-26): Phase D slice 3 LANDED - shopfront dressing gated to retail room_type.
   building_builder.gd: _shopfront() now only called when style.room_type == "retail"
   (checked via str(style.get("room_type", "residential")) == "retail").

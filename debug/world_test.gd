@@ -151,6 +151,102 @@ func _run_all() -> void:
 	_check("intra-block passages pierce both fronts unobstructed",
 			_test_passages())
 	_check("interior probe detection + facade sector math", _test_interior_probe())
+	_check("flat-roof props placed, bounded, deterministic; attic decks bare",
+			_test_roof_props())
+
+
+# --- 24: Flat-roof prop dressing -----------------------------------------------
+func _test_roof_props() -> bool:
+	# Synthetic 12 x 10 m, 3-storey flat-roofed building built straight
+	# through BuildingBuilder (no city-plan dependency). Contract:
+	#   >=1 colliding prop box stands above the deck,
+	#   every prop is fully inside the parapet-inset usable area and clear
+	#     of the bulkhead keep-out ring (roof exit never blocked),
+	#   rebuild is byte-identical (seeded placement),
+	#   an attic variant dresses NOTHING (pitched shell has no deck).
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "rooftest",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var total_h := 9.0
+	var inset := 0.9   # WALL_T (0.35) + 0.55 dressing inset
+	var usable := Rect2(inset, inset, 12.0 - 2.0 * inset, 10.0 - 2.0 * inset)
+	var keepout: Rect2 = BuildingBuilder._zone_rect(
+			(base["rect"] as Rect2).size, float(base["floor_h"]), 0).grow(1.2)
+
+	var b_a := MeshBatcher.new()
+	BuildingBuilder.build(b_a, base)
+	var props_a: Array = _collect_roof_props(b_a, total_h, usable, keepout)
+	if props_a.is_empty():
+		print("[CityTest] roofprops: no prop boxes found on flat deck")
+		return false
+
+	for p: Dictionary in props_a:
+		var sz: Vector3 = p["size"]
+		var pos: Vector3 = p["pos"]
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5, sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), usable):
+			print("[CityTest] roofprops: prop outside usable deck %s" % [r])
+			return false
+		if r.intersects(keepout):
+			print("[CityTest] roofprops: prop inside bulkhead keep-out %s"
+					% [r])
+			return false
+
+	var b_b := MeshBatcher.new()
+	BuildingBuilder.build(b_b, base)
+	var props_b: Array = _collect_roof_props(b_b, total_h, usable, keepout)
+	if props_a.size() != props_b.size():
+		print("[CityTest] roofprops: nondeterministic count %d vs %d"
+				% [props_a.size(), props_b.size()])
+		return false
+	for i in props_a.size():
+		var pa: Dictionary = props_a[i]
+		var pb: Dictionary = props_b[i]
+		if pa["pos"] != pb["pos"] or pa["size"] != pb["size"]:
+			print("[CityTest] roofprops: nondeterministic box %d" % i)
+			return false
+
+	var attic := {"rect": base["rect"], "floor_h": base["floor_h"],
+			"floors": base["floors"], "id": "rooftest-attic",
+			"door_edge": 0,
+			"style": {"wall": 1, "roof": 2, "attic": true}}
+	var b_c := MeshBatcher.new()
+	BuildingBuilder.build(b_c, attic)
+	if not _collect_roof_props(b_c, total_h, usable, keepout).is_empty():
+		print("[CityTest] roofprops: attic shell must stay undressed")
+		return false
+	return true
+
+
+## Roof-layer colliding specs strictly above the deck and inside the dressed
+## region (parapet/bulkhead geometry sits on the wall line or in the zone).
+func _collect_roof_props(b: MeshBatcher, total_h: float, usable: Rect2,
+		keepout: Rect2) -> Array:
+	var out: Array = []
+	for s in b.specs():
+		if String(s["layer"]) != "rooftest:roof" \
+				and String(s["layer"]) != "rooftest-attic:roof":
+			continue
+		if not bool(s["collide"]):
+			continue
+		var pos: Vector3 = s["pos"]
+		if pos.y <= total_h + 0.05:
+			continue
+		var sz: Vector3 = s["size"]
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5, sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), usable):
+			continue
+		if r.intersects(keepout):
+			continue
+		out.append(s)
+	return out
 
 
 # --- 11: Slab coverage ---------------------------------------------------------

@@ -1130,6 +1130,7 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 		else:
 			b.add_roof_visual_box(off + Vector3(w * 0.5, total_h + 0.02, d * 0.5),
 					Vector3(w - WALL_T, 0.04, d - WALL_T), roof_c)
+		_roof_props(b, off, fp, style, total_h, zone, has_stairs)
 
 
 ## Flat-roof dressing: thin VISUAL membrane around the shaft hole (no
@@ -1142,6 +1143,101 @@ static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 		b.add_roof_visual_box(
 				off + Vector3(r.get_center().x, y, r.get_center().y),
 				Vector3(r.size.x, 0.04, r.size.y), color)
+
+
+## Flat-roof prop dressing (Phase D slice 4): AC condensers, a water tank,
+## vent pipes and an antenna mast scattered over the walkable roof deck.
+## Props are DESTRUCTIBLE boxes - standable cover that doubles as fresh
+## ledge-grab lips for the Phase E parkour system. Placement is deterministic
+## (WorldSeed.rng_for, same pattern as the chimney), confined to the deck
+## area inset from the parapet line, and keeps a clear approach ring around
+## the stair bulkhead so the roof exit never gets blocked. Pitched roofs
+## carry no walkable deck and skip dressing entirely.
+static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
+		style: Dictionary, total_h: float, zone: Rect2, has_stairs: bool) -> void:
+	var w := fp.size.x
+	var d := fp.size.y
+	var inset := WALL_T + 0.55   # clear of the parapet inner face
+	var usable := Rect2(inset, inset,
+			maxf(w - 2.0 * inset, 0.0), maxf(d - 2.0 * inset, 0.0))
+	if usable.size.x < 1.4 or usable.size.y < 1.4:
+		return   # deck too small to dress safely
+	var keepout := zone.grow(1.2) if has_stairs else Rect2()
+	var rng := WorldSeed.rng_for("roofprops",
+			[int(style["wall"]), int(style["roof"]), int(round(d * 10))])
+	var budget := mini(int(usable.get_area() / 18.0), 4)
+	var target := 1 + rng.randi_range(0, maxi(budget - 1, 0))
+	var placed: Array[Dictionary] = []
+	var attempts := 0
+	while placed.size() < target and attempts < 40:
+		attempts += 1
+		var kind := rng.randi_range(0, 3)
+		var footprint := Vector2(0.95, 0.75)      # AC condenser
+		if kind == 1:
+			footprint = Vector2(1.25, 1.25)       # water tank
+		elif kind == 2:
+			footprint = Vector2(0.55, 0.55)       # vent cluster
+		elif kind == 3:
+			footprint = Vector2(0.35, 0.35)       # antenna base
+		var px := rng.randf_range(usable.position.x,
+				maxf(usable.end.x - footprint.x, usable.position.x))
+		var pz := rng.randf_range(usable.position.y,
+				maxf(usable.end.y - footprint.y, usable.position.y))
+		var r := Rect2(px, pz, footprint.x, footprint.y)
+		if keepout.size.x > 0.0 and keepout.size.y > 0.0 \
+				and r.intersects(keepout):
+			continue
+		var obb := _rect_obb(r)
+		var clash := false
+		for o in placed:
+			if _obb_overlap(obb, o):
+				clash = true
+				break
+		if clash:
+			continue
+		placed.append(obb)
+		var y := total_h + 0.04   # on top of the membrane
+		match kind:
+			0: _rp_ac_unit(b, off, r, y)
+			1: _rp_water_tank(b, off, r, y)
+			2: _rp_vents(b, off, r, y)
+			3: _rp_antenna(b, off, r, y)
+
+
+static func _rp_ac_unit(b: MeshBatcher, off: Vector3, r: Rect2,
+		y: float) -> void:
+	var c := r.get_center()
+	b.add_destructible_box(off + Vector3(c.x, y + 0.42, c.y),
+			Vector3(r.size.x, 0.84, r.size.y), Color("b8bcc2"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 0.90, c.y),
+			Vector3(r.size.x * 0.7, 0.12, r.size.y * 0.7),
+			Color("6f767c"), &"steel")
+
+
+static func _rp_water_tank(b: MeshBatcher, off: Vector3, r: Rect2,
+		y: float) -> void:
+	var c := r.get_center()
+	b.add_destructible_box(off + Vector3(c.x, y + 0.14, c.y),
+			Vector3(r.size.x * 0.8, 0.28, r.size.y * 0.8), PLINTH_COLOR,
+			&"concrete")
+	b.add_destructible_box(off + Vector3(c.x, y + 0.98, c.y),
+			Vector3(r.size.x, 1.4, r.size.y), Color("3e5a6e"), &"steel")
+
+
+static func _rp_vents(b: MeshBatcher, off: Vector3, r: Rect2, y: float) -> void:
+	var c := r.get_center()
+	b.add_destructible_box(off + Vector3(c.x - 0.12, y + 0.45, c.y - 0.10),
+			Vector3(0.24, 0.9, 0.24), PLINTH_COLOR.darkened(0.15), &"concrete")
+	b.add_destructible_box(off + Vector3(c.x + 0.13, y + 0.32, c.y + 0.12),
+			Vector3(0.20, 0.64, 0.20), PLINTH_COLOR.darkened(0.15), &"concrete")
+
+
+static func _rp_antenna(b: MeshBatcher, off: Vector3, r: Rect2, y: float) -> void:
+	var c := r.get_center()
+	b.add_destructible_box(off + Vector3(c.x, y + 1.15, c.y),
+			Vector3(0.12, 2.3, 0.12), Color("565d63"), &"steel")
+	b.add_destructible_box(off + Vector3(c.x, y + 1.95, c.y),
+			Vector3(0.90, 0.07, 0.07), Color("565d63"), &"steel")
 
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
