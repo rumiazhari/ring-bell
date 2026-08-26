@@ -152,6 +152,13 @@ const FLOWER_BLOOM_H := 0.12     # foliage/bloom mass height atop trough
 const FLOWER_MIN_SIDE := 5.0     # skip on facades shorter than this
 const FLOWER_PROB := 0.42        # chance a historic window grows a sill flower box
 
+# --- Phase AB: Prague window stone lintels (header trim above historic windows) --
+const WINDOW_TRIM_T := 0.05            # thin stone header thickness protruding beyond wall
+const WINDOW_TRIM_W_EXTRA := 0.26      # width beyond WIN_W (WIN_W 1.15 -> 1.41)
+const WINDOW_TRIM_H := 0.14            # header height
+const WINDOW_TRIM_MIN_SIDE := 5.0      # skip on facades shorter than this
+const WINDOW_TRIM_PROB := 0.58         # chance a historic window grows a stone lintel
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -367,6 +374,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# via WorldSeed flowerbox, gated to historic + long facade. Gives the
 	# Prague core its lived-in sill gardens without touching collision.
 	_facade_flower_boxes(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AB: Prague window stone lintels — header trim above historic windows,
+	# visual-only thin stone slabs pressed just outside the wall above each
+	# window, deterministic per (building, side, floor, window) via WorldSeed
+	# window_trim, gated to historic + long facade. Gives the Prague core its
+	# classic stone window headers without touching collision.
+	_facade_window_trim(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1164,6 +1178,59 @@ static func _facade_flower_boxes(b: MeshBatcher, off: Vector3, w: float, d: floa
 					_: cx_b = -bloom_d * 0.5 - eps; cz_b = t_center; aw_b = bloom_d; ad_b = bloom_w
 				b.add_box_rotated(off + Vector3(cx_b, bloom_cy, cz_b),
 						Vector3(aw_b, FLOWER_BLOOM_H, ad_b), Basis.IDENTITY, bloom_c, false, false, &"", "flowerbox", f_idx)
+				b.pop_layer()
+
+## Phase AB: Prague window stone lintels — header trim above historic windows.
+## Visual-only thin stone slabs (WINDOW_TRIM_H 0.14 x WINDOW_TRIM_T 0.05,
+## width WIN_W 1.15 + 0.26 = 1.41) pressed just outside the wall above each
+## window opening. Deterministic per (building, side, floor, window) via
+## WorldSeed "window_trim", gated to historic + long facade (>=5.0).
+## Each qualifying window rolls WINDOW_TRIM_PROB 0.58 independently; on success
+## it grows a lintel stone header above the window (gap 0.02 above the glass
+## top), visual-only, no collision. Mirrors the window layout computed by
+## _facade_with_openings so headers sit exactly above glass.
+static func _facade_window_trim(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	var lintel_w := WIN_W + WINDOW_TRIM_W_EXTRA
+	for f_idx in n:
+		var y0 := f_idx * fh
+		# lintel sits just above the window header with a 0.02 gap
+		var cy := y0 + WIN_SILL + WIN_H + WINDOW_TRIM_H * 0.5 + 0.02
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < WINDOW_TRIM_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(t)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("window_trim", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= WINDOW_TRIM_PROB:
+					continue
+				var stone_c := Color("9e968a").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.02)
+				stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.10)
+				var eps := 0.045
+				var cx: float = 0.0
+				var cz: float = 0.0
+				var aw: float = 0.0
+				var ad: float = 0.0
+				match side:
+					0: cx = t_center; cz = -WINDOW_TRIM_T * 0.5 - eps; aw = lintel_w; ad = WINDOW_TRIM_T
+					1: cx = w + WINDOW_TRIM_T * 0.5 + eps; cz = t_center; aw = WINDOW_TRIM_T; ad = lintel_w
+					2: cx = t_center; cz = d + WINDOW_TRIM_T * 0.5 + eps; aw = lintel_w; ad = WINDOW_TRIM_T
+					_: cx = -WINDOW_TRIM_T * 0.5 - eps; cz = t_center; aw = WINDOW_TRIM_T; ad = lintel_w
+				b.push_layer(tag + ":f%d" % f_idx)
+				b.add_box_rotated(off + Vector3(cx, cy, cz),
+						Vector3(aw, WINDOW_TRIM_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "trim", f_idx)
 				b.pop_layer()
 
 ## One facade:

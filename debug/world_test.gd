@@ -193,6 +193,8 @@ func _run_all() -> void:
 		_test_facade_shutters())
 	_check("facade flower boxes: Prague terracotta trough + bloom under historic sills (deterministic)",
 		_test_facade_flowerbox())
+	_check("facade window trim: Prague stone lintels above historic windows (deterministic)",
+		_test_facade_window_trim())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -813,6 +815,15 @@ func _collect_flowerbox(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "flowerbox":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "trim" (Phase AB Prague window stone lintels).
+func _collect_trim(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "trim":
 			continue
 		out.append(s)
 	return out
@@ -2041,6 +2052,137 @@ func _test_facade_flowerbox() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] flowerbox: no historic chunk in ring had flower boxes")
+		return false
+	return true
+
+
+# --- 24k6: Facade window trim (Phase AB) — Prague stone lintels above windows --
+func _test_facade_window_trim() -> bool:
+	# Historic long facades should grow stone lintel headers above window tops:
+	# each qualifying window (per side/floor/window via WorldSeed "window_trim"
+	# with WINDOW_TRIM_PROB 0.58) grows a stone header (WIN_W+0.26=1.41 x WINDOW_TRIM_H 0.14
+	# x WINDOW_TRIM_T 0.05, thin slab protruding beyond the wall) sitting just
+	# above the window (gap 0.02 above glass top) at y = floor*FH+WIN_SILL+WIN_H+0.02+H/2.
+	# Visual-only, deterministic, gated to historic >=5.0.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "trimtest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["trimtest", "trimtest2", "trimtest3", "trimtest4", "trimtest5", "trimtest6", "trimtest7", "trimtest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_trim(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] trim: historic building grew no window trim (tried 8 ids)")
+		return false
+	var fh: float = float(found_spec["floor_h"])
+	var lintel_w := BuildingBuilder.WIN_W + BuildingBuilder.WINDOW_TRIM_W_EXTRA
+	var trim_h := BuildingBuilder.WINDOW_TRIM_H
+	var trim_t := BuildingBuilder.WINDOW_TRIM_T
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] trim: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] trim: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "trim":
+			print("[CityTest] trim: building_id %s != trim" % [s.get("building_id", "")])
+			return false
+		if absf(sz.y - trim_h) > 0.015:
+			print("[CityTest] trim: height %.3f != %.3f at %s" % [sz.y, trim_h, pos])
+			return false
+		# planar dimensions: width lintel_w vs thickness trim_t
+		var w_ok := absf(sz.x - lintel_w) < 0.015 or absf(sz.z - lintel_w) < 0.015
+		var t_ok := absf(sz.x - trim_t) < 0.015 or absf(sz.z - trim_t) < 0.015
+		if not w_ok or not t_ok:
+			print("[CityTest] trim: size %s not %.2f x %.2f at %s" % [sz, lintel_w, trim_t, pos])
+			return false
+		# Must sit just outside a wall face
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+		if not near_wall:
+			print("[CityTest] trim: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Y must be just above window top: floor*FH + WIN_SILL + WIN_H + 0.02 + H/2
+		var floor_i := int(floor(pos.y / fh + 0.001))
+		var expected_y := float(floor_i) * fh + BuildingBuilder.WIN_SILL + BuildingBuilder.WIN_H + 0.02 + trim_h * 0.5
+		if absf(pos.y - expected_y) > 0.025:
+			print("[CityTest] trim: y %.3f != expected %.3f (floor %d) at %s" % [pos.y, expected_y, floor_i, pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] trim: unexpected alpha %f" % col.a)
+			return false
+	if found.size() < 1:
+		print("[CityTest] trim: count %d < 1" % found.size())
+		return false
+	# Determinism: rebuild identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_trim(b2)
+	if found.size() != got2.size():
+		print("[CityTest] trim: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] trim: nondeterministic box %d" % i)
+			return false
+	# Gating: non-historic building must grow none.
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "trim-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_trim(b3).is_empty():
+		print("[CityTest] trim: non-historic building wrongly grew %d" % _collect_trim(b3).size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "trim-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_trim(b4b).is_empty():
+		print("[CityTest] trim: tiny-facade building wrongly grew trim")
+		return false
+	# Spot check city chunks: historic ring should have trims
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "trim":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] trim: no historic chunk in ring had trim")
 		return false
 	return true
 
