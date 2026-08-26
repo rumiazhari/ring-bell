@@ -1,22 +1,22 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 29
+LAST_ITER: 30
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 29: Phase O construction scaffolding on plaza-adjacent historic facades — a
-steel pole cage + plank decks (standable, tagged "scaffold") running the full
-facade height, giving AC mid-height traversal; deterministic, gated to historic
-district + plaza adjacency + multi-storey + long facade (SCAFF_PROB 0.45,
-SCAFF_MIN_SIDE 6.0). CityPlan now emits district + plaza_adjacent per spec so
-the gate is plan-true, MeshBatcher stamps vox_tag "scaffold" for the parkour
-controller, planks at each storey (wood, 0.10 thick) + two steel poles per
-storey provide both standable and ledge-grab geometry. Citytest gained
-`_test_scaffolds` (historic+plaza+multistorey+protrusion+plank/pole mats,
-determinism, 4 negative gates).
+Iter 30: Phase P facade cornices + pilasters — horizontal stone cornice bands
+at each storey junction (grabbable ledge, CORN_H 0.18, CORN_PROJ 0.26) +
+segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ
+0.24, PIL_SPACING 3.2), both stone/concrete, colliding, tagged
+"cornice"/"pilaster", deterministic per (side, building), gated to historic
+multi-storey + long facade (CORN_MIN_SIDE/PIL_MIN_SIDE 6.0, CORN_PROB 0.62,
+PIL_PROB 0.58). MeshBatcher stamps vox_tag cornice/pilaster for parkour,
+citytest gained `_test_cornices_pilasters` (protrusion, material, thickness,
+determinism, 3 negative gates).
 
 ## This iteration
+[autopilot] iter 30: Phase P facade cornices + pilasters — BuildingBuilder grows horizontal stone cornice bands at each storey junction (CORN_H 0.18, CORN_PROJ 0.26, concrete, tagged "cornice") + segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ 0.24, concrete, tagged "pilaster") on historic multi-storey long facades; deterministic per (side, building), gated to historic + multi-storey + long facade. MeshBatcher now carries vox_tag cornice/pilaster. citytest + smoke green (0 failures); 1 new assertion passes ("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades").
 [autopilot] iter 29: Phase O construction scaffold — CityPlan emits district + plaza_adjacent (historic + plaza-ring check), BuildingBuilder grows a full-height steel cage + wood plank decks (tagged "scaffold", SCAFF_PROJ 1.0, SCAFF_W 3.4) on one shuffled long facade of plaza-adjacent historic buildings; planks at each storey provide mid-height AC traversal. MeshBatcher now carries vox_tag scaffold. citytest + smoke green (0 failures); 1 new assertion passes ("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades").
 [autopilot] iter 28: Phase N awning->balcony chain — BuildingBuilder now
 hosts balconies on the street wall at f>=1 (same BAL_PROB, enabling
@@ -123,11 +123,17 @@ at dense roof packing. citytest + smoke green (0 failures).
     — steel pole cage + plank decks (standable) tagged "scaffold",
     deterministic, gated to plaza adjacency; adds mid-height AC
     scaffolding traversal. Gate: --citytest. [COMPLETE in iter 29]
-13. Phase P idea: facade cornices + pilasters — horizontal stone cornice
+13. [Done] Phase P idea: facade cornices + pilasters — horizontal stone cornice
     bands + vertical pilaster strips (grabbable ledge network) on historic
     multi-storey facades, tagged "cornice"/"pilaster", deterministic,
     gated to historic multi-storey + long facade; completes the AC
     "ledges/pillars" parkour vocabulary. Gate: --citytest.
+    [COMPLETE in iter 30]
+14. Phase Q idea: post-apoc facade decay pass — graffiti/decal layers, rust
+    streaks, overgrowth/moss on historic cornices/pilasters, broken windows
+    variant; visual-only, deterministic, gated to historic district; brings
+    the Prague core out of white-dummy into the directive's eerie decayed
+    aesthetic. Gate: --citytest (determinism + gating).
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

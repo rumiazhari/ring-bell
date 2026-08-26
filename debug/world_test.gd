@@ -169,6 +169,8 @@ func _run_all() -> void:
 		_test_awnings())
 	_check("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades",
 		_test_scaffolds())
+	_check("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades",
+		_test_cornices_pilasters())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -709,6 +711,27 @@ func _collect_scaffold(b: MeshBatcher) -> Array:
 		out.append(s)
 	return out
 
+## Colliding boxes tagged "cornice" / "pilaster" (Phase P facade detailing).
+func _collect_cornice(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if not bool(s.get("collide", false)):
+			continue
+		if String(s.get("building_id", "")) != "cornice":
+			continue
+		out.append(s)
+	return out
+
+func _collect_pilaster(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if not bool(s.get("collide", false)):
+			continue
+		if String(s.get("building_id", "")) != "pilaster":
+			continue
+		out.append(s)
+	return out
+
 
 # --- 24e: Facade balconies (Phase K) ------------------------------------------
 func _test_balconies() -> bool:
@@ -1007,6 +1030,153 @@ func _test_scaffolds() -> bool:
 		return false
 	return true
 
+
+
+# --- 24h: Facade cornices + pilasters (Phase P) --------------------------------
+func _test_cornices_pilasters() -> bool:
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 4,
+		"id": "corpiltest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found_corn: Array = []
+	var found_pil: Array = []
+	for try_id in ["corpiltest", "corpiltest2", "corpiltest3", "corpiltest4", "corpiltest5"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got_c := _collect_cornice(b_try)
+		var got_p := _collect_pilaster(b_try)
+		if not got_c.is_empty() and not got_p.is_empty():
+			found_spec = s
+			found_corn = got_c
+			found_pil = got_p
+			break
+	if found_corn.is_empty() or found_pil.is_empty():
+		print("[CityTest] cornice/pilaster: historic multi-storey building grew no pair (tried 5 ids)")
+		return false
+	var corn_h := BuildingBuilder.CORN_H
+	var corn_proj := BuildingBuilder.CORN_PROJ
+	for s: Dictionary in found_corn:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y - sz.y * 0.5 < 0.5:
+			print("[CityTest] cornice: box too low at %s" % [pos])
+			return false
+		if pos.y + sz.y * 0.5 > 12.0 + 0.5:
+			print("[CityTest] cornice: box above roof at %s" % [pos])
+			return false
+		var ox: float = pos.x - sz.x * 0.5
+		var ox2: float = pos.x + sz.x * 0.5
+		var oz: float = pos.z - sz.z * 0.5
+		var oz2: float = pos.z + sz.z * 0.5
+		var beyond := ox < -0.05 or ox2 > 12.0 + 0.05 or oz < -0.05 or oz2 > 10.0 + 0.05
+		if not beyond:
+			print("[CityTest] cornice: box does not protrude past wall at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"concrete":
+			print("[CityTest] cornice: material %s != concrete" % [s["material"]])
+			return false
+		if absf(sz.y - corn_h) > 0.02:
+			print("[CityTest] cornice: height %f != %f" % [sz.y, corn_h])
+			return false
+		var is_proj_x := absf(sz.x - corn_proj) < 0.02
+		var is_proj_z := absf(sz.z - corn_proj) < 0.02
+		if not (is_proj_x or is_proj_z):
+			print("[CityTest] cornice: planar projection %s != %f" % [sz, corn_proj])
+			return false
+	if found_corn.size() < 4:
+		print("[CityTest] cornice: expected >=4 bands (one per storey junction), got %d" % found_corn.size())
+		return false
+	var pil_w := BuildingBuilder.PIL_W
+	var pil_proj := BuildingBuilder.PIL_PROJ
+	for s: Dictionary in found_pil:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y - sz.y * 0.5 < -0.1:
+			print("[CityTest] pilaster: box below grade at %s" % [pos])
+			return false
+		if pos.y + sz.y * 0.5 > 12.0 + 0.5:
+			print("[CityTest] pilaster: box above roof at %s" % [pos])
+			return false
+		var ox: float = pos.x - sz.x * 0.5
+		var ox2: float = pos.x + sz.x * 0.5
+		var oz: float = pos.z - sz.z * 0.5
+		var oz2: float = pos.z + sz.z * 0.5
+		var beyond := ox < -0.05 or ox2 > 12.0 + 0.05 or oz < -0.05 or oz2 > 10.0 + 0.05
+		if not beyond:
+			print("[CityTest] pilaster: box does not protrude past wall at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"concrete":
+			print("[CityTest] pilaster: material %s != concrete" % [s["material"]])
+			return false
+		var is_w_x := absf(sz.x - pil_w) < 0.02
+		var is_w_z := absf(sz.z - pil_w) < 0.02
+		if not (is_w_x or is_w_z):
+			print("[CityTest] pilaster: width %s != %f" % [sz, pil_w])
+			return false
+		var is_proj2_x := absf(sz.x - pil_proj) < 0.02
+		var is_proj2_z := absf(sz.z - pil_proj) < 0.02
+		if not (is_proj2_x or is_proj2_z):
+			print("[CityTest] pilaster: projection %s != %f" % [sz, pil_proj])
+			return false
+		if absf(sz.y - (3.0 - 0.02)) > 0.02:
+			print("[CityTest] pilaster: segment height %f != 2.98" % [sz.y])
+			return false
+	if found_pil.size() < 4:
+		print("[CityTest] pilaster: expected >=4 segments (at least one pillar x 4 storeys), got %d" % found_pil.size())
+		return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got_c2 := _collect_cornice(b2)
+	var got_p2 := _collect_pilaster(b2)
+	if found_corn.size() != got_c2.size() or found_pil.size() != got_p2.size():
+		print("[CityTest] cornice/pilaster: nondeterministic counts cornice %d vs %d / pilaster %d vs %d" % [found_corn.size(), got_c2.size(), found_pil.size(), got_p2.size()])
+		return false
+	for i in found_corn.size():
+		if found_corn[i]["pos"] != got_c2[i]["pos"] or found_corn[i]["size"] != got_c2[i]["size"]:
+			print("[CityTest] cornice: nondeterministic box %d" % i)
+			return false
+	for i in found_pil.size():
+		if found_pil[i]["pos"] != got_p2[i]["pos"] or found_pil[i]["size"] != got_p2[i]["size"]:
+			print("[CityTest] pilaster: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "corpil-nonhist"
+	nonhist["district"] = "outer"
+	nonhist["plaza_adjacent"] = true
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_cornice(b3).is_empty() or not _collect_pilaster(b3).is_empty():
+		print("[CityTest] cornice/pilaster: non-historic building wrongly grew one")
+		return false
+	var one := base.duplicate(true)
+	one["id"] = "corpil-onestorey"
+	one["floors"] = 1
+	var b5 := MeshBatcher.new()
+	BuildingBuilder.build(b5, one)
+	if not _collect_cornice(b5).is_empty() or not _collect_pilaster(b5).is_empty():
+		print("[CityTest] cornice/pilaster: single-storey building wrongly grew one")
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "corpil-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b6 := MeshBatcher.new()
+	BuildingBuilder.build(b6, tiny)
+	if not _collect_cornice(b6).is_empty() or not _collect_pilaster(b6).is_empty():
+		print("[CityTest] cornice/pilaster: tiny-facade building wrongly grew one")
+		return false
+	return true
 
 
 # --- 11: Slab coverage ---------------------------------------------------------

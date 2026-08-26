@@ -77,6 +77,17 @@ const SCAFF_POLE_S := 0.08        # pole square section
 const SCAFF_PROB := 0.45          # chance a plaza-adjacent historic building gets one
 const SCAFF_MIN_SIDE := 6.0       # skip scaffolds on facades shorter than this
 
+# --- Phase P: facade cornices + pilasters (AC ledge/pillar parkour network) ----
+const CORN_PROJ := 0.26           # cornice protrusion beyond the wall face
+const CORN_H := 0.18              # cornice band height (grabbable ledge thickness)
+const CORN_PROB := 0.62           # chance a given historic long facade grows cornices
+const CORN_MIN_SIDE := 6.0        # skip cornices on facades shorter than this
+const PIL_W := 0.32               # pilaster width along the facade
+const PIL_PROJ := 0.24            # pilaster protrusion beyond the wall
+const PIL_PROB := 0.58            # chance a given historic long facade grows pilasters
+const PIL_MIN_SIDE := 6.0         # skip pilasters on facades shorter than this
+const PIL_SPACING := 3.2          # nominal interval between pilaster centres
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -244,6 +255,14 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# tagged "scaffold", deterministic, gated to plaza adjacency. Plank decks
 	# double as AC traversal ledges at each storey.
 	_scaffolds(b, off, w, d, fh, n, tag, spec)
+
+	# Phase P: facade cornices + pilasters — horizontal stone cornice bands
+	# + vertical pilaster strips forming an AC ledge/pillar parkour network
+	# on historic multi-storey facades. Stone, deterministic, gated to
+	# historic + multi-storey + long facade. Cornices are grabbable ledges at
+	# each storey junction; pilasters are segmented vertical strips per storey
+	# giving continuous pillar geometry. Tagged "cornice"/"pilaster".
+	_cornices_and_pilasters(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -542,6 +561,82 @@ static func _scaffolds(b: MeshBatcher, off: Vector3, w: float, d: float,
 				Vector3(SCAFF_POLE_S, pole_h, SCAFF_POLE_S), pole_c,
 				&"steel", true, "scaffold", f)
 		b.pop_layer()
+
+
+## Phase P: facade cornices + pilasters on historic multi-storey facades.
+## A horizontal stone cornice band runs each storey junction (grabbable
+## ledge), and vertical pilaster strips punctuate long facades (pillar
+## network). Both are stone/concrete, colliding, tagged "cornice"/
+## "pilaster", deterministic per (side, building), gated to historic +
+## multi-storey + long facade. Together they complete the AC
+## "ledges/pillars" traversal vocabulary on the historic core.
+static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	if n < 2:
+		return
+	var corn_c := Color("9e968a")
+	var pil_c := Color("a8a098").lightened(0.04)
+	for side in 4:
+		var length := w if (side == 0 or side == 2) else d
+		if length < CORN_MIN_SIDE:
+			continue
+		var rng := WorldSeed.rng_for("cornice", [WorldSeed.str_hash(tag), side])
+		if rng.randf() >= CORN_PROB:
+			continue
+		var horizontal := side == 0 or side == 2
+		var t := length * 0.5
+		var cx: float = 0.0
+		var cz: float = 0.0
+		match side:
+			0: cx = t; cz = WALL_T * 0.5 - CORN_PROJ * 0.5
+			1: cx = w - WALL_T * 0.5 + CORN_PROJ * 0.5; cz = t
+			2: cx = t; cz = d - WALL_T * 0.5 + CORN_PROJ * 0.5
+			_: cx = WALL_T * 0.5 - CORN_PROJ * 0.5; cz = t
+		var span := length - 0.4
+		var aw := span if horizontal else CORN_PROJ
+		var ad := CORN_PROJ if horizontal else span
+		for f in range(1, n + 1):
+			var cy := f * fh - CORN_H * 0.5
+			if f == n:
+				cy = n * fh - CORN_H * 0.5 - 0.06
+			var layer_f := mini(f, n - 1)
+			b.push_layer(tag + ":f%d" % layer_f)
+			b.add_destructible_box(off + Vector3(cx, cy, cz),
+					Vector3(aw, CORN_H, ad), corn_c,
+					&"concrete", true, "cornice", layer_f)
+			b.pop_layer()
+	for side in 4:
+		var length2 := w if (side == 0 or side == 2) else d
+		if length2 < PIL_MIN_SIDE:
+			continue
+		var rng2 := WorldSeed.rng_for("pilaster", [WorldSeed.str_hash(tag), side])
+		if rng2.randf() >= PIL_PROB:
+			continue
+		var count := maxi(1, floori((length2 - 0.8) / PIL_SPACING))
+		var jitter := rng2.randf_range(-0.18, 0.18)
+		for i in count:
+			var frac := float(i + 1) / float(count + 1)
+			var t2 := length2 * frac + jitter
+			t2 = clampf(t2, PIL_W * 0.5 + 0.25, length2 - PIL_W * 0.5 - 0.25)
+			var px: float = 0.0
+			var pz: float = 0.0
+			match side:
+				0: px = t2; pz = WALL_T * 0.5 - PIL_PROJ * 0.5
+				1: px = w - WALL_T * 0.5 + PIL_PROJ * 0.5; pz = t2
+				2: px = t2; pz = d - WALL_T * 0.5 + PIL_PROJ * 0.5
+				_: px = WALL_T * 0.5 - PIL_PROJ * 0.5; pz = t2
+			var horizontal2 := side == 0 or side == 2
+			for f in n:
+				var cy2 := f * fh + fh * 0.5
+				var pw := PIL_W if horizontal2 else PIL_PROJ
+				var pd := PIL_PROJ if horizontal2 else PIL_W
+				b.push_layer(tag + ":f%d" % f)
+				b.add_destructible_box(off + Vector3(px, cy2, pz),
+						Vector3(pw, fh - 0.02, pd), pil_c,
+						&"concrete", true, "pilaster", f)
+				b.pop_layer()
 
 
 const CELL_H := 2.5      # floor slab panel target edge (BOTH dimensions)
