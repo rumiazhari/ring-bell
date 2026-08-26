@@ -297,6 +297,63 @@ func _run_all() -> void:
 				c.set_physics_process(true)
 				break
 
+	# --- 7c. Semantic room layouts (Phase D slice 2) --------------------------
+	# The room_type label must drive the furniture program: residential
+	# rooms sleep (bed wall-snapped), retail shops sell (counter along a
+	# wall, never a bed). Pure spec -> batcher data via BuildingBuilder -
+	# no scene tree involvement.
+	var rt_style := {"wall": 0, "roof": 0, "balcony": false,
+			"attic": false}
+	var found := {"residential": {"beds": 0, "bed_ok": true},
+			"retail": {"beds": 0, "counters": 0}}
+	for rt in ["residential", "retail"]:
+		rt_style["room_type"] = rt
+		var spec := {
+			"id": "smoke_room_%s" % rt,
+			"rect": Rect2(4000.0, 4000.0, 12.0, 10.0),
+			"floors": 2, "floor_h": 3.0, "door_edge": 0,
+			"style": rt_style.duplicate(), "doors": [],
+		}
+		var batch := MeshBatcher.new()
+		BuildingBuilder.build(batch, spec)
+		var fp: Rect2 = spec["rect"]
+		for s in batch.specs():
+			if not bool(s["collide"]) \
+					or StringName(s["material"]) != &"wood":
+				continue
+			var sz: Vector3 = s["size"]
+			if absf(sz.x - BuildingBuilder.BED_ALONG) < 0.02 \
+					and absf(sz.y - 0.42) < 0.02 \
+					and absf(sz.z - BuildingBuilder.BED_DEPTH) < 0.02:
+				found[rt]["beds"] += 1
+				# Headboard alignment: the center sits depth/2 + gap
+				# inside SOME interior face (any of the four walls).
+				var want: float = BuildingBuilder.WALL_T \
+						+ BuildingBuilder.BED_DEPTH * 0.5 \
+						+ BuildingBuilder.SHELF_GAP
+				var p: Vector3 = s["pos"]
+				if absf(p.z - fp.position.y - want) > 0.02 \
+						and absf(fp.end.y - p.z - want) > 0.02 \
+						and absf(p.x - fp.position.x - want) > 0.02 \
+						and absf(fp.end.x - p.x - want) > 0.02:
+					found[rt]["bed_ok"] = false
+			elif absf(sz.x - BuildingBuilder.COUNTER_ALONG) < 0.02 \
+					and absf(sz.y - 0.95) < 0.02 \
+					and absf(sz.z - BuildingBuilder.COUNTER_DEPTH) < 0.02:
+				found[rt]["counters"] += 1
+	_check("residential room contains a bed",
+			int(found["residential"]["beds"]) >= 1,
+			str(found["residential"]))
+	_check("residential bed hugs a wall",
+			bool(found["residential"]["bed_ok"]),
+			str(found["residential"]))
+	_check("retail shop has a counter",
+			int(found["retail"]["counters"]) >= 1,
+			str(found["retail"]))
+	_check("retail shop has no beds",
+			int(found["retail"]["beds"]) == 0,
+			str(found["retail"]))
+
 	# --- 8. Save/load preserves death + clock -------------------------------
 	var saved_day := GameClock.get_day()
 	GameClock.advance(500.0)

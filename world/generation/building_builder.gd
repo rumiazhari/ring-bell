@@ -187,7 +187,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 			# Shopfront dressing on the street-facing ground wall (visual).
 			_shopfront(b, off, w, d, spec)
 		_furnish(b, off, w, d, fh, f, tag, zone,
-				door_edge if f == 0 else -1)
+				door_edge if f == 0 else -1,
+				str(style.get("room_type", "residential")))
 		b.pop_layer()
 
 	# --- staircase --------------------------------------------------------------
@@ -620,6 +621,12 @@ const FURN_BOOKS := [
 	Color("7a3030"), Color("31527a"), Color("3f6b34"),
 	Color("8a7a30"), Color("5a3a6b"),
 ]
+# Phase D slice 2 - semantic room layouts. Beds and counters are the big
+# wall-snapped pieces that make a room READ as residential or retail.
+const BED_ALONG := 1.45      # bed width, running ALONG its wall
+const BED_DEPTH := 2.05      # headboard (wall side) to footboard
+const COUNTER_ALONG := 2.2   # shop counter run along its wall
+const COUNTER_DEPTH := 0.62
 
 ## Scatter deterministic furniture through one storey's open floor.
 ## Everything inherits the CURRENT storey layer (the cutaway hides it with
@@ -632,9 +639,14 @@ const FURN_BOOKS := [
 ## walk-in corridor, and previously placed solid items. Visual and collider
 ## transforms are identical everywhere (the desk body shares its accessories'
 ## rotated basis; bookshelves are genuinely snapped against their wall).
+##
+## Phase D slice 2: the room_type label picks the furniture PROGRAM -
+## "residential" rooms sleep (wall-snapped beds first, then the home mix),
+## "retail" floors sell (wall-run counters, dense shelf rows, display
+## tables, never a bed).
 static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, floor_i: int, tag: String, zone: Rect2,
-		door_edge: int) -> void:
+		door_edge: int, room_type := "residential") -> void:
 	var rng := WorldSeed.rng_for("furnish",
 			[WorldSeed.str_hash(tag), floor_i])
 	var floor_y := float(floor_i) * fh   # THE floor this furniture lives on
@@ -701,49 +713,97 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 				return cand
 		return null
 
-	# Tables with chairs pulled up around them.
-	for i in rng.randi_range(1, 3):
-		var t: Variant = take_spot.call(Vector2(0.63, 0.44), 0.0)
-		if t == null:
-			break
-		var tp: Vector2 = t
-		_f_table(b, off + Vector3(tp.x, floor_y, tp.y), tag, floor_i)
-		for c in rng.randi_range(1, 2):
-			var ca := TAU * rng.randf()
-			var cp := tp + Vector2(cos(ca), sin(ca)) * 0.95
-			if usable.grow(-0.3).has_point(cp) \
-					and spot_free.call(cp, Vector2(0.24, 0.24), ca) \
-					or (_obb_in_rect({"c": cp, "e": Vector2(0.24, 0.24),
-					"r": ca}, usable.grow(-0.1))
-					and not _point_in_any(cp, blocked)):
-				_f_chair(b, off + Vector3(cp.x, floor_y, cp.y),
-						atan2(tp.x - cp.x, tp.y - cp.y))
-	# Bookshelves: genuinely snapped against the NEAREST wall, back plate
-	# touching the interior wall face (P0-D - the direction was computed
-	# before but never applied). Skipped when the snapped spot would block
-	# the shaft or the entrance lane.
-	for i in rng.randi_range(1, 2):
-		var s := _shelf_spot(rng, usable, w, d, blocked, placed)
-		if s.is_empty():
-			break
-		placed.append(s["obb"])
-		_f_shelf(b, off + Vector3(s["pos"].x, floor_y, s["pos"].y),
-				float(s["yaw"]), rng, tag, floor_i)
-	# Computer desks: accessories AND body share one rotated basis.
-	for i in rng.randi_range(0, 2):
-		var yaw := rng.randf_range(0.0, TAU)
-		var dv: Variant = take_spot.call(Vector2(0.68, 0.36), yaw)
-		if dv == null:
-			break
-		var dp2: Vector2 = dv
-		_f_desk_pc(b, off + Vector3(dp2.x, floor_y, dp2.y), yaw, tag, floor_i)
-	# Plant vases tucked into leftovers (soft clutter - no collision).
-	for i in rng.randi_range(1, 3):
-		var pv: Variant = take_spot.call(Vector2(0.26, 0.26), 0.0)
-		if pv == null:
-			break
-		var pp: Vector2 = pv
-		_f_plant(b, off + Vector3(pp.x, floor_y, pp.y))
+	# --- room_type picks the furniture PROGRAM (Phase D slice 2) --------------
+	if room_type == "retail":
+		# SHOP floor: counters run ALONG a wall, dense shelf rows, small
+		# display tables - retail never sleeps.
+		for i in rng.randi_range(1, 2):
+			var cs := {}
+			for attempt in 5:
+				cs = _wall_snap_spot(rng, usable, w, d, blocked, placed,
+						COUNTER_ALONG * 0.5, COUNTER_DEPTH)
+				if not cs.is_empty():
+					break
+			if cs.is_empty():
+				continue
+			placed.append(cs["obb"])
+			_f_counter(b, off + Vector3(cs["pos"].x, floor_y,
+					cs["pos"].y), float(cs["yaw"]), tag, floor_i)
+		for i in rng.randi_range(2, 3):
+			var s := _shelf_spot(rng, usable, w, d, blocked, placed)
+			if s.is_empty():
+				break
+			placed.append(s["obb"])
+			_f_shelf(b, off + Vector3(s["pos"].x, floor_y, s["pos"].y),
+					float(s["yaw"]), rng, tag, floor_i)
+		for i in rng.randi_range(1, 2):
+			var t: Variant = take_spot.call(Vector2(0.63, 0.44), 0.0)
+			if t == null:
+				break
+			var tp: Vector2 = t
+			_f_table(b, off + Vector3(tp.x, floor_y, tp.y), tag, floor_i)
+		for i in rng.randi_range(1, 2):
+			var pv: Variant = take_spot.call(Vector2(0.26, 0.26), 0.0)
+			if pv == null:
+				break
+			var pp: Vector2 = pv
+			_f_plant(b, off + Vector3(pp.x, floor_y, pp.y))
+	else:
+		# RESIDENTIAL floor: beds claim wall space FIRST (largest foot-
+		# print wins), then the familiar home mix.
+		for i in rng.randi_range(1, 2):
+			var bs := {}
+			for attempt in 5:
+				bs = _wall_snap_spot(rng, usable, w, d, blocked, placed,
+						BED_ALONG * 0.5, BED_DEPTH)
+				if not bs.is_empty():
+					break
+			if bs.is_empty():
+				continue
+			placed.append(bs["obb"])
+			_f_bed(b, off + Vector3(bs["pos"].x, floor_y,
+					bs["pos"].y), float(bs["yaw"]), tag, floor_i)
+		# Tables with chairs pulled up around them.
+		for i in rng.randi_range(1, 3):
+			var t: Variant = take_spot.call(Vector2(0.63, 0.44), 0.0)
+			if t == null:
+				break
+			var tp: Vector2 = t
+			_f_table(b, off + Vector3(tp.x, floor_y, tp.y), tag, floor_i)
+			for c in rng.randi_range(1, 2):
+				var ca := TAU * rng.randf()
+				var cp := tp + Vector2(cos(ca), sin(ca)) * 0.95
+				if usable.grow(-0.3).has_point(cp) \
+						and spot_free.call(cp, Vector2(0.24, 0.24), ca) \
+						or (_obb_in_rect({"c": cp, "e": Vector2(0.24, 0.24),
+						"r": ca}, usable.grow(-0.1))
+						and not _point_in_any(cp, blocked)):
+					_f_chair(b, off + Vector3(cp.x, floor_y, cp.y),
+							atan2(tp.x - cp.x, tp.y - cp.y))
+		# Bookshelves/wardrobes: snapped against a wall (P1-12 contract).
+		for i in rng.randi_range(1, 2):
+			var s := _shelf_spot(rng, usable, w, d, blocked, placed)
+			if s.is_empty():
+				break
+			placed.append(s["obb"])
+			_f_shelf(b, off + Vector3(s["pos"].x, floor_y, s["pos"].y),
+					float(s["yaw"]), rng, tag, floor_i)
+		# Computer desks: accessories AND body share one rotated basis.
+		for i in rng.randi_range(0, 2):
+			var yaw := rng.randf_range(0.0, TAU)
+			var dv: Variant = take_spot.call(Vector2(0.68, 0.36), yaw)
+			if dv == null:
+				break
+			var dp2: Vector2 = dv
+			_f_desk_pc(b, off + Vector3(dp2.x, floor_y, dp2.y), yaw, tag,
+					floor_i)
+		# Plant vases tucked into leftovers (soft clutter - no collision).
+		for i in rng.randi_range(1, 3):
+			var pv: Variant = take_spot.call(Vector2(0.26, 0.26), 0.0)
+			if pv == null:
+				break
+			var pp: Vector2 = pv
+			_f_plant(b, off + Vector3(pp.x, floor_y, pp.y))
 
 
 ## Nearest-wall shelf placement (P1-12). The shelf is a 1.6 x 0.34 slab:
@@ -760,46 +820,52 @@ const SHELF_GAP := 0.02
 static func _shelf_spot(rng: RandomNumberGenerator, usable: Rect2,
 		w: float, d: float, blocked: Array[Dictionary],
 		placed: Array[Dictionary]) -> Dictionary:
-	const HALF_W := 0.8    # SHELF_WIDTH / 2
-	const DEPTH := SHELF_DEPTH
-	const GAP := SHELF_GAP
+	return _wall_snap_spot(rng, usable, w, d, blocked, placed,
+			SHELF_WIDTH * 0.5, SHELF_DEPTH)
+
+
+## Generic wall-SNAPPED placement for any rectangular piece whose back face
+## must touch an interior wall (Phase D slice 2): shelves, counters, beds.
+## `half_along` is HALF the along-wall width, `depth` the FULL wall-to-room
+## extent; yaw aligns the width axis WITH the chosen wall exactly like the
+## furniture builders' basis convention (local X = along-wall, local -Z =
+## the wall side). Validation mirrors P1-12: TRUE interior bounds + keep-out
+## zones + already-placed OBBs - never a furniture-center rectangle that
+## excludes wall-adjacent placement. Returns {} when no side fits.
+static func _wall_snap_spot(rng: RandomNumberGenerator, usable: Rect2,
+		w: float, d: float, blocked: Array[Dictionary],
+		placed: Array[Dictionary], half_along: float,
+		depth: float, gap := SHELF_GAP) -> Dictionary:
 	var side := rng.randi_range(0, 3)          # 0=W 1=E 2=N 3=S
 	var yaw := 0.0
 	var pos := Vector2.ZERO
 	match side:
 		0:   # west wall: width runs along Z, depth extends +X inward
 			yaw = PI * 0.5
-			pos = Vector2(WALL_T + DEPTH * 0.5 + GAP,
-					rng.randf_range(usable.position.y + HALF_W,
-							usable.end.y - HALF_W))
+			pos = Vector2(WALL_T + depth * 0.5 + gap,
+					rng.randf_range(usable.position.y + half_along,
+							usable.end.y - half_along))
 		1:   # east wall
 			yaw = PI * 0.5
-			pos = Vector2(w - WALL_T - DEPTH * 0.5 - GAP,
-					rng.randf_range(usable.position.y + HALF_W,
-							usable.end.y - HALF_W))
+			pos = Vector2(w - WALL_T - depth * 0.5 - gap,
+					rng.randf_range(usable.position.y + half_along,
+							usable.end.y - half_along))
 		2:   # north wall: width runs along X, depth extends +Y inward
 			yaw = 0.0
-			pos = Vector2(rng.randf_range(usable.position.x + HALF_W,
-					usable.end.x - HALF_W),
-					WALL_T + DEPTH * 0.5 + GAP)
+			pos = Vector2(rng.randf_range(usable.position.x + half_along,
+					usable.end.x - half_along),
+					WALL_T + depth * 0.5 + gap)
 		_:   # south wall
 			yaw = 0.0
-			pos = Vector2(rng.randf_range(usable.position.x + HALF_W,
-					usable.end.x - HALF_W),
-					d - WALL_T - DEPTH * 0.5 - GAP)
-	# OBB half-extents MATCH the visual/collider box (1.6 x 0.34) after the
-	# wall-aligned yaw: E/W shelves carry (depth/2 along X, width/2 along Y)
-	# in world terms; N/S shelves the transpose. The old code had these
-	# swapped for the E/W walls, so its overlap tests described a different
-	# object than the one drawn.
-	var half := Vector2(DEPTH * 0.5, HALF_W) if side <= 1 \
-			else Vector2(HALF_W, DEPTH * 0.5)
+			pos = Vector2(rng.randf_range(usable.position.x + half_along,
+					usable.end.x - half_along),
+					d - WALL_T - depth * 0.5 - gap)
+	# OBB half-extents MATCH the drawn/colliding box after the wall-aligned
+	# yaw: E/W snaps carry (depth/2 along X, half_along along Y) in world
+	# terms; N/S snaps the transpose.
+	var half := Vector2(depth * 0.5, half_along) if side <= 1 \
+			else Vector2(half_along, depth * 0.5)
 	var obb := {"c": pos, "e": half, "r": yaw}
-	# P1-12: validate the wall-snapped footprint against the TRUE interior
-	# bounds (wall face inward) - not the furniture-center rectangle, which
-	# is heavily inset from the walls and rejected every valid snap. The
-	# snapped center sits DEPTH/2+GAP from the wall face, so this proves
-	# both full containment AND no overlap with the actual wall geometry.
 	var interior := Rect2(WALL_T, WALL_T,
 			maxf(w - 2.0 * WALL_T, 0.0), maxf(d - 2.0 * WALL_T, 0.0))
 	if not _obb_in_rect(obb, interior):
@@ -927,6 +993,49 @@ static func _f_desk_pc(b: MeshBatcher, pos: Vector3, yaw: float,
 			Vector3(0.10, 0.16, 0.10), basis, FURN_METAL, false)
 	b.add_box_rotated(pos - basis.z * 0.20 + Vector3(0, 1.06, 0),
 			Vector3(0.58, 0.36, 0.04), basis, FURN_SCREEN, false)
+
+
+## Bed: walnut frame (collides) with headboard AGAINST the wall - local
+## X runs ALONG the wall, local -Z faces it (the _wall_snap_spot basis
+## convention). Pale mattress, pillow at the head, blanket band across the
+## foot half; all dressing shares the rotated basis.
+static func _f_bed(b: MeshBatcher, pos: Vector3, yaw: float,
+		owner_tag := "", floor_i := -1) -> void:
+	var basis := Basis(Vector3.UP, -yaw)
+	b.add_box_rotated(pos + Vector3(0, 0.21, 0),
+			Vector3(BED_ALONG, 0.42, BED_DEPTH), basis, FURN_WOOD_DARK,
+			true, false, &"wood", owner_tag, floor_i)
+	b.add_box_rotated(pos + Vector3(0, 0.50, 0),
+			Vector3(BED_ALONG - 0.12, 0.16, BED_DEPTH - 0.18), basis,
+			Color("cfc4b0"), false)
+	b.add_box_rotated(pos - basis.z * (BED_DEPTH * 0.5 - 0.04)
+			+ Vector3(0, 0.62, 0),
+			Vector3(BED_ALONG, 0.82, 0.07), basis, FURN_WALNUT, false)
+	b.add_box_rotated(pos - basis.z * (BED_DEPTH * 0.5 - 0.34)
+			+ Vector3(0, 0.62, 0),
+			Vector3(BED_ALONG - 0.34, 0.13, 0.52), basis,
+			Color("ded8ca"), false)
+	b.add_box_rotated(pos + basis.z * (BED_DEPTH * 0.5 - 0.62)
+			+ Vector3(0, 0.60, 0),
+			Vector3(BED_ALONG - 0.10, 0.10, 1.02), basis, FURN_LEAF_DARK,
+			false)
+
+
+## Shop counter: walnut carcass against the wall (collides), oak countertop
+## with a slight overhang, dark register block toward one end. Same basis
+## convention as _f_bed / _f_shelf.
+static func _f_counter(b: MeshBatcher, pos: Vector3, yaw: float,
+		owner_tag := "", floor_i := -1) -> void:
+	var basis := Basis(Vector3.UP, -yaw)
+	b.add_box_rotated(pos + Vector3(0, 0.475, 0),
+			Vector3(COUNTER_ALONG, 0.95, COUNTER_DEPTH), basis,
+			FURN_WALNUT, true, false, &"wood", owner_tag, floor_i)
+	b.add_box_rotated(pos + Vector3(0, 0.99, 0.03),
+			Vector3(COUNTER_ALONG + 0.14, 0.06, COUNTER_DEPTH + 0.12),
+			basis, FURN_WOOD, false)
+	b.add_box_rotated(pos + basis.x * (COUNTER_ALONG * 0.5 - 0.38)
+			+ Vector3(0, 1.17, 0.02),
+			Vector3(0.38, 0.30, 0.30), basis, FURN_SCREEN, false)
 
 
 ## Terracotta pot with two-tone green foliage. Soft clutter (no collision).

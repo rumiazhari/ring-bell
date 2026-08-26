@@ -1,32 +1,51 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 10
+LAST_ITER: 11
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase F slice 2 COMPLETE: radial ledge-seek + lip-height stamina scaling.
-_try_ledge_grab probes the intended move/facing direction first, then sweeps
-a radial compass fan (LEDGE_SEEK_RAYS=8) - survivors chased off rooftops
-(facing AWAY from the building) still catch the parapet they fall alongside,
-the NPC zombie-chase escape hatch. Stamina cost now scales linearly
-2.0->6.0 with lip rise across the grab window (_ledge_stamina_cost);
-exhausted survivors cannot pull up at all (matches try_jump semantics;
-latch clears at 25 stamina, unreachable mid-fall -> deterministic).
-last_stamina_cost exposed for tests/HUD. Gate ALL GREEN:
-smoke 37 / citytest / havoctest / cityruntime, all 0 failure(s).
+Phase D slice 2 COMPLETE: semantic room layouts from room_type labels.
+_furnish() takes the building's style.room_type and picks a furniture
+PROGRAM per storey - residential rooms sleep (1-2 wall-snapped beds via
+new generic _wall_snap_spot, headboard on the interior wall face, then the
+familiar home mix), retail floors sell (wall-run counters with register
+block, 2-3 shelf rows, display tables, plants - never a bed). _shelf_spot
+now delegates to _wall_snap_spot(half_along, depth) so shelves/counters/
+beds share ONE validated placement path (true interior bounds + stair-zone
+keep-out + placed-OBB SAT checks, P0-D agreement). New builders _f_bed /
+_f_counter carry building_id/floor_i metadata like every other collider.
+smoke_test.gd section 7c (+4 checks): synthetic residential spec yields a
+bed whose center sits BED_DEPTH/2+gap inside SOME interior wall face;
+retail spec yields a counter and ZERO bed-class boxes anywhere.
+Gate ALL GREEN: smoke 41 / citytest / cityruntime, all 0 failure(s).
 
 ## Backlog
-1. Phase D slice 2: semantic room layouts from room_type labels
-   (residential/retail furniture placement by wall alignment).
-   Gate: citytest + smoke + cityruntime.
-2. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
+1. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
    readout; or zombie chase steering so NPCs corner survivors toward edges.
    Gate: smoke.
+2. Phase D slice 3 (idea): ground-floor shopfront dressing (_shopfront) is
+   currently applied to ALL buildings when attic+long facade - gate it to
+   room_type=="retail" so homes stop wearing signboards. Gate: citytest.
 3. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 11 (2026-08-26): Phase D slice 2 LANDED - semantic room layouts.
+  building_builder.gd: _furnish() now takes style.room_type and branches
+  the furniture program - retail floors get wall-run _f_counter carcasses
+  (register block on top), 2-3 shelf rows and chairless display tables;
+  residential storeys get 1-2 wall-snapped _f_bed frames (headboard +
+  pillow toward the wall face, blanket band) before the home mix. Both new
+  pieces place via generic _wall_snap_spot(half_along, depth) - extracted
+  from _shelf_spot, which now delegates - so beds/counters inherit the
+  P0-D contract: oriented-footprint validation against true interior
+  bounds, stair-zone keep-out, entrance lane, placed OBBs. smoke_test.gd
+  +4 checks (section 7c, synthetic 12x10 two-storey specs built straight
+  through BuildingBuilder): residential contains a bed AND its center
+  sits BED_DEPTH/2+gap inside some interior face; retail has a counter
+  and zero bed-class boxes. Gate ALL GREEN: --smoke 41 / --citytest /
+  --cityruntime, all "finished with 0 failure(s)".
 - iter 10 (2026-08-26): Phase F slice 2 LANDED - radial ledge-seek + scaled
   grab stamina. parkour_controller.gd: _try_ledge_grab probes the primary
   move/facing dir first then an 8-ray radial fan (_probe_ledge extracted,
