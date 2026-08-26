@@ -195,6 +195,8 @@ func _run_all() -> void:
 		_test_facade_flowerbox())
 	_check("facade window trim: Prague stone lintels above historic windows (deterministic)",
 		_test_facade_window_trim())
+	_check("facade window sills: Prague stone sill ledges below historic windows (deterministic)",
+		_test_facade_sills())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -824,6 +826,15 @@ func _collect_trim(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "trim":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "sill" (Phase AC Prague window stone sills).
+func _collect_sill(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "sill":
 			continue
 		out.append(s)
 	return out
@@ -2183,6 +2194,137 @@ func _test_facade_window_trim() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] trim: no historic chunk in ring had trim")
+		return false
+	return true
+
+
+# --- 24k7: Facade window sills (Phase AC) — Prague stone sill ledges below windows --
+func _test_facade_sills() -> bool:
+	# Historic long facades should grow stone sill ledges below window sills:
+	# each qualifying window (per side/floor/window via WorldSeed "sill_stone"
+	# with SILL_PROB 0.60) grows a stone sill (WIN_W+0.24=1.39 x SILL_H 0.09
+	# x SILL_T 0.06, thin slab protruding beyond the wall) sitting with its TOP
+	# flush to the window sill (WIN_SILL) at y = floor*FH+WIN_SILL - H/2 +0.015.
+	# Visual-only, deterministic, gated to historic >=5.0.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "silltest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["silltest", "silltest2", "silltest3", "silltest4", "silltest5", "silltest6", "silltest7", "silltest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_sill(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] sill: historic building grew no stone sills (tried 8 ids)")
+		return false
+	var fh: float = float(found_spec["floor_h"])
+	var sill_w := BuildingBuilder.WIN_W + BuildingBuilder.SILL_W_EXTRA
+	var sill_h := BuildingBuilder.SILL_H
+	var sill_t := BuildingBuilder.SILL_T
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] sill: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] sill: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "sill":
+			print("[CityTest] sill: building_id %s != sill" % [s.get("building_id", "")])
+			return false
+		if absf(sz.y - sill_h) > 0.015:
+			print("[CityTest] sill: height %.3f != %.3f at %s" % [sz.y, sill_h, pos])
+			return false
+		# planar dimensions: width sill_w vs thickness sill_t
+		var w_ok := absf(sz.x - sill_w) < 0.015 or absf(sz.z - sill_w) < 0.015
+		var t_ok := absf(sz.x - sill_t) < 0.015 or absf(sz.z - sill_t) < 0.015
+		if not w_ok or not t_ok:
+			print("[CityTest] sill: size %s not %.2f x %.2f at %s" % [sz, sill_w, sill_t, pos])
+			return false
+		# Must sit just outside a wall face
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+		if not near_wall:
+			print("[CityTest] sill: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Y must be at sill line: floor*FH + WIN_SILL - H/2 +0.015
+		var floor_i := int(floor(pos.y / fh + 0.001))
+		var expected_y := float(floor_i) * fh + BuildingBuilder.WIN_SILL - sill_h * 0.5 + 0.015
+		if absf(pos.y - expected_y) > 0.025:
+			print("[CityTest] sill: y %.3f != expected %.3f (floor %d) at %s" % [pos.y, expected_y, floor_i, pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] sill: unexpected alpha %f" % col.a)
+			return false
+	if found.size() < 1:
+		print("[CityTest] sill: count %d < 1" % found.size())
+		return false
+	# Determinism: rebuild identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_sill(b2)
+	if found.size() != got2.size():
+		print("[CityTest] sill: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] sill: nondeterministic box %d" % i)
+			return false
+	# Gating: non-historic building must grow none.
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "sill-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_sill(b3).is_empty():
+		print("[CityTest] sill: non-historic building wrongly grew %d" % _collect_sill(b3).size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "sill-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_sill(b4b).is_empty():
+		print("[CityTest] sill: tiny-facade building wrongly grew sills")
+		return false
+	# Spot check city chunks: historic ring should have sills
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "sill":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] sill: no historic chunk in ring had sills")
 		return false
 	return true
 

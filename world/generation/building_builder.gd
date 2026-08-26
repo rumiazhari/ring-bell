@@ -159,6 +159,13 @@ const WINDOW_TRIM_H := 0.14            # header height
 const WINDOW_TRIM_MIN_SIDE := 5.0      # skip on facades shorter than this
 const WINDOW_TRIM_PROB := 0.58         # chance a historic window grows a stone lintel
 
+# --- Phase AC: Prague window stone sills (sill ledge below historic windows) --
+const SILL_T := 0.06                   # thin stone sill thickness protruding beyond wall
+const SILL_W_EXTRA := 0.24             # width beyond WIN_W (WIN_W 1.15 -> 1.39)
+const SILL_H := 0.09                   # sill ledge height (thinner than lintel)
+const SILL_MIN_SIDE := 5.0             # skip on facades shorter than this
+const SILL_PROB := 0.60                # chance a historic window grows a stone sill
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -381,6 +388,14 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# window_trim, gated to historic + long facade. Gives the Prague core its
 	# classic stone window headers without touching collision.
 	_facade_window_trim(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AC: Prague window stone sills — stone sill ledge below historic windows,
+	# visual-only thin stone slabs (SILL_T 0.06 x SILL_H 0.09, width WIN_W+0.24=1.39)
+	# pressed just outside the wall at the sill line, deterministic per (building,
+	# side, floor, window) via WorldSeed sill_stone, gated to historic + long
+	# facade. Gives every qualifying window a crisp stone sill without touching
+	# collision or the window glass itself.
+	_facade_sill_ledges(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1231,6 +1246,59 @@ static func _facade_window_trim(b: MeshBatcher, off: Vector3, w: float, d: float
 				b.push_layer(tag + ":f%d" % f_idx)
 				b.add_box_rotated(off + Vector3(cx, cy, cz),
 						Vector3(aw, WINDOW_TRIM_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "trim", f_idx)
+				b.pop_layer()
+
+## Phase AC: Prague window stone sills — sill ledge below historic windows.
+## Visual-only thin stone slabs (SILL_H 0.09 x SILL_T 0.06,
+## width WIN_W 1.15 + 0.24 = 1.39) pressed just outside the wall at the sill
+## line, directly under each window opening. Deterministic per (building, side,
+## floor, window) via WorldSeed "sill_stone", gated to historic + long facade
+## (>=5.0). Each qualifying window rolls SILL_PROB 0.60 independently; on success
+## it grows a stone sill ledge whose TOP sits flush with the window sill
+## (WIN_SILL), visual-only, no collision. Mirrors the window layout computed by
+## _facade_with_openings so sills sit exactly under glass.
+static func _facade_sill_ledges(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	var sill_w := WIN_W + SILL_W_EXTRA
+	for f_idx in n:
+		var y0 := f_idx * fh
+		# sill top flush with window sill: center = y0 + WIN_SILL - SILL_H/2
+		var cy := y0 + WIN_SILL - SILL_H * 0.5 + 0.015
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < SILL_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(t)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("sill_stone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= SILL_PROB:
+					continue
+				var stone_c := Color("a8a098").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+				stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.10)
+				var eps := 0.045
+				var cx: float = 0.0
+				var cz: float = 0.0
+				var aw: float = 0.0
+				var ad: float = 0.0
+				match side:
+					0: cx = t_center; cz = -SILL_T * 0.5 - eps; aw = sill_w; ad = SILL_T
+					1: cx = w + SILL_T * 0.5 + eps; cz = t_center; aw = SILL_T; ad = sill_w
+					2: cx = t_center; cz = d + SILL_T * 0.5 + eps; aw = sill_w; ad = SILL_T
+					_: cx = -SILL_T * 0.5 - eps; cz = t_center; aw = SILL_T; ad = sill_w
+				b.push_layer(tag + ":f%d" % f_idx)
+				b.add_box_rotated(off + Vector3(cx, cy, cz),
+						Vector3(aw, SILL_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "sill", f_idx)
 				b.pop_layer()
 
 ## One facade:
