@@ -173,6 +173,8 @@ func _run_all() -> void:
 		_test_cornices_pilasters())
 	_check("facade decay: graffiti / rust / moss visual decals on historic facades",
 		_test_facade_decay())
+	_check("broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades",
+		_test_broken_and_litter())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -743,6 +745,31 @@ func _collect_decay(b: MeshBatcher) -> Array:
 		out.append(s)
 	return out
 
+## Visual-only boxes tagged "broken" (Phase R missing panes — dark interiors).
+func _collect_broken(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "broken":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "litter" (Phase R sidewalk debris).
+func _collect_litter(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "litter":
+			continue
+		out.append(s)
+	return out
+
+func _count_glass(b: MeshBatcher) -> int:
+	var n := 0
+	for s: Dictionary in b.specs():
+		if StringName(s["material"]) == &"glass":
+			n += 1
+	return n
+
 
 # --- 24e: Facade balconies (Phase K) ------------------------------------------
 func _test_balconies() -> bool:
@@ -1284,6 +1311,139 @@ func _test_facade_decay() -> bool:
 	BuildingBuilder.build(b4, tiny)
 	if not _collect_decay(b4).is_empty():
 		print("[CityTest] decay: tiny-facade building wrongly grew decals")
+		return false
+	return true
+
+
+# --- 24j: Broken windows + street litter (Phase R) --------------------------
+func _test_broken_and_litter() -> bool:
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 4,
+		"id": "brokentest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found_litter: Array = []
+	var found_broken: Array = []
+	var found_glass_hist: int = -1
+	var found_glass_outer: int = -1
+	for try_id in ["brokentest", "brokentest2", "brokentest3", "brokentest4", "brokentest5", "brokentest6", "brokentest7", "brokentest8"]:
+		var s_hist := base.duplicate(true)
+		s_hist["id"] = try_id
+		s_hist["district"] = "historic"
+		var b_hist := MeshBatcher.new()
+		BuildingBuilder.build(b_hist, s_hist)
+		var lit := _collect_litter(b_hist)
+		var bro := _collect_broken(b_hist)
+		var g_hist := _count_glass(b_hist)
+		var s_outer := base.duplicate(true)
+		s_outer["id"] = try_id
+		s_outer["district"] = "outer"
+		var b_outer := MeshBatcher.new()
+		BuildingBuilder.build(b_outer, s_outer)
+		var g_outer := _count_glass(b_outer)
+		if not lit.is_empty() and not bro.is_empty() and g_hist < g_outer:
+			found_spec = s_hist
+			found_litter = lit
+			found_broken = bro
+			found_glass_hist = g_hist
+			found_glass_outer = g_outer
+			break
+	if found_litter.is_empty() or found_broken.is_empty():
+		print("[CityTest] broken/litter: historic building grew no pair (tried 8 ids; glass_hist=%d glass_outer=%d broken=%d litter=%d)" % [found_glass_hist, found_glass_outer, found_broken.size(), found_litter.size()])
+		return false
+	for s: Dictionary in found_broken:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] broken: dark plane must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] broken: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "broken":
+			print("[CityTest] broken: building_id %s != broken" % [s.get("building_id", "")])
+			return false
+		if pos.y - sz.y * 0.5 < 0.5:
+			print("[CityTest] broken: box too low at %s" % [pos])
+			return false
+		if pos.y + sz.y * 0.5 > 12.0 + 0.5:
+			print("[CityTest] broken: box above roof at %s" % [pos])
+			return false
+		var is_thin := absf(sz.x - BuildingBuilder.BROKEN_DARK_T) < 0.015 or absf(sz.z - BuildingBuilder.BROKEN_DARK_T) < 0.015
+		if not is_thin:
+			print("[CityTest] broken: thin dimension %s != %.3f" % [sz, BuildingBuilder.BROKEN_DARK_T])
+			return false
+	var outer_for_found := base.duplicate(true)
+	outer_for_found["id"] = String(found_spec["id"])
+	outer_for_found["district"] = "outer"
+	var b_outer_found := MeshBatcher.new()
+	BuildingBuilder.build(b_outer_found, outer_for_found)
+	var g_outer_found := _count_glass(b_outer_found)
+	if found_glass_hist >= g_outer_found:
+		print("[CityTest] broken: historic glass %d should be < outer %d" % [found_glass_hist, g_outer_found])
+		return false
+	for s: Dictionary in found_litter:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] litter: decal must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] litter: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "litter":
+			print("[CityTest] litter: building_id %s != litter" % [s.get("building_id", "")])
+			return false
+		if pos.y - sz.y * 0.5 < -0.05 or pos.y + sz.y * 0.5 > 0.6:
+			print("[CityTest] litter: box not on sidewalk ground at %s" % [pos])
+			return false
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var outside := ox < -0.08 or ox2 > 12.0 + 0.08 or oz < -0.08 or oz2 > 10.0 + 0.08
+		if not outside:
+			print("[CityTest] litter: decal not outside footprint at %s sz %s" % [pos, sz])
+			return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got_bro2 := _collect_broken(b2)
+	var got_lit2 := _collect_litter(b2)
+	if found_broken.size() != got_bro2.size() or found_litter.size() != got_lit2.size():
+		print("[CityTest] broken/litter: nondeterministic counts broken %d vs %d / litter %d vs %d" % [found_broken.size(), got_bro2.size(), found_litter.size(), got_lit2.size()])
+		return false
+	for i in found_broken.size():
+		if found_broken[i]["pos"] != got_bro2[i]["pos"] or found_broken[i]["size"] != got_bro2[i]["size"]:
+			print("[CityTest] broken: nondeterministic box %d" % i)
+			return false
+	for i in found_litter.size():
+		if found_litter[i]["pos"] != got_lit2[i]["pos"] or found_litter[i]["size"] != got_lit2[i]["size"]:
+			print("[CityTest] litter: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "broken-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_broken(b3).is_empty() or not _collect_litter(b3).is_empty():
+		print("[CityTest] broken/litter: non-historic building wrongly grew one (broken=%d litter=%d)" % [_collect_broken(b3).size(), _collect_litter(b3).size()])
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "broken-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4 := MeshBatcher.new()
+	BuildingBuilder.build(b4, tiny)
+	if not _collect_broken(b4).is_empty() or not _collect_litter(b4).is_empty():
+		print("[CityTest] broken/litter: tiny-facade building wrongly grew one")
 		return false
 	return true
 

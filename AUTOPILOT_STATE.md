@@ -1,20 +1,24 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 31
+LAST_ITER: 32
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 31: Phase Q facade decay — graffiti / rust-streak / moss visual decals
-(DECAY_T 0.02 thin planes, GRAFF 0.55 / RUST 0.48 / MOSS 0.40) pressed just
-outside each historic long facade (>=5.0 m), deterministic per (side,
-building) via WorldSeed, visual-only (collide=false, material empty, tagged
-"decay") so they never affect physics/parkour. Three RNG channels
-("decay_graff" / "decay_rust" / "decay_moss") give independent coverage;
-moss sits as a low base strip, graffiti mid-wall, rust vertical drip.
-citytest gained `_test_facade_decay` (thin-plane, gating, determinism).
+Iter 32: Phase R broken windows + street litter — historic long facades
+(>=5.0 m) lose ~30% of window panes (BROKEN_WIN_PROB 0.30) at generation,
+leaving a BROKEN_DARK_T 0.03 dark interior plane (visual-only, tagged
+"broken") inside each empty aperture; plus sidewalk litter decals (paper/
+bottles, LITTER_PROB 0.58, 2-4 per side, LITTER_Y 0.035, tagged "litter")
+scattered just outside historic long facades. Both gated to historic +
+long facade, deterministic per (building, side, floor, window) / (side,
+building) via WorldSeed, visual-only so parkour/physics untouched. Brings
+post-apoc eerie darkness to the historic core without new colliders.
+citytest gained `_test_broken_and_litter` (visual-only, thin-plane, gating,
+determinism, glass-reduction check).
 
 ## This iteration
+[autopilot] iter 32: Phase R broken windows + street litter — historic long facades lose ~30% of window panes (BROKEN_WIN_PROB 0.30, BROKEN_DARK_T 0.03 dark interior plane tagged broken) + sidewalk litter (LITTER_PROB 0.58, 2-4 per side at LITTER_Y 0.035 tagged litter); both visual-only, deterministic per (building,side,floor,window) via WorldSeed, gated to historic + long facade (>=5.0); leaves eerie dark interiors and gritty sidewalks without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades").
 [autopilot] iter 31: Phase Q facade decay — BuildingBuilder grows graffiti / rust-streak / moss visual decals (DECAY_T 0.02 thin planes, GRAFF 0.55 / RUST 0.48 / MOSS 0.40) pressed just outside each historic long facade (>=5.0), deterministic per (side, building) via WorldSeed, visual-only (collide=false, material empty, tagged "decay"); three RNG channels give independent coverage (graffiti mid-wall, rust drip, moss base strip). Brings the Prague core out of white-dummy into the directive's eerie decayed aesthetic without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("facade decay: graffiti / rust / moss visual decals on historic facades").
 [autopilot] iter 30: Phase P facade cornices + pilasters — BuildingBuilder grows horizontal stone cornice bands at each storey junction (CORN_H 0.18, CORN_PROJ 0.26, concrete, tagged "cornice") + segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ 0.24, concrete, tagged "pilaster") on historic multi-storey long facades; deterministic per (side, building), gated to historic + multi-storey + long facade. MeshBatcher now carries vox_tag cornice/pilaster. citytest + smoke green (0 failures); 1 new assertion passes ("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades").
 [autopilot] iter 29: Phase O construction scaffold — CityPlan emits district + plaza_adjacent (historic + plaza-ring check), BuildingBuilder grows a full-height steel cage + wood plank decks (tagged "scaffold", SCAFF_PROJ 1.0, SCAFF_W 3.4) on one shuffled long facade of plaza-adjacent historic buildings; planks at each storey provide mid-height AC traversal. MeshBatcher now carries vox_tag scaffold. citytest + smoke green (0 failures); 1 new assertion passes ("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades").
@@ -136,10 +140,18 @@ at dense roof packing. citytest + smoke green (0 failures).
     [COMPLETE in iter 31] graffiti (1.0-1.9x0.6-1.0) + rust (0.28x1.2-2.0) + moss
     (base strip 0.32h) as DECAY_T 0.02 thin visual planes just outside the wall,
     3 RNG channels, thin-plane + wall-face + determinism + 2 negative gates.
-15. Phase R idea: broken-window variant — historic facades get random shattered/
+15. [Done] Phase R idea: broken-window variant — historic facades get random shattered/
     missing panes (glass removal / cracked visual) + interior darkness cue; plus
     street-level litter/debris pass (paper, bottles) as visual decals on the
     sidewalk; visual-only, deterministic, gated to historic. Gate: --citytest.
+    [COMPLETE in iter 32] ~30% panes missing per historic facade as BROKEN_DARK_T
+    0.03 dark planes tagged broken + 2-4 litter decals per side at LITTER_Y 0.035
+    tagged litter, visual-only, thin-plane + outside-footprint + determinism +
+    glass-reduction + 2 negative gates.
+16. Phase S idea: interior darkness / night-lighting pass — night is genuinely
+    dark in the historic core, windows with broken panes leak faint interior
+    darkness vs intact panes catch streetlamp spill; explore Emissive/WorldEnvironment
+    tweak or lantern gameplay cue. Gate: --smoke or --citytest.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

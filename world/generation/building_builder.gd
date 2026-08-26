@@ -103,6 +103,14 @@ const DECAY_RUST_H_MIN := 1.2
 const DECAY_RUST_H_MAX := 2.0
 const DECAY_MOSS_H := 0.32
 
+# --- Phase R: broken windows + street litter (visual historic decay) -------
+const BROKEN_WIN_PROB := 0.30    # chance a historic window pane is missing
+const BROKEN_MIN_SIDE := 5.0     # skip on facades shorter than this
+const BROKEN_DARK_T := 0.03      # interior darkness plane thickness
+const LITTER_PROB := 0.58        # chance a historic facade seeds sidewalk litter
+const LITTER_MIN_SIDE := 5.0
+const LITTER_Y := 0.035          # litter sits just above the pavement visual
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -242,7 +250,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		var y0 := f * fh
 		var col := PLINTH_COLOR if f == 0 else wall_c
 		_storey_walls(b, off, w, d, y0, fh, col, f,
-			door_edge if f == 0 else -1, tag)
+				door_edge if f == 0 else -1, tag,
+				str(spec.get("district", "")) == "historic")
 		if f == 0:
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
 			if str(style.get("room_type", "residential")) == "retail":
@@ -285,6 +294,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# directive's eerie decayed aesthetic without touching collision.
 	_facade_decay(b, off, w, d, fh, n, tag, spec)
 
+	# Phase R: broken windows + street litter — missing glass on historic
+	# facades (visual darkness cue inside the aperture, deterministic per
+	# building+side+floor+window) + tiny sidewalk litter decals (paper/
+	# bottles) as visual-only scatter on the pavement outside long historic
+	# facades. Gated to historic district so the city outside stays tidy.
+	_street_litter(b, off, w, d, fh, n, tag, spec)
+
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
 	if has_stairs:
@@ -318,12 +334,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 ## camera-facing wall per storey.
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
 		y0: float, fh: float, col: Color, floor_i: int, door_edge: int,
-		tag: String) -> void:
+		tag: String, is_historic: bool = false) -> void:
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
 		b.push_layer("%s:f%d:%s" % [tag, floor_i, facades[side]])
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
-				door_edge == side)
+				door_edge == side, is_historic, tag)
 		b.pop_layer()
 
 
@@ -752,13 +768,62 @@ static func _facade_decay(b: MeshBatcher, off: Vector3, w: float, d: float,
 					Basis.IDENTITY, mc, false, false, &"", "decay", 0)
 			b.pop_layer()
 
+## Phase R: street-level sidewalk litter outside historic facades ----------
+## Tiny visual-only debris (paper / bottles) scattered on the pavement
+## just outside long historic facades. Deterministic per (side, building)
+## via WorldSeed, gated to historic + long facade, never collides. Pure
+## aesthetic grit for the directive's post-apoc sidewalks.
+static func _street_litter(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var litter_colors: Array[Color] = [
+		Color("c7bca8"), Color("8a7460"), Color("6e6a5f"),
+		Color("b3a48a"), Color("9c9583"), Color("7a5a3a"),
+	]
+	for side in 4:
+		var length := w if (side == 0 or side == 2) else d
+		if length < LITTER_MIN_SIDE:
+			continue
+		var rng := WorldSeed.rng_for("litter", [WorldSeed.str_hash(tag), side])
+		if rng.randf() >= LITTER_PROB:
+			continue
+		var count := rng.randi_range(2, 4)
+		var horizontal := side == 0 or side == 2
+		for k in count:
+			var t := rng.randf_range(0.55, length - 0.55)
+			var sx := rng.randf_range(0.18, 0.42)
+			var sz := rng.randf_range(0.16, 0.35)
+			var sy := 0.02
+			if rng.randf() < 0.35:
+				# bottle / can upright
+				sx = rng.randf_range(0.10, 0.14)
+				sz = rng.randf_range(0.10, 0.14)
+				sy = rng.randf_range(0.14, 0.28)
+			var cx: float = 0.0
+			var cz: float = 0.0
+			var outward := rng.randf_range(0.55, 1.15)
+			match side:
+				0: cx = t; cz = -outward
+				1: cx = w + outward; cz = t
+				2: cx = t; cz = d + outward
+				_: cx = -outward; cz = t
+			var yaw := rng.randf_range(-0.6, 0.6)
+			var basis := Basis(Vector3.UP, yaw)
+			var col: Color = litter_colors[rng.randi_range(0, litter_colors.size() - 1)]
+			col = col.lightened(rng.randf_range(-0.07, 0.07))
+			var litter_sz := Vector3(sx, sy, sz)
+			b.push_layer(tag + ":f0")
+			b.add_box_rotated(off + Vector3(cx, LITTER_Y + sy * 0.5, cz),
+					litter_sz, basis, col, false, false, &"", "litter", 0)
+			b.pop_layer()
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
 ## ENTITY from the CityPlan manifest fills it at runtime.
 static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 		w: float, d: float, y0: float, fh: float, col: Color, floor_i: int,
-		is_entrance: bool) -> void:
+		is_entrance: bool, is_historic: bool = false, tag: String = "") -> void:
 	var horizontal := side == 0 or side == 2     # N/S walls run along X
 	var length := w if horizontal else d
 	var lo := -WALL_T * 0.5                      # extend past corners like the
@@ -799,6 +864,7 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 				w, d)
 
 	# --- vertical closure + glass per opening ----------------------------------
+	var win_idx := 0
 	for o in openings:
 		var oc: float = float(o["c"])
 		var obot: float = float(o["bot"])
@@ -815,12 +881,43 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 					y0 + obot + oh, lh, col)
 		# Glass pane centered INSIDE the aperture (windows only).
 		if bool(o["glass"]):
-			var p := _side_point(side, w, d, oc)
-			var gsize := Vector3(owd - 0.06, oh - 0.04, GLASS_T) \
-					if horizontal else Vector3(GLASS_T, oh - 0.04, owd - 0.06)
-			b.add_destructible_box(
-					off + Vector3(p.x, y0 + obot + oh * 0.5, p.y), gsize,
-					WINDOW_COLOR, &"glass", true)
+			var is_broken := false
+			if is_historic and tag != "":
+				var length_b := w if horizontal else d
+				if length_b >= BROKEN_MIN_SIDE:
+					var rng_br := WorldSeed.rng_for("broken_win",
+							[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + win_idx])
+					if rng_br.randf() < BROKEN_WIN_PROB:
+						is_broken = true
+			win_idx += 1
+			if is_broken:
+				# Missing pane — leave the aperture open but add a dark
+				# interior plane so the hole reads as interior darkness,
+				# not a transparent peek into empty volume. Visual-only.
+				var p_dark := _side_point(side, w, d, oc)
+				var inside := 0.55
+				match side:
+					0: p_dark = Vector2(oc, WALL_T + inside)
+					1: p_dark = Vector2(w - WALL_T - inside, oc)
+					2: p_dark = Vector2(oc, d - WALL_T - inside)
+					_: p_dark = Vector2(WALL_T + inside, oc)
+				var dark_sz := Vector3(owd - 0.12, oh - 0.12, BROKEN_DARK_T) \
+						if horizontal else Vector3(BROKEN_DARK_T, oh - 0.12, owd - 0.12)
+				var dark_c := Color("0f1216")
+				b.push_layer("%s:f%d" % [tag, floor_i])
+				b.add_box_rotated(off + Vector3(p_dark.x, y0 + obot + oh * 0.5, p_dark.y),
+						dark_sz, Basis.IDENTITY, dark_c, false, false, &"", "broken", floor_i)
+				b.pop_layer()
+			else:
+				var p := _side_point(side, w, d, oc)
+				var gsize := Vector3(owd - 0.06, oh - 0.04, GLASS_T) \
+						if horizontal else Vector3(GLASS_T, oh - 0.04, owd - 0.06)
+				b.add_destructible_box(
+						off + Vector3(p.x, y0 + obot + oh * 0.5, p.y), gsize,
+						WINDOW_COLOR, &"glass", true, "", -1)
+		else:
+			# Door opening: no window index to advance, but keep ordering stable.
+			pass
 
 
 static func _emit_wall_seg(b: MeshBatcher, off: Vector3, side: int,
