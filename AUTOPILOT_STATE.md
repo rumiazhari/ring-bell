@@ -5,12 +5,15 @@ LAST_ITER: 15
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase D slice 4 COMPLETE: flat-roof prop dressing (_roof_props). Walkable
-flat decks now carry seeded AC condensers / water tanks / vent clusters /
-antenna masts - all DESTRUCTIBLE boxes (standable cover + fresh ledge-grab
-lips for Phase E parkour), placed inside the parapet inset with a keep-out
-ring around the stair bulkhead so the roof exit never blocks. Pitched/attic
-roofs stay bare.
+Phase D slice 5 COMPLETE: rooftop variety pass. Retail flat roofs now carry
+BILLBOARDS (tall steel-framed ad panels with ladder-rung ledge-grab lip),
+residential flat roofs carry LAUNDRY LINES (two wooden posts with 3 horizontal
+cable strands) and PIGEON COOPS (small wooden hutches with slatted fronts and
+perching ledges). All new props are DESTRUCTIBLE boxes - standable cover that
+doubles as fresh ledge-grab lips for Phase E parkour. Selection is driven by
+style.room_type (\"retail\" vs \"residential\") from CityPlan's BuildingSpec;
+same deterministic WorldSeed.rng_for(\"roofprops\", [wall, roof, d*10]) seeding
+as the base props, extended kind range 0-5 retail / 0-4 residential.
 
 Phase G slice 1 COMPLETE: zombie pack steering (flank-arc chase + deterministic
 flank sides). Zombies no longer form a single-file conga line behind the prey —
@@ -26,10 +29,26 @@ behavior. Gate ALL GREEN: --citytest 35 / --smoke 41 / --cityruntime 26, all
 2. Phase D slice 5 idea: rooftop variety pass - retail roofs get billboards,
    residential gets laundry lines/pigeon coops (reuse _roof_props seeding).
    Gate: citytest.
+   [COMPLETE in iter 16]
 3. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). [DONE in iter 2]
+4. Phase D slice 6 idea: rooftop clutter pass - add HVAC duct runs (linear
+   steel chases along parapet inner face), solar thermal panels (tilted dark
+   glass on residential), and satellite dishes (small steel dishes on retail
+   corners). All destructible, all new ledge-grab lips. Gate: citytest.
 
 ## Log
+- iter 16 (2026-08-26): Phase D slice 5 LANDED - rooftop variety pass.
+  building_builder.gd: _roof_props() now branches on style.room_type.
+  Retail (kind 0-5): adds BILLBOARD - tall steel I-beam posts (9 m) with
+  dark ad panel spanning between them + ladder rung ledge-grab lip.
+  Residential (kind 0-4): adds LAUNDRY LINE - two wooden posts (2.2 m) with
+  3 horizontal cable strands (visual) + PIGEON COOP (kind 5) - small
+  wooden hutch (1.3 m) with slatted front, perching ledge, entry hole.
+  All props DESTRUCTIBLE (standable cover + ledge-grab lips). Deterministic
+  WorldSeed.rng_for("roofprops", [wall, roof, d*10]) extended kind range.
+  Gate ALL GREEN: --citytest 51 / --smoke 19 / --cityruntime 120 / --havoctest 16,
+  all "finished with 0 failure(s)".
 - iter 14 (2026-08-26): Phase D slice 4 LANDED - flat-roof prop dressing.
   building_builder.gd: _roof() else-branch now calls new _roof_props() -
   WorldSeed.rng_for("roofprops", [wall, roof, round(d*10)]) picks 1-4 spots
