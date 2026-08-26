@@ -186,6 +186,16 @@ const CORBEL_D := 0.09                 # corbel depth protruding beyond wall
 const CORBEL_MIN_SIDE := 5.0           # skip on facades shorter than this
 const CORBEL_PROB := 0.50              # chance a historic window sill grows a bracket pair
 
+# --- Phase AG: Prague doorway stone portal (framed historic entrance) ---
+const PORTAL_JAMB_W := 0.16               # stone jamb width along facade
+const PORTAL_JAMB_H := 2.25               # stone jamb height (DOOR_H, from grade to lintel underside)
+const PORTAL_JAMB_T := 0.05               # thin stone jamb thickness protruding beyond wall
+const PORTAL_LINTEL_H := 0.18             # lintel/header height above doorway
+const PORTAL_LINTEL_T := 0.055            # thin stone lintel thickness protruding beyond wall
+const PORTAL_LINTEL_EXTRA := 0.40         # extra width beyond DOOR_W+2*JAMB_W (lintel overhang)
+const PORTAL_MIN_SIDE := 5.0              # skip on facades shorter than this
+const PORTAL_PROB := 0.65                 # chance a historic entrance grows a stone portal
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -446,6 +456,14 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# Prague console without touching collision or glass; together with
 	# the AB/AC/AD/AE surround the window now has 7-piece stone dressing.
 	_facade_sill_corbels(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AG: Prague doorway stone portal — framed historic entrance with
+	# jambs + lintel header, visual-only thin stone boxes pressed just outside
+	# the entrance wall around the doorway opening, deterministic per building
+	# via WorldSeed door_portal, gated to historic + long entrance facade.
+	# Gives every qualifying entrance a classic Prague portal without touching
+	# collision or the door leaf itself.
+	_facade_door_portals(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1515,6 +1533,63 @@ static func _facade_sill_corbels(b: MeshBatcher, off: Vector3, w: float, d: floa
 					b.add_box_rotated(off + Vector3(cx, cy, cz),
 							Vector3(aw, CORBEL_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "corbel", f_idx)
 					b.pop_layer()
+
+## Phase AG: Prague doorway stone portal — framed historic entrance.
+## Visual-only thin stone boxes (PORTAL_JAMB_W 0.16 x PORTAL_JAMB_H 2.25 x PORTAL_JAMB_T 0.05 jamb pair + lintel ~2.22 x 0.18 x 0.055)
+## pressed just outside the entrance wall around the doorway opening (jambs at DOOR_H/2, lintel at DOOR_H+0.02+0.09).
+## Deterministic per building via WorldSeed "door_portal", gated to historic + long entrance facade (>=5.0).
+## One roll per building (PORTAL_PROB 0.65); on success grows exactly 3 boxes — left jamb, right jamb, header lintel —
+## centered on the doorway (length*0.5) with jamb inner faces at mid ± (DOOR_W/2+JAMB_W/2) and lintel width DOOR_W+2*JAMB_W+EXTRA.
+## Visual-only, no collision, layer f0 tagged portal, stone b9aa90 desaturated 0.11.
+static func _facade_door_portals(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	var length := w if (door_edge == 0 or door_edge == 2) else d
+	if length < PORTAL_MIN_SIDE:
+		return
+	var rng := WorldSeed.rng_for("door_portal", [WorldSeed.str_hash(tag)])
+	if rng.randf() >= PORTAL_PROB:
+		return
+	var stone_c := Color("b9aa90").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+	stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+	var eps := 0.045
+	var mid := length * 0.5
+	var lintel_w := DOOR_W + 2.0 * PORTAL_JAMB_W + PORTAL_LINTEL_EXTRA
+	var left_t := mid - (DOOR_W * 0.5 + PORTAL_JAMB_W * 0.5)
+	var right_t := mid + (DOOR_W * 0.5 + PORTAL_JAMB_W * 0.5)
+	var jamb_cy := PORTAL_JAMB_H * 0.5
+	var lintel_cy := DOOR_H + 0.02 + PORTAL_LINTEL_H * 0.5
+	# Left + right jambs
+	for jamb_t in [left_t, right_t]:
+		var cx: float = 0.0
+		var cz: float = 0.0
+		var aw: float = 0.0
+		var ad: float = 0.0
+		match door_edge:
+			0: cx = jamb_t; cz = -PORTAL_JAMB_T * 0.5 - eps; aw = PORTAL_JAMB_W; ad = PORTAL_JAMB_T
+			1: cx = w + PORTAL_JAMB_T * 0.5 + eps; cz = jamb_t; aw = PORTAL_JAMB_T; ad = PORTAL_JAMB_W
+			2: cx = jamb_t; cz = d + PORTAL_JAMB_T * 0.5 + eps; aw = PORTAL_JAMB_W; ad = PORTAL_JAMB_T
+			_: cx = -PORTAL_JAMB_T * 0.5 - eps; cz = jamb_t; aw = PORTAL_JAMB_T; ad = PORTAL_JAMB_W
+		b.push_layer(tag + ":f0")
+		b.add_box_rotated(off + Vector3(cx, jamb_cy, cz),
+				Vector3(aw, PORTAL_JAMB_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "portal", 0)
+		b.pop_layer()
+	# Header lintel centered above doorway
+	var lcx: float = 0.0
+	var lcz: float = 0.0
+	var law: float = 0.0
+	var lad: float = 0.0
+	match door_edge:
+		0: lcx = mid; lcz = -PORTAL_LINTEL_T * 0.5 - eps; law = lintel_w; lad = PORTAL_LINTEL_T
+		1: lcx = w + PORTAL_LINTEL_T * 0.5 + eps; lcz = mid; law = PORTAL_LINTEL_T; lad = lintel_w
+		2: lcx = mid; lcz = d + PORTAL_LINTEL_T * 0.5 + eps; law = lintel_w; lad = PORTAL_LINTEL_T
+		_: lcx = -PORTAL_LINTEL_T * 0.5 - eps; lcz = mid; law = PORTAL_LINTEL_T; lad = lintel_w
+	b.push_layer(tag + ":f0")
+	b.add_box_rotated(off + Vector3(lcx, lintel_cy, lcz),
+			Vector3(law, PORTAL_LINTEL_H, lad), Basis.IDENTITY, stone_c, false, false, &"", "portal", 0)
+	b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door

@@ -203,6 +203,8 @@ func _run_all() -> void:
 		_test_facade_keystones())
 	_check("facade window corbels: Prague stone sill corbels below historic sills (deterministic)",
 		_test_facade_corbels())
+	_check("facade doorway portal: Prague stone jambs + lintel framing historic entrance (deterministic)",
+		_test_facade_portal())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -868,6 +870,15 @@ func _collect_corbel(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "corbel":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "portal" (Phase AG Prague doorway stone portal).
+func _collect_portal(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "portal":
 			continue
 		out.append(s)
 	return out
@@ -2746,6 +2757,173 @@ func _test_facade_corbels() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] corbel: no historic chunk in ring had corbels")
+		return false
+	return true
+
+
+func _test_facade_portal() -> bool:
+	# Historic entrance should grow a stone portal framing the doorway:
+	# exactly 3 visual-only thin boxes (PORTAL_JAMB_W 0.16 x PORTAL_JAMB_H 2.25 x PORTAL_JAMB_T 0.05 jamb pair + lintel ~2.22 x 0.18 x 0.055)
+	# centered on the doorway (mid = length*0.5) with jambs at mid ± (DOOR_W/2+JAMB_W/2) and lintel width DOOR_W+2*JAMB_W+EXTRA,
+	# pressed just outside the entrance wall (eps 0.045), deterministic per building via WorldSeed "door_portal" with PORTAL_PROB 0.65,
+	# gated to historic >=5.0, layer f0 tagged portal, even? triple, visual-only.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "portaltest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["portaltest", "portaltest2", "portaltest3", "portaltest4", "portaltest5", "portaltest6", "portaltest7", "portaltest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_portal(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] portal: historic building grew no portal (tried 8 ids)")
+		return false
+	var jamb_w := BuildingBuilder.PORTAL_JAMB_W
+	var jamb_h := BuildingBuilder.PORTAL_JAMB_H
+	var jamb_t := BuildingBuilder.PORTAL_JAMB_T
+	var lintel_h := BuildingBuilder.PORTAL_LINTEL_H
+	var lintel_t := BuildingBuilder.PORTAL_LINTEL_T
+	var lintel_w := BuildingBuilder.DOOR_W + 2.0 * jamb_w + BuildingBuilder.PORTAL_LINTEL_EXTRA
+	if found.size() != 3:
+		print("[CityTest] portal: count %d != 3 (must be jamb pair + lintel)" % found.size())
+		return false
+	var saw_jamb := 0
+	var saw_lintel := 0
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] portal: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] portal: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "portal":
+			print("[CityTest] portal: building_id %s != portal" % [s.get("building_id", "")])
+			return false
+		if String(s.get("layer", "")).find(":f0") == -1:
+			print("[CityTest] portal: layer %s not f0" % [s.get("layer", "")])
+			return false
+		var is_jamb := absf(sz.y - jamb_h) < 0.015
+		var is_lintel := absf(sz.y - lintel_h) < 0.015
+		if is_jamb:
+			saw_jamb += 1
+			var w_ok := absf(sz.x - jamb_w) < 0.015 or absf(sz.z - jamb_w) < 0.015
+			var t_ok := absf(sz.x - jamb_t) < 0.015 or absf(sz.z - jamb_t) < 0.015
+			if not w_ok or not t_ok:
+				print("[CityTest] portal jamb: size %s not %.2f x %.2f x %.2f at %s" % [sz, jamb_w, jamb_h, jamb_t, pos])
+				return false
+			if absf(pos.y - jamb_h * 0.5) > 0.025:
+				print("[CityTest] portal jamb: y %.3f != %.3f at %s" % [pos.y, jamb_h*0.5, pos])
+				return false
+			# must be near wall face
+			var ox := pos.x - sz.x * 0.5
+			var ox2 := pos.x + sz.x * 0.5
+			var oz := pos.z - sz.z * 0.5
+			var oz2 := pos.z + sz.z * 0.5
+			var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+			if not near_wall:
+				print("[CityTest] portal jamb: not on wall face at %s sz %s" % [pos, sz])
+				return false
+			# verify t offset matches door geometry
+			var mid := 12.0 * 0.5 if int(found_spec["door_edge"]) == 0 or int(found_spec["door_edge"]) == 2 else 10.0 * 0.5
+			var left_t := mid - (BuildingBuilder.DOOR_W * 0.5 + jamb_w * 0.5)
+			var right_t := mid + (BuildingBuilder.DOOR_W * 0.5 + jamb_w * 0.5)
+			var t_val := pos.x if (int(found_spec["door_edge"]) == 0 or int(found_spec["door_edge"]) == 2) else pos.z
+			if absf(t_val - left_t) > 0.025 and absf(t_val - right_t) > 0.025:
+				print("[CityTest] portal jamb: t %.3f not at left %.3f or right %.3f" % [t_val, left_t, right_t])
+				return false
+		elif is_lintel:
+			saw_lintel += 1
+			var w_ok2 := absf(sz.x - lintel_w) < 0.015 or absf(sz.z - lintel_w) < 0.015
+			var t_ok2 := absf(sz.x - lintel_t) < 0.015 or absf(sz.z - lintel_t) < 0.015
+			if not w_ok2 or not t_ok2:
+				print("[CityTest] portal lintel: size %s not %.2f x %.2f x %.2f at %s" % [sz, lintel_w, lintel_h, lintel_t, pos])
+				return false
+			var expected_y := BuildingBuilder.DOOR_H + 0.02 + lintel_h * 0.5
+			if absf(pos.y - expected_y) > 0.025:
+				print("[CityTest] portal lintel: y %.3f != expected %.3f at %s" % [pos.y, expected_y, pos])
+				return false
+			var ox := pos.x - sz.x * 0.5
+			var ox2 := pos.x + sz.x * 0.5
+			var oz := pos.z - sz.z * 0.5
+			var oz2 := pos.z + sz.z * 0.5
+			var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+			if not near_wall:
+				print("[CityTest] portal lintel: not on wall face at %s sz %s" % [pos, sz])
+				return false
+			var mid2 := 12.0 * 0.5 if int(found_spec["door_edge"]) == 0 or int(found_spec["door_edge"]) == 2 else 10.0 * 0.5
+			var t_center := pos.x if (int(found_spec["door_edge"]) == 0 or int(found_spec["door_edge"]) == 2) else pos.z
+			if absf(t_center - mid2) > 0.025:
+				print("[CityTest] portal lintel: t %.3f not centered at %.3f" % [t_center, mid2])
+				return false
+		else:
+			print("[CityTest] portal: unexpected height %.3f at %s" % [sz.y, pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] portal: unexpected alpha %f" % col.a)
+			return false
+	if saw_jamb != 2 or saw_lintel != 1:
+		print("[CityTest] portal: expected 2 jambs + 1 lintel, got %d + %d" % [saw_jamb, saw_lintel])
+		return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_portal(b2)
+	if found.size() != got2.size():
+		print("[CityTest] portal: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] portal: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "portal-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_portal(b3).is_empty():
+		print("[CityTest] portal: non-historic building wrongly grew %d" % _collect_portal(b3).size())
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "portal-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_portal(b4b).is_empty():
+		print("[CityTest] portal: tiny-facade building wrongly grew portal")
+		return false
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "portal":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] portal: no historic chunk in ring had portal")
 		return false
 	return true
 
