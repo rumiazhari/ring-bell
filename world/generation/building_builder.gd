@@ -88,6 +88,21 @@ const PIL_PROB := 0.58            # chance a given historic long facade grows pi
 const PIL_MIN_SIDE := 6.0         # skip pilasters on facades shorter than this
 const PIL_SPACING := 3.2          # nominal interval between pilaster centres
 
+# --- Phase Q: post-apoc facade decay (visual-only historic dressing) ------
+const DECAY_T := 0.02             # decal thickness (thin plane pressed to wall)
+const DECAY_MIN_SIDE := 5.0       # skip decals on facades shorter than this
+const DECAY_GRAFF_PROB := 0.55    # chance a historic facade gets a graffiti tag
+const DECAY_RUST_PROB := 0.48     # chance a historic facade gets a rust streak
+const DECAY_MOSS_PROB := 0.40     # chance a historic facade gets a moss base strip
+const DECAY_GRAFF_W_MIN := 1.0
+const DECAY_GRAFF_W_MAX := 1.9
+const DECAY_GRAFF_H_MIN := 0.6
+const DECAY_GRAFF_H_MAX := 1.0
+const DECAY_RUST_W := 0.28
+const DECAY_RUST_H_MIN := 1.2
+const DECAY_RUST_H_MAX := 2.0
+const DECAY_MOSS_H := 0.32
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -263,6 +278,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# each storey junction; pilasters are segmented vertical strips per storey
 	# giving continuous pillar geometry. Tagged "cornice"/"pilaster".
 	_cornices_and_pilasters(b, off, w, d, fh, n, tag, spec)
+
+	# Phase Q: post-apoc facade decay — graffiti / rust / moss visual decals
+	# pressed to the historic facade face (visual-only, deterministic, gated
+	# to historic + long facade). Brings the white-dummy core into the
+	# directive's eerie decayed aesthetic without touching collision.
+	_facade_decay(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -641,6 +662,95 @@ static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: f
 
 const CELL_H := 2.5      # floor slab panel target edge (BOTH dimensions)
 const WALL_CELL := 1.25  # wall pier horizontal module target width
+
+
+## Phase Q: post-apoc facade decay — visual-only graffiti / rust / moss
+## pressed to the historic facade face (thin planes just outside the wall).
+## Deterministic per (side, building) via WorldSeed, gated to historic +
+## long facade (>= DECAY_MIN_SIDE). Visual-only (collide=false, material
+## empty) so it never affects physics or parkour — pure aesthetic decay.
+static func _facade_decay(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var graff_colors: Array[Color] = [
+		Color("c73a2e"), Color("2c5f8a"), Color("e8c24a"),
+		Color("4a7a3a"), Color("6e3a8a"), Color("e8a040"),
+	]
+	var rust_c := Color("7a3b1f")
+	var moss_c := Color("4a5a2e")
+	for side in 4:
+		var length := w if (side == 0 or side == 2) else d
+		if length < DECAY_MIN_SIDE:
+			continue
+		var rng_g := WorldSeed.rng_for("decay_graff", [WorldSeed.str_hash(tag), side])
+		if rng_g.randf() < DECAY_GRAFF_PROB:
+			var gw := rng_g.randf_range(DECAY_GRAFF_W_MIN, DECAY_GRAFF_W_MAX)
+			var gh := rng_g.randf_range(DECAY_GRAFF_H_MIN, DECAY_GRAFF_H_MAX)
+			gw = minf(gw, length - 0.8)
+			var t := rng_g.randf_range(gw * 0.5 + 0.4, length - gw * 0.5 - 0.4)
+			var cy := rng_g.randf_range(0.9, n * fh - 0.7)
+			var c: Color = graff_colors[rng_g.randi_range(0, graff_colors.size() - 1)]
+			c = c.lightened(rng_g.randf_range(-0.06, 0.06))
+			var cx: float = 0.0
+			var cz: float = 0.0
+			var aw: float = 0.0
+			var ad: float = 0.0
+			var eps := 0.04
+			match side:
+				0: cx = t; cz = -DECAY_T * 0.5 - eps; aw = gw; ad = DECAY_T
+				1: cx = w + DECAY_T * 0.5 + eps; cz = t; aw = DECAY_T; ad = gw
+				2: cx = t; cz = d + DECAY_T * 0.5 + eps; aw = gw; ad = DECAY_T
+				_: cx = -DECAY_T * 0.5 - eps; cz = t; aw = DECAY_T; ad = gw
+			var layer_f := clampi(int(cy / fh), 0, maxi(n - 1, 0))
+			b.push_layer(tag + ":f%d" % layer_f)
+			b.add_box_rotated(off + Vector3(cx, cy, cz), Vector3(aw, gh, ad),
+					Basis.IDENTITY, c, false, false, &"", "decay", layer_f)
+			b.pop_layer()
+		var rng_r := WorldSeed.rng_for("decay_rust", [WorldSeed.str_hash(tag), side])
+		if rng_r.randf() < DECAY_RUST_PROB:
+			var rw := DECAY_RUST_W
+			var rh := rng_r.randf_range(DECAY_RUST_H_MIN, DECAY_RUST_H_MAX)
+			rh = minf(rh, n * fh - 0.6)
+			var t2 := rng_r.randf_range(rw * 0.5 + 0.35, length - rw * 0.5 - 0.35)
+			var cy2 := rng_r.randf_range(rh * 0.5 + 0.3, n * fh - rh * 0.5 - 0.2)
+			var rc := rust_c.lightened(rng_r.randf_range(-0.07, 0.08))
+			var cx2: float = 0.0
+			var cz2: float = 0.0
+			var aw2: float = 0.0
+			var ad2: float = 0.0
+			var eps2 := 0.04
+			match side:
+				0: cx2 = t2; cz2 = -DECAY_T * 0.5 - eps2; aw2 = rw; ad2 = DECAY_T
+				1: cx2 = w + DECAY_T * 0.5 + eps2; cz2 = t2; aw2 = DECAY_T; ad2 = rw
+				2: cx2 = t2; cz2 = d + DECAY_T * 0.5 + eps2; aw2 = rw; ad2 = DECAY_T
+				_: cx2 = -DECAY_T * 0.5 - eps2; cz2 = t2; aw2 = DECAY_T; ad2 = rw
+			var layer_f2 := clampi(int(cy2 / fh), 0, maxi(n - 1, 0))
+			b.push_layer(tag + ":f%d" % layer_f2)
+			b.add_box_rotated(off + Vector3(cx2, cy2, cz2), Vector3(aw2, rh, ad2),
+					Basis.IDENTITY, rc, false, false, &"", "decay", layer_f2)
+			b.pop_layer()
+		var rng_m := WorldSeed.rng_for("decay_moss", [WorldSeed.str_hash(tag), side])
+		if rng_m.randf() < DECAY_MOSS_PROB:
+			var mw := length - 0.7
+			var mh := DECAY_MOSS_H
+			var t3 := length * 0.5
+			var cy3 := mh * 0.5 + 0.08 + rng_m.randf_range(-0.04, 0.05)
+			var mc := moss_c.lightened(rng_m.randf_range(-0.08, 0.08)).darkened(0.05)
+			var cx3: float = 0.0
+			var cz3: float = 0.0
+			var aw3: float = 0.0
+			var ad3: float = 0.0
+			var eps3 := 0.04
+			match side:
+				0: cx3 = t3; cz3 = -DECAY_T * 0.5 - eps3; aw3 = mw; ad3 = DECAY_T
+				1: cx3 = w + DECAY_T * 0.5 + eps3; cz3 = t3; aw3 = DECAY_T; ad3 = mw
+				2: cx3 = t3; cz3 = d + DECAY_T * 0.5 + eps3; aw3 = mw; ad3 = DECAY_T
+				_: cx3 = -DECAY_T * 0.5 - eps3; cz3 = t3; aw3 = DECAY_T; ad3 = mw
+			b.push_layer(tag + ":f0")
+			b.add_box_rotated(off + Vector3(cx3, cy3, cz3), Vector3(aw3, mh, ad3),
+					Basis.IDENTITY, mc, false, false, &"", "decay", 0)
+			b.pop_layer()
 
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).

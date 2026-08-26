@@ -1,21 +1,21 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 30
+LAST_ITER: 31
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 30: Phase P facade cornices + pilasters — horizontal stone cornice bands
-at each storey junction (grabbable ledge, CORN_H 0.18, CORN_PROJ 0.26) +
-segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ
-0.24, PIL_SPACING 3.2), both stone/concrete, colliding, tagged
-"cornice"/"pilaster", deterministic per (side, building), gated to historic
-multi-storey + long facade (CORN_MIN_SIDE/PIL_MIN_SIDE 6.0, CORN_PROB 0.62,
-PIL_PROB 0.58). MeshBatcher stamps vox_tag cornice/pilaster for parkour,
-citytest gained `_test_cornices_pilasters` (protrusion, material, thickness,
-determinism, 3 negative gates).
+Iter 31: Phase Q facade decay — graffiti / rust-streak / moss visual decals
+(DECAY_T 0.02 thin planes, GRAFF 0.55 / RUST 0.48 / MOSS 0.40) pressed just
+outside each historic long facade (>=5.0 m), deterministic per (side,
+building) via WorldSeed, visual-only (collide=false, material empty, tagged
+"decay") so they never affect physics/parkour. Three RNG channels
+("decay_graff" / "decay_rust" / "decay_moss") give independent coverage;
+moss sits as a low base strip, graffiti mid-wall, rust vertical drip.
+citytest gained `_test_facade_decay` (thin-plane, gating, determinism).
 
 ## This iteration
+[autopilot] iter 31: Phase Q facade decay — BuildingBuilder grows graffiti / rust-streak / moss visual decals (DECAY_T 0.02 thin planes, GRAFF 0.55 / RUST 0.48 / MOSS 0.40) pressed just outside each historic long facade (>=5.0), deterministic per (side, building) via WorldSeed, visual-only (collide=false, material empty, tagged "decay"); three RNG channels give independent coverage (graffiti mid-wall, rust drip, moss base strip). Brings the Prague core out of white-dummy into the directive's eerie decayed aesthetic without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("facade decay: graffiti / rust / moss visual decals on historic facades").
 [autopilot] iter 30: Phase P facade cornices + pilasters — BuildingBuilder grows horizontal stone cornice bands at each storey junction (CORN_H 0.18, CORN_PROJ 0.26, concrete, tagged "cornice") + segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ 0.24, concrete, tagged "pilaster") on historic multi-storey long facades; deterministic per (side, building), gated to historic + multi-storey + long facade. MeshBatcher now carries vox_tag cornice/pilaster. citytest + smoke green (0 failures); 1 new assertion passes ("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades").
 [autopilot] iter 29: Phase O construction scaffold — CityPlan emits district + plaza_adjacent (historic + plaza-ring check), BuildingBuilder grows a full-height steel cage + wood plank decks (tagged "scaffold", SCAFF_PROJ 1.0, SCAFF_W 3.4) on one shuffled long facade of plaza-adjacent historic buildings; planks at each storey provide mid-height AC traversal. MeshBatcher now carries vox_tag scaffold. citytest + smoke green (0 failures); 1 new assertion passes ("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades").
 [autopilot] iter 28: Phase N awning->balcony chain — BuildingBuilder now
@@ -129,11 +129,17 @@ at dense roof packing. citytest + smoke green (0 failures).
     gated to historic multi-storey + long facade; completes the AC
     "ledges/pillars" parkour vocabulary. Gate: --citytest.
     [COMPLETE in iter 30]
-14. Phase Q idea: post-apoc facade decay pass — graffiti/decal layers, rust
-    streaks, overgrowth/moss on historic cornices/pilasters, broken windows
-    variant; visual-only, deterministic, gated to historic district; brings
-    the Prague core out of white-dummy into the directive's eerie decayed
-    aesthetic. Gate: --citytest (determinism + gating).
+14. [Done] Phase Q idea: post-apoc facade decay pass — graffiti/decal layers, rust
+    streaks, overgrowth/moss on historic facades, visual-only, deterministic,
+    gated to historic district; brings the Prague core out of white-dummy into
+    the directive's eerie decayed aesthetic. Gate: --citytest (determinism + gating).
+    [COMPLETE in iter 31] graffiti (1.0-1.9x0.6-1.0) + rust (0.28x1.2-2.0) + moss
+    (base strip 0.32h) as DECAY_T 0.02 thin visual planes just outside the wall,
+    3 RNG channels, thin-plane + wall-face + determinism + 2 negative gates.
+15. Phase R idea: broken-window variant — historic facades get random shattered/
+    missing panes (glass removal / cracked visual) + interior darkness cue; plus
+    street-level litter/debris pass (paper, bottles) as visual decals on the
+    sidewalk; visual-only, deterministic, gated to historic. Gate: --citytest.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

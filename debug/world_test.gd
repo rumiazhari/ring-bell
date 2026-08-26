@@ -171,6 +171,8 @@ func _run_all() -> void:
 		_test_scaffolds())
 	_check("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades",
 		_test_cornices_pilasters())
+	_check("facade decay: graffiti / rust / moss visual decals on historic facades",
+		_test_facade_decay())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -732,6 +734,15 @@ func _collect_pilaster(b: MeshBatcher) -> Array:
 		out.append(s)
 	return out
 
+## Visual-only boxes tagged "decay" (Phase Q facade decay — historic dressing).
+func _collect_decay(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "decay":
+			continue
+		out.append(s)
+	return out
+
 
 # --- 24e: Facade balconies (Phase K) ------------------------------------------
 func _test_balconies() -> bool:
@@ -1175,6 +1186,104 @@ func _test_cornices_pilasters() -> bool:
 	BuildingBuilder.build(b6, tiny)
 	if not _collect_cornice(b6).is_empty() or not _collect_pilaster(b6).is_empty():
 		print("[CityTest] cornice/pilaster: tiny-facade building wrongly grew one")
+		return false
+	return true
+
+
+# --- 24i: Facade decay (Phase Q) — visual-only historic dressing ----------------
+func _test_facade_decay() -> bool:
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 4,
+		"id": "decaytest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["decaytest", "decaytest2", "decaytest3", "decaytest4", "decaytest5", "decaytest6"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_decay(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] decay: historic building grew no decay decals (tried 6 ids)")
+		return false
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] decay: decal must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] decay: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "decay":
+			print("[CityTest] decay: building_id %s != decay" % [s.get("building_id", "")])
+			return false
+		if pos.y - sz.y * 0.5 < -0.1:
+			print("[CityTest] decay: box below grade at %s" % [pos])
+			return false
+		if pos.y + sz.y * 0.5 > 12.0 + 0.5:
+			print("[CityTest] decay: box above roof at %s" % [pos])
+			return false
+		var is_thin_x := absf(sz.x - BuildingBuilder.DECAY_T) < 0.015
+		var is_thin_z := absf(sz.z - BuildingBuilder.DECAY_T) < 0.015
+		if not (is_thin_x or is_thin_z):
+			print("[CityTest] decay: thin dimension %s != %.3f" % [sz, BuildingBuilder.DECAY_T])
+			return false
+		if not is_thin_x and not is_thin_z:
+			return false
+		# At least one face just outside the wall (thin plane pressed outward).
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.08 and ox < 0.08) or (ox2 > 12.0 - 0.08 and ox < 12.0 + 0.08) or (oz2 > -0.08 and oz < 0.08) or (oz2 > 10.0 - 0.08 and oz < 10.0 + 0.08)
+		if not near_wall:
+			print("[CityTest] decay: decal not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Colour must be set (not a default zero).
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] decay: unexpected alpha %f" % col.a)
+			return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_decay(b2)
+	if found.size() != got2.size():
+		print("[CityTest] decay: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] decay: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "decay-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_decay(b3).is_empty():
+		print("[CityTest] decay: non-historic building wrongly grew decals")
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "decay-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4 := MeshBatcher.new()
+	BuildingBuilder.build(b4, tiny)
+	if not _collect_decay(b4).is_empty():
+		print("[CityTest] decay: tiny-facade building wrongly grew decals")
 		return false
 	return true
 
