@@ -1,24 +1,12 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 12
+LAST_ITER: 13
 UPDATED: 2026-08-26 (JST, cron run)
 
 ## Current goal
-Phase D slice 2 COMPLETE: semantic room layouts from room_type labels.
-_furnish() takes the building's style.room_type and picks a furniture
-PROGRAM per storey - residential rooms sleep (1-2 wall-snapped beds via
-new generic _wall_snap_spot, headboard on the interior wall face, then the
-familiar home mix), retail floors sell (wall-run counters with register
-block, 2-3 shelf rows, display tables, plants - never a bed). _shelf_spot
-now delegates to _wall_snap_spot(half_along, depth) so shelves/counters/
-beds share ONE validated placement path (true interior bounds + stair-zone
-keep-out + placed-OBB SAT checks, P0-D agreement). New builders _f_bed /
-_f_counter carry building_id/floor_i metadata like every other collider.
-smoke_test.gd section 7c (+4 checks): synthetic residential spec yields a
-bed whose center sits BED_DEPTH/2+gap inside SOME interior wall face;
-retail spec yields a counter and ZERO bed-class boxes anywhere.
-Gate ALL GREEN: smoke 41 / citytest / cityruntime, all 0 failure(s).
+Phase D slice 3 COMPLETE: shopfront dressing (_shopfront) now gated to room_type=="retail". Ground-floor signboards only appear on retail buildings; residential homes no longer wear signboards.
+Gate ALL GREEN: citytest / cityruntime / smoke, all "finished with 0 failure(s)".
 
 ## Backlog
 1. Phase F slice 3 (optional): HUD stamina-bar flash on grab + grab counter
@@ -26,11 +14,17 @@ Gate ALL GREEN: smoke 41 / citytest / cityruntime, all 0 failure(s).
    Gate: smoke. [DONE in iter 12]
 2. Phase D slice 3 (idea): ground-floor shopfront dressing (_shopfront) is
    currently applied to ALL buildings when attic+long facade - gate it to
-   room_type=="retail" so homes stop wearing signboards. Gate: citytest.
+   room_type=="retail" so homes stop wearing signboards. Gate: citytest. [DONE in iter 13]
 3. Phase B polish: irregular alleys + passages through blocks (intra-block
    cuts). [DONE in iter 2]
 
 ## Log
+- iter 13 (2026-08-26): Phase D slice 3 LANDED - shopfront dressing gated to retail room_type.
+  building_builder.gd: _shopfront() now only called when style.room_type == "retail"
+  (checked via str(style.get("room_type", "residential")) == "retail").
+  Residential buildings no longer receive signboard/shopfront visual dressing on
+  their ground-floor street facade. Gate ALL GREEN: --citytest 34 / --cityruntime 26
+  / --smoke 41, all "finished with 0 failure(s)".
 - iter 12 (2026-08-26): Phase F slice 3 LANDED - HUD stamina-bar flash on
   ledge grab + lifetime grab/rooftop counter readout.
   ui/hud.gd: flash_stamina_bar() tween-modulates the stamina ProgressBar
