@@ -119,6 +119,16 @@ const WINDOW_GLOW_ENERGY := 1.15
 const WINDOW_GLOW_COLOR := Color(1.0, 0.88, 0.62)
 const WINDOW_GLOW_INSET := 0.65  # distance inside wall face to place the point light
 
+# --- Phase X: Prague facade signage — shop signs + house numbers (post-apoc faded) ---
+const SIGNAGE_T := 0.02          # thin plaque pressed to wall (visual-only)
+const SIGNAGE_MIN_SIDE := 5.0    # skip on facades shorter than this
+const SIGNAGE_SHOP_PROB := 0.48  # chance a historic non-entrance facade gets a faded shop sign
+const SIGNAGE_HOUSE_PROB := 0.60 # chance the entrance facade gets a house-number plaque
+const SIGNAGE_SHOP_W_MIN := 0.85
+const SIGNAGE_SHOP_W_MAX := 1.45
+const SIGNAGE_SHOP_H := 0.42
+const SIGNAGE_HOUSE_S := 0.32    # square plaque
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -308,6 +318,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# bottles) as visual-only scatter on the pavement outside long historic
 	# facades. Gated to historic district so the city outside stays tidy.
 	_street_litter(b, off, w, d, fh, n, tag, spec)
+
+	# Phase X: Prague facade signage — faded shop signs + house-number plaques
+	# (visual-only, deterministic per side/building, gated to historic +
+	# long facade). Shop signs hang on non-entrance ground-floor walls,
+	# house numbers sit beside the doorway — the Prague old-town read.
+	_facade_signage(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -824,6 +840,85 @@ static func _street_litter(b: MeshBatcher, off: Vector3, w: float, d: float,
 			b.push_layer(tag + ":f0")
 			b.add_box_rotated(off + Vector3(cx, LITTER_Y + sy * 0.5, cz),
 					litter_sz, basis, col, false, false, &"", "litter", 0)
+			b.pop_layer()
+
+## Phase X: Prague facade signage — faded shop signs + house-number plaques.
+## Visual-only thin planes pressed just outside the wall (SIGNAGE_T), gated
+## to historic + long facade (>= SIGNAGE_MIN_SIDE), deterministic per
+## (side, building) via WorldSeed. House plaques sit beside the entrance
+## door on the door wall; shop signs hang on the other three walls as a
+## single faded board on the ground floor. Pure Prague historic dressing,
+## no collision or parkour change.
+static func _facade_signage(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	# Faded palette — desaturated Prague shop tones + enamel house-number cream/blue.
+	var shop_colors: Array[Color] = [
+		Color("4a5a6e"), Color("6e4a3a"), Color("5a6e4a"),
+		Color("6e5a4a"), Color("4a6e6a"), Color("5a4a6e"),
+	]
+	var plaque_colors: Array[Color] = [
+		Color("c8c4a8"), Color("d8cfb0"), Color("a8c4d8"), Color("d8b8a0"),
+	]
+	for side in 4:
+		var length := w if (side == 0 or side == 2) else d
+		if length < SIGNAGE_MIN_SIDE:
+			continue
+		if side == door_edge:
+			var rng_h := WorldSeed.rng_for("house_num", [WorldSeed.str_hash(tag), side])
+			if rng_h.randf() >= SIGNAGE_HOUSE_PROB:
+				continue
+			var s := SIGNAGE_HOUSE_S
+			var h_y := 1.35
+			# Left or right of the doorway centre, never overlapping the door leaf.
+			var side_offset := (DOOR_W * 0.5 + 0.72) * (1.0 if rng_h.randf() < 0.5 else -1.0)
+			var t_h := length * 0.5 + side_offset
+			t_h = clampf(t_h, s * 0.5 + 0.35, length - s * 0.5 - 0.35)
+			var c_plaque: Color = plaque_colors[rng_h.randi_range(0, plaque_colors.size() - 1)]
+			c_plaque = c_plaque.lightened(rng_h.randf_range(-0.05, 0.05)).darkened(0.02)
+			var cx_h: float = 0.0
+			var cz_h: float = 0.0
+			var aw_h: float = 0.0
+			var ad_h: float = 0.0
+			var eps := 0.04
+			match side:
+				0: cx_h = t_h; cz_h = -SIGNAGE_T * 0.5 - eps; aw_h = s; ad_h = SIGNAGE_T
+				1: cx_h = w + SIGNAGE_T * 0.5 + eps; cz_h = t_h; aw_h = SIGNAGE_T; ad_h = s
+				2: cx_h = t_h; cz_h = d + SIGNAGE_T * 0.5 + eps; aw_h = s; ad_h = SIGNAGE_T
+				_: cx_h = -SIGNAGE_T * 0.5 - eps; cz_h = t_h; aw_h = SIGNAGE_T; ad_h = s
+			b.push_layer(tag + ":f0")
+			b.add_box_rotated(off + Vector3(cx_h, h_y, cz_h),
+					Vector3(aw_h, s, ad_h), Basis.IDENTITY, c_plaque, false, false, &"", "signage", 0)
+			b.pop_layer()
+		else:
+			var rng_s := WorldSeed.rng_for("shop_sign", [WorldSeed.str_hash(tag), side])
+			if rng_s.randf() >= SIGNAGE_SHOP_PROB:
+				continue
+			var sw := rng_s.randf_range(SIGNAGE_SHOP_W_MIN, SIGNAGE_SHOP_W_MAX)
+			sw = minf(sw, length - 0.8)
+			var sh := SIGNAGE_SHOP_H
+			var t_s := rng_s.randf_range(sw * 0.5 + 0.40, length - sw * 0.5 - 0.40)
+			var cy := 2.02 + rng_s.randf_range(-0.08, 0.08)
+			cy = clampf(cy, 1.6, fh - 0.25)
+			var c_shop: Color = shop_colors[rng_s.randi_range(0, shop_colors.size() - 1)]
+			c_shop = c_shop.lightened(rng_s.randf_range(-0.06, 0.08))
+			# Slightly desaturate to read as faded sun-bleached board.
+			c_shop = c_shop.lerp(Color(0.68, 0.65, 0.60), 0.22)
+			var cx_s: float = 0.0
+			var cz_s: float = 0.0
+			var aw_s: float = 0.0
+			var ad_s: float = 0.0
+			var eps2 := 0.04
+			match side:
+				0: cx_s = t_s; cz_s = -SIGNAGE_T * 0.5 - eps2; aw_s = sw; ad_s = SIGNAGE_T
+				1: cx_s = w + SIGNAGE_T * 0.5 + eps2; cz_s = t_s; aw_s = SIGNAGE_T; ad_s = sw
+				2: cx_s = t_s; cz_s = d + SIGNAGE_T * 0.5 + eps2; aw_s = sw; ad_s = SIGNAGE_T
+				_: cx_s = -SIGNAGE_T * 0.5 - eps2; cz_s = t_s; aw_s = SIGNAGE_T; ad_s = sw
+			b.push_layer(tag + ":f0")
+			b.add_box_rotated(off + Vector3(cx_s, cy, cz_s),
+					Vector3(aw_s, sh, ad_s), Basis.IDENTITY, c_shop, false, false, &"", "signage", 0)
 			b.pop_layer()
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).

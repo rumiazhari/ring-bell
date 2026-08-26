@@ -185,6 +185,8 @@ func _run_all() -> void:
 		_test_volumetric_ambience())
 	_check("flicker/dead lamps: historic subset sputters or stays dark (deterministic)",
 		_test_flicker_dead_lamps())
+	_check("facade signage: Prague shop signs + house numbers on historic facades (deterministic)",
+		_test_facade_signage())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -769,6 +771,15 @@ func _collect_litter(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "litter":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "signage" (Phase X Prague shop signs + house numbers).
+func _collect_signage(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "signage":
 			continue
 		out.append(s)
 	return out
@@ -1454,6 +1465,135 @@ func _test_broken_and_litter() -> bool:
 	BuildingBuilder.build(b4, tiny)
 	if not _collect_broken(b4).is_empty() or not _collect_litter(b4).is_empty():
 		print("[CityTest] broken/litter: tiny-facade building wrongly grew one")
+		return false
+	return true
+
+
+# --- 24k2: Facade signage (Phase X) — Prague shop signs + house numbers -------
+func _test_facade_signage() -> bool:
+	# Historic long facades should grow signage: a small house-number plaque
+	# beside the entrance door (0.32 square) + faded shop boards on the other
+	# three walls (0.85-1.45 x 0.42). Visual-only thin planes (SIGNAGE_T 0.02)
+	# pressed just outside the wall, deterministic, gated to historic.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "signagetest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["signagetest", "signagetest2", "signagetest3", "signagetest4", "signagetest5", "signagetest6", "signagetest7", "signagetest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_signage(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] signage: historic building grew no signage decals (tried 8 ids)")
+		return false
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] signage: decal must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] signage: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "signage":
+			print("[CityTest] signage: building_id %s != signage" % [s.get("building_id", "")])
+			return false
+		if pos.y < 1.0 or pos.y > 3.0:
+			print("[CityTest] signage: y %.2f not in ground-floor band [1.0,3.0] at %s" % [pos.y, pos])
+			return false
+		var is_thin := absf(sz.x - BuildingBuilder.SIGNAGE_T) < 0.015 or absf(sz.z - BuildingBuilder.SIGNAGE_T) < 0.015
+		if not is_thin:
+			print("[CityTest] signage: thin dimension %s != %.3f" % [sz, BuildingBuilder.SIGNAGE_T])
+			return false
+		# Distinguish plaque (0.32 square) vs board (0.85-1.45 x 0.42). Thin axis is either x or z.
+		var is_plaque := false
+		var is_board := false
+		if absf(sz.y - BuildingBuilder.SIGNAGE_HOUSE_S) < 0.02:
+			# plaque: other planar axis besides thin must be HOUSE_S
+			var planar := sz.z if absf(sz.x - BuildingBuilder.SIGNAGE_T) < 0.015 else sz.x
+			if absf(planar - BuildingBuilder.SIGNAGE_HOUSE_S) < 0.02:
+				is_plaque = true
+		if absf(sz.y - BuildingBuilder.SIGNAGE_SHOP_H) < 0.02:
+			var planar_w: float = sz.z if absf(sz.x - BuildingBuilder.SIGNAGE_T) < 0.015 else sz.x
+			if planar_w >= BuildingBuilder.SIGNAGE_SHOP_W_MIN - 0.02 and planar_w <= BuildingBuilder.SIGNAGE_SHOP_W_MAX + 0.02:
+				is_board = true
+		if not is_plaque and not is_board:
+			print("[CityTest] signage: unexpected size %s at %s (y %.2f)" % [sz, pos, sz.y])
+			return false
+		# Must sit just outside a wall face (thin plane pressed outward).
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.08 and ox < 0.08) or (ox2 > 12.0 - 0.08 and ox < 12.0 + 0.08) or (oz2 > -0.08 and oz < 0.08) or (oz2 > 10.0 - 0.08 and oz < 10.0 + 0.08)
+		if not near_wall:
+			print("[CityTest] signage: decal not on wall face at %s sz %s" % [pos, sz])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] signage: unexpected alpha %f" % col.a)
+			return false
+	# Determinism: rebuild identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_signage(b2)
+	if found.size() != got2.size():
+		print("[CityTest] signage: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] signage: nondeterministic box %d" % i)
+			return false
+	# Gating: non-historic building must grow none.
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "signage-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_signage(b3).is_empty():
+		print("[CityTest] signage: non-historic building wrongly grew %d decals" % _collect_signage(b3).size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "signage-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_signage(b4b).is_empty():
+		print("[CityTest] signage: tiny-facade building wrongly grew decals")
+		return false
+	# Spot check city chunks: historic ring should have signage, outer should be ~0.
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "signage":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] signage: no historic chunk in ring had signage")
 		return false
 	return true
 
