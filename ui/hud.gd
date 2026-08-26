@@ -18,6 +18,7 @@ const BAR_DEFS := [
 var _clock_label: Label
 var _weapon_label: Label
 var _bars := {}                # String key -> ProgressBar
+var _grab_label: Label         # Phase F slice 3: traversal counter readout
 var _quest_tracker: RichTextLabel
 var _prompt_label: Label
 var _notice_label: Label
@@ -26,6 +27,10 @@ var _death_overlay: Control
 var _tracker_accum := 0.0
 var _banner_tween: Tween
 var _notice_tween: Tween
+var _stamina_flash_tween: Tween
+var stamina_flashes := 0       # test readout: how many times the bar flashed
+var _shown_grabs := -1         # last counts rendered into _grab_label
+var _shown_mantles := -1
 
 
 func _ready() -> void:
@@ -121,6 +126,45 @@ func _build_vitals() -> void:
 
 		vbox.add_child(row)
 		_bars[def[0]] = bar
+
+	# Phase F slice 3: traversal readout under the vitals bars.
+	_grab_label = _make_label(12, Color(0.72, 0.85, 0.58))
+	vbox.add_child(_grab_label)
+	set_grab_counter(0, 0)
+
+
+## Phase F slice 3: brief bright pulse on the stamina bar after a ledge
+## grab - the bar is the resource the grab just spent, so the eye is
+## already there. Re-firing restarts the pulse.
+func flash_stamina_bar() -> void:
+	stamina_flashes += 1
+	var bar: ProgressBar = _bars.get("stamina")
+	if bar == null:
+		return
+	if _stamina_flash_tween != null and _stamina_flash_tween.is_valid():
+		_stamina_flash_tween.kill()
+	bar.modulate = Color(2.0, 2.0, 1.3, 1.0)
+	_stamina_flash_tween = create_tween()
+	_stamina_flash_tween.tween_property(bar, "modulate", Color.WHITE, 0.55)
+
+
+## Test/readout helper: true while the flash is visibly active.
+func stamina_flash_active() -> bool:
+	var bar: ProgressBar = _bars.get("stamina")
+	return bar != null and bar.modulate != Color.WHITE
+
+
+## Phase F slice 3: lifetime traversal stats line (parkour counters).
+func set_grab_counter(grabs: int, mantles: int) -> void:
+	if grabs == _shown_grabs and mantles == _shown_mantles:
+		return
+	_shown_grabs = grabs
+	_shown_mantles = mantles
+	_grab_label.text = "Grabs: %d   Rooftop mantles: %d" % [grabs, mantles]
+
+
+func grab_counter_text() -> String:
+	return _grab_label.text
 
 
 # --- Quest tracker ----------------------------------------------------------
@@ -304,3 +348,10 @@ func _update_bars() -> void:
 	_bars["hunger"].value = player.needs.hunger
 	_bars["thirst"].value = player.needs.thirst
 	_bars["fatigue"].value = player.needs.fatigue
+	if player.parkour != null:
+		set_grab_counter(player.parkour.ledge_grabs, player.parkour.rooftop_mantles)
+
+
+## Test/readout helper: text of the last flashed notice.
+func last_notice() -> String:
+	return _notice_label.text

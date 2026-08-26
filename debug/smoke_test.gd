@@ -291,6 +291,37 @@ func _run_all() -> void:
 				player.global_position.y < 0.5,
 				"y=%.2f" % player.global_position.y)
 		player.stamina = Survivor.STAMINA_MAX
+
+		# Phase F slice 3: HUD stamina-bar flash + grab counter readout.
+		var hud: HUD = null
+		for c in get_tree().current_scene.get_children():
+			if c is HUD:
+				hud = c
+				break
+		if hud != null and player.parkour != null:
+			var flashes_before: int = hud.stamina_flashes
+			player.parkour.ledge_grabbed.emit(true)
+			_check("grab signal flashes the stamina bar",
+					hud.stamina_flashes == flashes_before + 1,
+					"flashes=%d expected=%d" % [hud.stamina_flashes, flashes_before + 1])
+			_check("grab signal raises rooftop HUD notice",
+					hud.last_notice().contains("rooftop"), hud.last_notice())
+			_check("stamina bar modulate is non-white while flash active",
+					hud.stamina_flash_active(), "modulate=%s" % hud._bars["stamina"].modulate)
+			hud.set_grab_counter(4, 2)
+			var txt := hud.grab_counter_text()
+			_check("HUD grab counter renders counts",
+					txt.contains("4") and txt.contains("2"), txt)
+			# After the cornice grab earlier, parkour counters are non-zero.
+			# One frame later the HUD _process should have refreshed the line.
+			var grabs_now: int = player.parkour.ledge_grabs
+			var mantles_now: int = player.parkour.rooftop_mantles
+			await _wait(0.2)
+			txt = hud.grab_counter_text()
+			_check("HUD grab counter tracks parkour stats",
+					txt.contains("Grabs: %d" % grabs_now),
+					"%s vs grabs=%d mantles=%d" % [txt, grabs_now, mantles_now])
+
 		# Restore controller.
 		for c in player.get_children():
 			if c is PlayerController:

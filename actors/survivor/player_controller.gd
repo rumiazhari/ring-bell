@@ -35,12 +35,14 @@ func setup(hud: Node) -> void:
 
 
 ## Phase F: traversal feedback - flash a HUD notice whenever the survivor
-## grabs a ledge mid-fall, distinguishing rooftop cornices from plain props.
+## grabs a ledge mid-fall, distinguishing rooftop cornices from plain props,
+## and pulse the stamina bar (the resource the grab just spent).
 func _on_ledge_grabbed(is_building: bool) -> void:
 	if _hud == null:
 		return
 	var text := "Mantled onto the rooftop!" if is_building else "Grabbed the ledge!"
 	_hud.call("flash_notice", text)
+	_hud.call("flash_stamina_bar")
 
 
 func _physics_process(delta: float) -> void:
