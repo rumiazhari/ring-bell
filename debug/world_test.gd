@@ -199,6 +199,12 @@ func _test_roof_props() -> bool:
 			print("[CityTest] roofprops: prop inside bulkhead keep-out %s"
 					% [r])
 			return false
+		# Phase F iter 20: the approach ring carries PROP_CLEARANCE, so no
+		# prop footprint may enter the clearance buffer around the ring.
+		if r.intersects(keepout.grow(BuildingBuilder.PROP_CLEARANCE)):
+			print("[CityTest] roofprops: prop inside bulkhead clearance "
+					+ "buffer %s" % [r])
+			return false
 
 	var b_b := MeshBatcher.new()
 	BuildingBuilder.build(b_b, base)

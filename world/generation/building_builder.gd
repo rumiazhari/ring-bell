@@ -43,6 +43,7 @@ const WIN_SPACING := 2.4
 const GLASS_T := 0.2                   # pane thickness inside the WALL_T aperture
 const PARAPET_H := 0.9
 const PROP_CLEARANCE := 0.35       # minimum gap between adjacent roof props
+const BULKHEAD_RING := 1.2         # approach ring around the stair bulkhead
 
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
@@ -1159,7 +1160,9 @@ static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 ## lips for the Phase E parkour system. Placement is deterministic
 ## (WorldSeed.rng_for, same pattern as the chimney), confined to the deck
 ## area inset from the parapet line, and keeps a clear approach ring around
-## the stair bulkhead so the roof exit never gets blocked. Pitched roofs
+## the stair bulkhead so the roof exit never gets blocked - the ring itself
+## carries PROP_CLEARANCE so no prop footprint ever sits flush against the
+## roof-exit lane boundary (Phase F). Pitched roofs
 ## carry no walkable deck and skip dressing entirely.
 static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 		style: Dictionary, total_h: float, zone: Rect2, has_stairs: bool) -> void:
@@ -1170,7 +1173,12 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 			maxf(w - 2.0 * inset, 0.0), maxf(d - 2.0 * inset, 0.0))
 	if usable.size.x < 1.4 or usable.size.y < 1.4:
 		return   # deck too small to dress safely
-	var keepout := zone.grow(1.2) if has_stairs else Rect2()
+	# Phase F: the bulkhead approach ring carries PROP_CLEARANCE on top of
+	# BULKHEAD_RING, so prop footprints (scatter AND the HVAC duct run) keep
+	# a 0.35 m gap from the ring boundary instead of stopping flush against
+	# the roof-exit lane.
+	var keepout := zone.grow(BULKHEAD_RING + PROP_CLEARANCE) \
+			if has_stairs else Rect2()
 	var rng := WorldSeed.rng_for("roofprops",
 			[int(style["wall"]), int(style["roof"]), int(round(d * 10))])
 	var budget := mini(int(usable.get_area() / 18.0), 4)

@@ -1,28 +1,28 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 19
+LAST_ITER: 20
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 19: Phase F inter-roof prop spacing optimization. New `PROP_CLEARANCE`
-const (0.35 m) added; `_rect_obb()` now accepts a `pad` argument and both the
-HVAC duct run and the freestanding roof-prop scatter test their footprints
-against previously placed props with a 0.35 m clearance buffer via
-`_obb_overlap`. This guarantees a minimum gap between adjacent destructible
-roof boxes so dense packing never creates overlapping standable cover /
-ledge-grab lips. Deterministic (same seeds unchanged). Gate: --citytest.
+Iter 20: Phase F bulkhead keep-out clearance. Extracted `BULKHEAD_RING` const
+(1.2 m) and grew the stair-bulkhead keep-out ring by `PROP_CLEARANCE`
+(0.35 m) in `_roof_props`, so both freestanding scatter props AND the HVAC
+duct run keep a 0.35 m gap from the roof-exit lane boundary instead of
+stopping flush against it. Strengthened `_test_roof_props` with a
+clearance-buffer assertion (`keepout.grow(PROP_CLEARANCE)`). Deterministic;
+same-seed rebuilds identical.
 
 ## This iteration
+[autopilot] iter 20: Phase F bulkhead keep-out clearance — ring grown by
+PROP_CLEARANCE via new BULKHEAD_RING const; props/HVAC never clip the
+roof-exit lane. citytest + smoke green (0 failures); strengthened citytest
+assertion passes.
+
 [autopilot] iter 19: Phase F inter-roof prop spacing optimization —
 PROP_CLEARANCE 0.35 m buffer between adjacent roof props (HVAC duct + scatter)
 via padded `_rect_obb`; prevents overlapping destructible boxes at dense
-roof packing. citytest + smoke green (0 failures); rooftop clutter + flat-roof
-props determinism checks still pass.
-
-[autopilot] iter 18: Phase E ledge-grab lip validation — verified HVAC duct
-top raised to 0.94m and solar panel rear leg raised to 0.95m lip height for
-Phase E parkour compatibility. citytest + smoke green (0 failures).
+roof packing. citytest + smoke green (0 failures).
 
 ## Backlog
 1. Phase D slice 5 COMPLETE: rooftop variety pass - retail roofs get
@@ -34,5 +34,9 @@ Phase E parkour compatibility. citytest + smoke green (0 failures).
 3. [Done] Phase F idea: inter-roof prop spacing optimization — prevent
    overlapping destructible boxes at dense roof packing. Gate: --citytest.
    [COMPLETE in iter 19]
-4. [Next] Phase F idea: extend PROP_CLEARANCE to the stair bulkhead
-   keep-out ring so roof props never clip the roof-exit lane. Gate: --citytest.
+4. [Done] Phase F idea: extend PROP_CLEARANCE to the stair bulkhead
+   keep-out ring so roof props never clip the roof-exit lane. Gate:
+   --citytest. [COMPLETE in iter 20]
+5. [Next] Phase G idea: rooftop water tower landmark on the largest retail
+   flat decks (tall standable tank on legs = fresh vantage + ledge lips).
+   Gate: --citytest.
