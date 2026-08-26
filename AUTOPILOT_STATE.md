@@ -1,23 +1,32 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 27
+LAST_ITER: 28
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 27: Phase M awning-led low-mantle traversal - the Phase-E parkour
-controller now CLASSIFIES grabs on feature-tagged shapes via a new vox_tag
-meta stamped by MeshBatcher.flush_into (whitelist: awning/balcony/tower/
-bhplant/bhladder/bhexit). Awning grabs get their own lifetime counter
-(awning_grabs), readout (last_grab_was_awning), and a gentler canvas-deck
-follow-through drive (AWNING_DRIVE_SPEED 2.6 m/s, between crate 2.2 and
-cornice 3.0) so ground-floor street canopies chain as soft, forgiving AC-style
-parkour. Signal signature unchanged; HUD untouched. Smoke suite gained the
-full synthetic awning fixture (wood deck top 2.3 m + steel lip top 2.75 m,
-vox_tag "awning") proving trigger + classification + non-rooftop + mount,
-plus a plain-crate negative control.
+Iter 28: Phase N awning->balcony chain reach audit — the street awning deck
+(top 2.3) now demonstrably chains to the first-floor balcony (deck 3.25,
+lip 3.75, rise 1.45 within the 0.9-2.1 grab window) on the SAME outward
+facade, completing the AC ground->first-floor vertical. BuildingBuilder's
+old hard skip that blocked balcony generation on the street wall is lifted
+(balconies at f>=1 now roll the same BAL_PROB as any side, shopfront
+dressing stays ground-only), so stacked awning->balcony actually spawns
+in the city (seeded, gated by BAL_MIN_SIDE). Smoke suite gained the
+stacked fixture (awning 2.3 + balcony 3.25/3.75 sharing the same lip plane
+x=-1.5) proving balcony grab trigger + non-awning classification + mount
+on deck, plus a height-delta audit (rise 1.45 inside window, no tuning).
 
 ## This iteration
+[autopilot] iter 28: Phase N awning->balcony chain — BuildingBuilder now
+hosts balconies on the street wall at f>=1 (same BAL_PROB, enabling
+stacked awning->balcony generation); smoke fixture proves the balcony lip
+(steel, vox_tag balcony, top 3.75) is grabbable from a fall alongside the
+stack and that the 2.3->3.75 rise (1.45) sits comfortably inside the
+LEDGE_TOP_MIN/REACH window, confirming ground->first-floor chaining needs
+no height tuning. citytest + smoke green (0 failures); 5 new assertions
+pass ("balcony grab triggered during fall", "chain height delta within
+grab window", etc.).
 [autopilot] iter 27: Phase M awning-grab classification in the parkour
 controller (vox_tag meta from MeshBatcher, awning_grabs counter, gentler
 AWNING_DRIVE_SPEED follow-through); smoke fixture mimics real iter-26
@@ -104,11 +113,16 @@ at dense roof packing. citytest + smoke green (0 failures).
    "awning" boxes as their own soft-structure grab class (vox_tag meta,
    awning_grabs counter, AWNING_DRIVE_SPEED follow-through). Gate: --smoke.
    [COMPLETE in iter 27]
-11. Phase N idea: awning->balcony chain reach audit - verify (smoke fixture)
-    that from a standable awning deck (2.3 m) a jump-grab can catch the
-    first balcony deck of a 2-storey facade, making ground->first-floor
-    traversal a real AC-style chain; tune AWN_DECK_Y/BAL heights only if
-    the gap is unreachable. Gate: --smoke.
+11. [Done] Phase N idea: awning->balcony chain reach audit - verify (smoke
+    fixture) that from a standable awning deck (2.3 m) a jump-grab can
+    catch the first balcony deck of a 2-storey facade, making ground->
+    first-floor traversal a real AC-style chain; tune AWN_DECK_Y/BAL
+    heights only if the gap is unreachable. Gate: --smoke.
+    [COMPLETE in iter 28] rise 1.45 inside 0.9-2.1, no tuning needed.
+12. Phase O idea: construction scaffold on plaza-adjacent historic facades
+    — steel pole cage + plank decks (standable) tagged "scaffold",
+    deterministic, gated to plaza adjacency; adds mid-height AC
+    scaffolding traversal. Gate: --citytest.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

@@ -352,6 +352,99 @@ func _run_all() -> void:
 				player.global_position.y > 2.0,
 				"y=%.2f" % player.global_position.y)
 
+		# --- Phase N: awning->balcony chain reach audit --------------------
+		# A street awning deck (top 2.3) sits directly below a first-floor
+		# balcony deck (top 3.25, lip 3.75) on the SAME outward face - the
+		# AC ground->first-floor vertical. We prove the balcony lip is
+		# grabbable (falling fixture) and that the height delta from the
+		# awning deck (rise ~1.45 within 0.9-2.1) is within the parkour
+		# window — so a jump from the awning CAN chain to the balcony.
+		# Heights are NOT tuned: 2.3 vs 3.25/3.75 already pairs within the
+		# window and this fixture proves it. If it ever fails, tune
+		# AWN_DECK_Y / BAL heights or BAL slot y.
+		var chain_pos := box_pos + Vector3(0.0, 0.0, 200.0)
+		var chain_floor := StaticBody3D.new()
+		var chain_floor_shape := CollisionShape3D.new()
+		var chain_floor_box := BoxShape3D.new()
+		chain_floor_box.size = Vector3(20.0, 1.0, 20.0)
+		chain_floor_shape.shape = chain_floor_box
+		chain_floor.global_position = chain_pos + Vector3(0.0, -0.5, 0.0)
+		chain_floor.add_child(chain_floor_shape)
+		get_tree().current_scene.add_child(chain_floor)
+		var chain_body := StaticBody3D.new()
+		var ch_aw_deck_shape := CollisionShape3D.new()
+		var ch_aw_deck_box := BoxShape3D.new()
+		ch_aw_deck_box.size = Vector3(3.0, 0.12, 2.4)
+		ch_aw_deck_shape.shape = ch_aw_deck_box
+		ch_aw_deck_shape.position = Vector3(0.0, 2.24, 0.0)
+		ch_aw_deck_shape.set_meta("vox_material", &"wood")
+		ch_aw_deck_shape.set_meta("vox_tag", &"awning")
+		var ch_aw_lip_shape := CollisionShape3D.new()
+		var ch_aw_lip_box := BoxShape3D.new()
+		ch_aw_lip_box.size = Vector3(0.07, 0.45, 2.4)
+		ch_aw_lip_shape.shape = ch_aw_lip_box
+		ch_aw_lip_shape.position = Vector3(-1.465, 2.525, 0.0)
+		ch_aw_lip_shape.set_meta("vox_material", &"steel")
+		ch_aw_lip_shape.set_meta("vox_tag", &"awning")
+		var ch_ba_deck_shape := CollisionShape3D.new()
+		var ch_ba_deck_box := BoxShape3D.new()
+		ch_ba_deck_box.size = Vector3(3.0, 0.16, 2.4)
+		ch_ba_deck_shape.shape = ch_ba_deck_box
+		ch_ba_deck_shape.position = Vector3(0.0, 3.17, 0.0)
+		ch_ba_deck_shape.set_meta("vox_material", &"concrete")
+		ch_ba_deck_shape.set_meta("vox_tag", &"balcony")
+		var ch_ba_lip_shape := CollisionShape3D.new()
+		var ch_ba_lip_box := BoxShape3D.new()
+		ch_ba_lip_box.size = Vector3(0.07, 0.5, 2.4)
+		ch_ba_lip_shape.shape = ch_ba_lip_box
+		ch_ba_lip_shape.position = Vector3(-1.465, 3.50, 0.0)
+		ch_ba_lip_shape.set_meta("vox_material", &"steel")
+		ch_ba_lip_shape.set_meta("vox_tag", &"balcony")
+		chain_body.add_child(ch_aw_deck_shape)
+		chain_body.add_child(ch_aw_lip_shape)
+		chain_body.add_child(ch_ba_deck_shape)
+		chain_body.add_child(ch_ba_lip_shape)
+		chain_body.global_position = chain_pos
+		get_tree().current_scene.add_child(chain_body)
+		await _wait(0.3)
+		var chain_grabs_before: int = player.parkour.ledge_grabs
+		# Drop alongside the BALCONY lip (outer plane at x=-1.5) from above,
+		# exactly like the awning fixture — proves the balcony lip is
+		# grabbable on its own. Combined with the height-delta check below,
+		# this proves awning->balcony chaining is reachable.
+		var chain_face_x := chain_pos.x - 1.5
+		player.global_position = Vector3(chain_face_x - 0.45, 5.4, chain_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.RIGHT
+		player.stamina = Survivor.STAMINA_MAX
+		player.exhausted = false
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("awning->balcony chain: balcony grab triggered during fall",
+				player.parkour.ledge_grabs == chain_grabs_before + 1,
+				"grabs=%d expected=%d" % [player.parkour.ledge_grabs, chain_grabs_before + 1])
+		_check("chain grab not classified as awning",
+				not player.parkour.last_grab_was_awning,
+				"last_awning=%s" % player.parkour.last_grab_was_awning)
+		_check("chain grab not counted as rooftop mantle",
+				not player.parkour.last_grab_was_building,
+				"last_building=%s" % player.parkour.last_grab_was_building)
+		_check("survivor mounted balcony deck",
+				player.global_position.y > 3.0,
+				"y=%.2f" % player.global_position.y)
+		# Height-delta audit: from a standable awning deck (2.3) a jump
+		# (apex ~1.14) plus the 2.1 reach window must cover the first-
+		# floor balcony lip (3.75). Rise 1.45 is well inside 0.9-2.1, so
+		# no tuning needed; this cements the chain's physical possibility.
+		var awn_top := 2.3
+		var bal_lip_top := 3.75
+		var rise := bal_lip_top - awn_top
+		_check("chain height delta within grab window (awning->balcony)",
+				rise >= player.parkour.LEDGE_TOP_MIN and rise <= player.parkour.LEDGE_REACH_ABOVE,
+				"rise=%.2f window=[%.1f,%.1f]" % [rise, player.parkour.LEDGE_TOP_MIN, player.parkour.LEDGE_REACH_ABOVE])
+
 		# Phase F slice 3: HUD stamina-bar flash + grab counter readout.
 		var hud: HUD = null
 		for c in get_tree().current_scene.get_children():

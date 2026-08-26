@@ -286,8 +286,16 @@ static func _balconies(b: MeshBatcher, off: Vector3, w: float, d: float,
 	var door_edge: int = int(spec.get("door_edge", 0))
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
-		if side == door_edge:
-			continue   # keep the shopfront/entrance wall clear
+		# Phase N: the old hard skip blocked the street wall so an
+		# awning (ground floor, door_edge) could never chain to a
+		# first-floor balcony on the SAME facade - the iconic AC
+		# ground->first-floor vertical. Shopfront dressing lives on
+		# f==0 only, so balconies at f>=1 no longer need to keep that
+		# wall clear. The street wall now rolls the same BAL_PROB as
+		# any other facade so stacked awning->balcony can actually
+		# generate in the city (seeded, still gated by BAL_MIN_SIDE).
+		if side == door_edge and f == 0:
+			continue   # vestigial: balconies never at f==0 anyway
 		var length := w if (side == 0 or side == 2) else d
 		if length < BAL_MIN_SIDE:
 			continue   # balcony needs a believable run of facade
