@@ -42,6 +42,7 @@ const WIN_SILL := 0.85
 const WIN_SPACING := 2.4
 const GLASS_T := 0.2                   # pane thickness inside the WALL_T aperture
 const PARAPET_H := 0.9
+const PROP_CLEARANCE := 0.35       # minimum gap between adjacent roof props
 
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
@@ -934,8 +935,9 @@ static func _obb_overlap(a: Dictionary, b2: Dictionary) -> bool:
 	return true
 
 
-static func _rect_obb(r: Rect2) -> Dictionary:
-	return {"c": r.get_center(), "e": r.size * 0.5, "r": 0.0}
+static func _rect_obb(r: Rect2, pad := 0.0) -> Dictionary:
+	var grown := r.grow(pad)
+	return {"c": grown.get_center(), "e": grown.size * 0.5, "r": 0.0}
 
 
 ## Dining/work table: oak top on a dark apron base. Collides (walk around).
@@ -1179,7 +1181,7 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 	# claims deck space ahead of the freestanding props.
 	var duct_r := _hvac_rect(usable, keepout, rng)
 	if duct_r.size.x > 0.0 and duct_r.size.y > 0.0:
-		placed.append(_rect_obb(duct_r))
+		placed.append(_rect_obb(duct_r, PROP_CLEARANCE))
 		_rp_hvac_duct(b, off, duct_r, total_h + 0.04)
 	var attempts := 0
 	var room_type := str(style.get("room_type", "residential"))
@@ -1224,7 +1226,7 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 		if keepout.size.x > 0.0 and keepout.size.y > 0.0 \
 				and r.intersects(keepout):
 			continue
-		var obb := _rect_obb(r)
+		var obb := _rect_obb(r, PROP_CLEARANCE)
 		var clash := false
 		for o in placed:
 			if _obb_overlap(obb, o):
@@ -1425,6 +1427,7 @@ static func _rp_hvac_duct(b: MeshBatcher, off: Vector3, r: Rect2,
 ## Solar thermal panel (residential, Phase D slice 6): dark glass absorber
 ## on two steel legs - a tall rear rail and short front rail fake the tilt.
 ## The absorber slab is DESTRUCTIBLE and standable (low ledge-grab lip).
+## Phase E: rear leg lip height raised to ≥0.9m for parkour compatibility.
 static func _rp_solar_panel(b: MeshBatcher, off: Vector3, r: Rect2,
 		y: float) -> void:
 	var c := r.get_center()
@@ -1432,12 +1435,12 @@ static func _rp_solar_panel(b: MeshBatcher, off: Vector3, r: Rect2,
 	var d := r.size.y
 	b.add_destructible_box(
 			off + Vector3(c.x, y + 0.30, c.y - d * 0.5 + 0.15),
-			Vector3(w * 0.9, 0.60, 0.12), Color("565d63"), &"steel")
+		Vector3(w * 0.9, 0.60, 0.12), Color("565d63"), &"steel")
 	b.add_destructible_box(
-			off + Vector3(c.x, y + 0.13, c.y + d * 0.5 - 0.15),
-			Vector3(w * 0.9, 0.26, 0.12), Color("565d63"), &"steel")
+			off + Vector3(c.x, y + 0.14, c.y + d * 0.5 - 0.15),
+		Vector3(w * 0.9, 0.26, 0.12), Color("565d63"), &"steel")
 	b.add_destructible_box(off + Vector3(c.x, y + 0.48, c.y),
-			Vector3(w, 0.08, d), Color("101820"), &"glass")
+		Vector3(w, 0.08, d), Color("101820"), &"glass")
 
 
 ## Satellite dish (retail corners, Phase D slice 6): concrete footplate +
