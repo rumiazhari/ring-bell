@@ -23,6 +23,7 @@ extends RefCounted
 ## boxes in plan-derived order only (never iterating unsorted dictionaries).
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
+var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
 var _destroyed := {}                   # id -> true
 var _colliders: Array[Dictionary] = [] # {pos,size,basis,id,material}
 var _prop_defs: Array[Dictionary] = [] # dynamic DestructibleProp manifests
@@ -148,6 +149,15 @@ func props() -> Array[Dictionary]:
 	return _prop_defs
 
 
+## Phase S: streamed-city streetlamp light positions (OmniLight3D per _lamp_post).
+func add_street_lamp(pos: Vector3) -> void:
+	_street_lights.append(pos)
+
+
+func street_lights() -> Array[Vector3]:
+	return _street_lights
+
+
 ## Live spec list (tests / persistence readers). Treat as read-only.
 func specs() -> Array[Dictionary]:
 	return _specs
@@ -194,7 +204,8 @@ func apply_floor_gate_probe(tag: String, max_floor: int, faded: Array,
 ## Full deterministic record of everything added (for --citytest equality).
 func manifest() -> Dictionary:
 	return {"boxes": _box_count, "colliders": _colliders.duplicate(true),
-			"group_keys": _group_keys(), "props": _prop_defs.duplicate(true)}
+			"group_keys": _group_keys(), "props": _prop_defs.duplicate(true),
+			"street_lights": _street_lights.duplicate()}
 
 
 func _group_keys() -> Array:

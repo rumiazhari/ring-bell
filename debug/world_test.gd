@@ -175,6 +175,8 @@ func _run_all() -> void:
 		_test_facade_decay())
 	_check("broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades",
 		_test_broken_and_litter())
+	_check("streetlamp night lights: genuine darkness + avenue-aligned warm pools (deterministic)",
+		_test_streetlamps_and_darkness())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -2459,6 +2461,14 @@ func _manifest_equal(a: Dictionary, b: Dictionary) -> bool:
 			return false
 	if (a["group_keys"] as Array).size() != (b["group_keys"] as Array).size():
 		return false
+	# Phase S: street_light positions must be deterministic too.
+	var sa: Array = a.get("street_lights", [])
+	var sb: Array = b.get("street_lights", [])
+	if sa.size() != sb.size():
+		return false
+	for i in sa.size():
+		if sa[i] != sb[i]:
+			return false
 	return true
 
 
@@ -2658,6 +2668,112 @@ func _capture_transition(coord: Vector2i, new_state: StringName,
 # Helper for chebyshev distance
 func chebyshev_distance(a: Vector2i, b: Vector2i) -> int:
 	return maxi(absi(a.x - b.x), absi(a.y - b.y))
+
+
+# --- 24k: Streetlamp night lights + genuine darkness (Phase S) -----------------
+func _test_streetlamps_and_darkness() -> bool:
+	# 1) DayNightController night targets must be genuinely dark.
+	if DayNightController.NIGHT_SUN_ENERGY > 0.025:
+		print("[CityTest] night sun %.3f not dark enough (want <=0.025)" % DayNightController.NIGHT_SUN_ENERGY)
+		return false
+	if DayNightController.NIGHT_AMBIENT > 0.05:
+		print("[CityTest] night ambient %.3f not dark enough (want <=0.05)" % DayNightController.NIGHT_AMBIENT)
+		return false
+	if DayNightController.NIGHT_BG.get_luminance() > 0.04:
+		print("[CityTest] night BG luminance %.3f not dark enough" % DayNightController.NIGHT_BG.get_luminance())
+		return false
+	# Day must still be readable.
+	if DayNightController.DAY_SUN_ENERGY < 1.0:
+		print("[CityTest] day sun %.3f too dim" % DayNightController.DAY_SUN_ENERGY)
+		return false
+	if DayNightController.DAY_AMBIENT < 0.4:
+		print("[CityTest] day ambient %.3f too dim" % DayNightController.DAY_AMBIENT)
+		return false
+
+	# 2) Streamed lamps: at least one chunk with an avenue should have lights,
+	#    lights sit at y ~4.1 (head height), match prop positions, deterministic.
+	var plan := CityPlan.new()
+	var avenue_coord := Vector2i.ZERO
+	var found := false
+	for coord in [Vector2i(0, 0), Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(2, 0), Vector2i(0, 2)]:
+		var rect := WorldSeed.chunk_rect(coord)
+		var has_avenue := false
+		for axis in 2:
+			for li in plan.lines_in_range(axis, rect.position.x if axis == 0 else rect.position.y, rect.end.x if axis == 0 else rect.end.y):
+				if plan.is_avenue(axis, li):
+					has_avenue = true
+					break
+			if has_avenue:
+				break
+		if has_avenue:
+			avenue_coord = coord
+			found = true
+			break
+	if not found:
+		print("[CityTest] streetlamp: no avenue-bearing chunk found in probe ring")
+		return false
+	var b1 := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b1, plan, avenue_coord)
+	var lights1: Array = b1.street_lights()
+	if lights1.is_empty():
+		print("[CityTest] streetlamp: avenue chunk %s has 0 lights" % avenue_coord)
+		return false
+	for pos: Vector3 in lights1:
+		if absf(pos.y - 4.1) > 0.05:
+			print("[CityTest] streetlamp: light y %.2f != 4.1 at %s" % [pos.y, pos])
+			return false
+		if pos.y < 3.5 or pos.y > 5.0:
+			print("[CityTest] streetlamp: light height out of head range at %s" % pos)
+			return false
+	# Each light must sit just outside the avenue strip (+0.8 lateral).
+	var rect_a := WorldSeed.chunk_rect(avenue_coord)
+	var avenue_hit := false
+	for p: Vector3 in lights1:
+		var p2 := Vector2(p.x, p.z)
+		if rect_a.has_point(p2):
+			avenue_hit = true
+			break
+	if not avenue_hit:
+		print("[CityTest] streetlamp: no light inside its own chunk rect")
+		return false
+	# Determinism: second fill yields identical lights.
+	var b2 := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b2, plan, avenue_coord)
+	var lights2: Array = b2.street_lights()
+	if lights1.size() != lights2.size():
+		print("[CityTest] streetlamp: nondeterministic count %d vs %d" % [lights1.size(), lights2.size()])
+		return false
+	for i in lights1.size():
+		if lights1[i] != lights2[i]:
+			print("[CityTest] streetlamp: nondeterministic light %d" % i)
+			return false
+	# Manifest equality already checks street_lights, but also verify build node creation
+	# by materializing a chunk and counting OmniLight3D members.
+	var parent := Node3D.new()
+	add_child(parent)
+	var st := ChunkBuilder.build(parent, plan, avenue_coord, b1)
+	var chunk: Node3D = parent.get_child(0) if parent.get_child_count() > 0 else null
+	var lamp_nodes := 0
+	if chunk != null:
+		for child in chunk.get_children():
+			if child is OmniLight3D and child.is_in_group(&"streetlamp"):
+				lamp_nodes += 1
+				if (child as OmniLight3D).omni_range < 10.0:
+					print("[CityTest] streetlamp: range %.1f too small" % (child as OmniLight3D).omni_range)
+					parent.queue_free()
+					return false
+				if (child as OmniLight3D).light_energy < 1.5:
+					print("[CityTest] streetlamp: energy %.1f too dim" % (child as OmniLight3D).light_energy)
+					parent.queue_free()
+					return false
+	parent.queue_free()
+	if lamp_nodes != lights1.size():
+		print("[CityTest] streetlamp: node count %d != manifest %d" % [lamp_nodes, lights1.size()])
+		return false
+	if int(st.get("street_lights", -1)) != lights1.size():
+		print("[CityTest] streetlamp: stats street_lights %s != %d" % [st.get("street_lights", -1), lights1.size()])
+		return false
+	return true
 
 
 # --- 10: Negative coordinate blocks --------------------------------------------

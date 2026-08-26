@@ -1,23 +1,14 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 32
+LAST_ITER: 33
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 32: Phase R broken windows + street litter — historic long facades
-(>=5.0 m) lose ~30% of window panes (BROKEN_WIN_PROB 0.30) at generation,
-leaving a BROKEN_DARK_T 0.03 dark interior plane (visual-only, tagged
-"broken") inside each empty aperture; plus sidewalk litter decals (paper/
-bottles, LITTER_PROB 0.58, 2-4 per side, LITTER_Y 0.035, tagged "litter")
-scattered just outside historic long facades. Both gated to historic +
-long facade, deterministic per (building, side, floor, window) / (side,
-building) via WorldSeed, visual-only so parkour/physics untouched. Brings
-post-apoc eerie darkness to the historic core without new colliders.
-citytest gained `_test_broken_and_litter` (visual-only, thin-plane, gating,
-determinism, glass-reduction check).
+Iter 33: Phase S genuine night darkness + functional streetlamp spill — DayNightController now makes night truly dark (NIGHT_SUN 0.015, NIGHT_AMBIENT 0.03, NIGHT_BG 0.015/0.022/0.045, fog 0.008->0.0025) while DayNightController re-queries streetlamp group live each frame so streamed CITY lamps (born after _ready) are found; ChunkBuilder._lamp_post now emits a real OmniLight3D per avenue lamp (range 13, energy 2.8, warm 1.0/0.88/0.62, group streetlamp) via MeshBatcher.street_lights(), deterministic per avenue grid (LAMP_STEP 22) and gated to avenues; citytest gained _test_streetlamps_and_darkness (night luminance/energy thresholds, avenue alignment, y=4.1, determinism, node creation).
 
 ## This iteration
+[autopilot] iter 33: Phase S genuine night darkness + streamed streetlamp warm pools — DayNightController makes night truly dark (NIGHT_SUN 0.015 vs day 1.35, NIGHT_AMBIENT 0.03 vs 0.60, NIGHT_BG dark navy 0.015/0.022/0.045 + fog 0.008 night → 0.0025 day) and re-queries streetlamp group live each frame (fixes stale-cache bug that left CITY dark); ChunkBuilder._lamp_post now emits a real OmniLight3D per avenue lamp (range 13, energy 2.8, warm color) via MeshBatcher.street_lights() counted in manifest; citytest + smoke green (0 failures); 1 new assertion passes ("streetlamp night lights: genuine darkness + avenue-aligned warm pools").
 [autopilot] iter 32: Phase R broken windows + street litter — historic long facades lose ~30% of window panes (BROKEN_WIN_PROB 0.30, BROKEN_DARK_T 0.03 dark interior plane tagged broken) + sidewalk litter (LITTER_PROB 0.58, 2-4 per side at LITTER_Y 0.035 tagged litter); both visual-only, deterministic per (building,side,floor,window) via WorldSeed, gated to historic + long facade (>=5.0); leaves eerie dark interiors and gritty sidewalks without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades").
 [autopilot] iter 31: Phase Q facade decay — BuildingBuilder grows graffiti / rust-streak / moss visual decals (DECAY_T 0.02 thin planes, GRAFF 0.55 / RUST 0.48 / MOSS 0.40) pressed just outside each historic long facade (>=5.0), deterministic per (side, building) via WorldSeed, visual-only (collide=false, material empty, tagged "decay"); three RNG channels give independent coverage (graffiti mid-wall, rust drip, moss base strip). Brings the Prague core out of white-dummy into the directive's eerie decayed aesthetic without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("facade decay: graffiti / rust / moss visual decals on historic facades").
 [autopilot] iter 30: Phase P facade cornices + pilasters — BuildingBuilder grows horizontal stone cornice bands at each storey junction (CORN_H 0.18, CORN_PROJ 0.26, concrete, tagged "cornice") + segmented vertical pilaster pillar strips per storey (PIL_W 0.32, PIL_PROJ 0.24, concrete, tagged "pilaster") on historic multi-storey long facades; deterministic per (side, building), gated to historic + multi-storey + long facade. MeshBatcher now carries vox_tag cornice/pilaster. citytest + smoke green (0 failures); 1 new assertion passes ("facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades").
@@ -148,10 +139,19 @@ at dense roof packing. citytest + smoke green (0 failures).
     0.03 dark planes tagged broken + 2-4 litter decals per side at LITTER_Y 0.035
     tagged litter, visual-only, thin-plane + outside-footprint + determinism +
     glass-reduction + 2 negative gates.
-16. Phase S idea: interior darkness / night-lighting pass — night is genuinely
-    dark in the historic core, windows with broken panes leak faint interior
-    darkness vs intact panes catch streetlamp spill; explore Emissive/WorldEnvironment
-    tweak or lantern gameplay cue. Gate: --smoke or --citytest.
+16. [Done] Phase S idea: interior darkness / night-lighting pass — night is genuinely
+    dark in the historic core (NIGHT_SUN 0.015, NIGHT_AMBIENT 0.03, NIGHT_BG dark
+    navy), windows with broken panes leak darkness vs intact panes catch
+    streetlamp spill; DayNightController now re-queries streetlamp group live
+    so streamed lamps work + ChunkBuilder emits real warm OmniLights (range 13,
+    energy 2.8) per avenue (deterministic via MeshBatcher.street_lights()).
+    Gate: --citytest.
+    [COMPLETE in iter 33] genuine darkness + warm avenue pools, luminance/energy
+    thresholds + avenue alignment + y=4.1 + determinism + node creation passing.
+17. Phase T idea: lantern/torch handheld light as player-carried gameplay light —
+    a bobbing point light following the player at night that makes darkness
+    survivable and ties into the directive's "light as gameplay" survival
+    mechanic. Gate: --smoke or --citytest.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

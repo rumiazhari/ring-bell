@@ -114,6 +114,22 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		chunk.add_child(prop)
 		props += 1
 	stats["props"] = props
+	# Phase S: streamed-city streetlamp OmniLights (warm pool lights)
+	var lamp_lights := 0
+	for pos: Vector3 in batcher.street_lights():
+		var lamp := OmniLight3D.new()
+		lamp.name = "StreetLamp_%d" % lamp_lights
+		lamp.position = pos
+		lamp.omni_range = 13.0
+		lamp.omni_attenuation = 1.2
+		lamp.light_energy = 2.8
+		lamp.light_color = Color(1.0, 0.88, 0.62)
+		lamp.shadow_enabled = false
+		lamp.visible = GameClock.is_night()
+		lamp.add_to_group(&"streetlamp")
+		chunk.add_child(lamp)
+		lamp_lights += 1
+	stats["street_lights"] = lamp_lights
 	stats["boxes"] = batcher.box_count()
 	stats["colliders"] = batcher.collider_count()
 	stats["mat_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0
@@ -460,6 +476,9 @@ static func _lamp_post(b: MeshBatcher, p: Vector2) -> void:
 					"color": Color("d8cf9f"), "collide": false},
 		],
 	})
+	# Phase S: real streetlamp spill light — DayNightController toggles these
+	# at night so pools of warm light punctuate genuine darkness.
+	b.add_street_lamp(Vector3(p.x, 4.1, p.y))
 
 
 static func _inside_any_building(plan: CityPlan, p: Vector2) -> bool:
