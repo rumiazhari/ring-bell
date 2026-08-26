@@ -167,6 +167,8 @@ func _run_all() -> void:
 		_test_balconies())
 	_check("street awnings: canopy deck + steel lip on ground facade, gated to street wall",
 		_test_awnings())
+	_check("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades",
+		_test_scaffolds())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -696,6 +698,17 @@ func _collect_awning(b: MeshBatcher) -> Array:
 		out.append(s)
 	return out
 
+## Colliding boxes tagged "scaffold" (Phase O construction scaffolding).
+func _collect_scaffold(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if not bool(s.get("collide", false)):
+			continue
+		if String(s.get("building_id", "")) != "scaffold":
+			continue
+		out.append(s)
+	return out
+
 
 # --- 24e: Facade balconies (Phase K) ------------------------------------------
 func _test_balconies() -> bool:
@@ -876,7 +889,123 @@ func _test_awnings() -> bool:
 		return false
 	return true
 
-
+# --- 24g: Construction scaffolding (Phase O) --------------------------------
+func _test_scaffolds() -> bool:
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 4,
+		"id": "scaffoldtest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found_boxes: Array = []
+	for try_id in ["scaffoldtest", "scaffoldtest2", "scaffoldtest3", "scaffoldtest4"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_scaffold(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found_boxes = got
+			break
+	if found_boxes.is_empty():
+		print("[CityTest] scaffold: plaza-adjacent historic building grew no scaffold (tried 4 ids)")
+		return false
+	var saw_plank := false
+	var saw_pole := false
+	for s: Dictionary in found_boxes:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y - sz.y * 0.5 < -0.1:
+			print("[CityTest] scaffold: box below grade at %s" % [pos])
+			return false
+		if pos.y + sz.y * 0.5 > 12.0 + 0.5:
+			print("[CityTest] scaffold: box above roof at %s" % [pos])
+			return false
+		var ox: float = pos.x - sz.x * 0.5
+		var ox2: float = pos.x + sz.x * 0.5
+		var oz: float = pos.z - sz.z * 0.5
+		var oz2: float = pos.z + sz.z * 0.5
+		var beyond := ox < -0.05 or ox2 > 12.0 + 0.05 or oz < -0.05 or oz2 > 10.0 + 0.05
+		if not beyond:
+			print("[CityTest] scaffold: box does not protrude past wall at %s" % [pos])
+			return false
+		if StringName(s["material"]) == &"wood":
+			saw_plank = true
+			if absf(sz.y - BuildingBuilder.SCAFF_PLANK_T) > 0.02:
+				print("[CityTest] scaffold: plank thickness %f != %f" % [sz.y, BuildingBuilder.SCAFF_PLANK_T])
+				return false
+		elif StringName(s["material"]) == &"steel":
+			saw_pole = true
+			if absf(sz.x - BuildingBuilder.SCAFF_POLE_S) > 0.02 and absf(sz.z - BuildingBuilder.SCAFF_POLE_S) > 0.02:
+				print("[CityTest] scaffold: pole section %s not %.2f" % [sz, BuildingBuilder.SCAFF_POLE_S])
+				return false
+	if not saw_plank:
+		print("[CityTest] scaffold: no wood plank deck")
+		return false
+	if not saw_pole:
+		print("[CityTest] scaffold: no steel pole")
+		return false
+	var planks := 0
+	for s2: Dictionary in found_boxes:
+		if StringName(s2["material"]) == &"wood":
+			planks += 1
+	if planks < 2:
+		print("[CityTest] scaffold: expected planks on multiple storeys, got %d" % planks)
+		return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_scaffold(b2)
+	if found_boxes.size() != got2.size():
+		print("[CityTest] scaffold: nondeterministic count %d vs %d" % [found_boxes.size(), got2.size()])
+		return false
+	for i in found_boxes.size():
+		if found_boxes[i]["pos"] != got2[i]["pos"] or found_boxes[i]["size"] != got2[i]["size"]:
+			print("[CityTest] scaffold: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "scaffold-nonhist"
+	nonhist["district"] = "outer"
+	nonhist["plaza_adjacent"] = true
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_scaffold(b3).is_empty():
+		print("[CityTest] scaffold: non-historic building wrongly grew one")
+		return false
+	var noplaza := base.duplicate(true)
+	noplaza["id"] = "scaffold-noplaza"
+	noplaza["district"] = "historic"
+	noplaza["plaza_adjacent"] = false
+	var b4 := MeshBatcher.new()
+	BuildingBuilder.build(b4, noplaza)
+	if not _collect_scaffold(b4).is_empty():
+		print("[CityTest] scaffold: non-plaza building wrongly grew one")
+		return false
+	var one := base.duplicate(true)
+	one["id"] = "scaffold-onestorey"
+	one["floors"] = 1
+	var b5 := MeshBatcher.new()
+	BuildingBuilder.build(b5, one)
+	if not _collect_scaffold(b5).is_empty():
+		print("[CityTest] scaffold: single-storey building wrongly grew one")
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "scaffold-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b6 := MeshBatcher.new()
+	BuildingBuilder.build(b6, tiny)
+	if not _collect_scaffold(b6).is_empty():
+		print("[CityTest] scaffold: tiny-facade building wrongly grew one")
+		return false
+	return true
 
 
 

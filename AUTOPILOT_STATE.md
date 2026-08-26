@@ -1,23 +1,23 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 28
+LAST_ITER: 29
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 28: Phase N awning->balcony chain reach audit — the street awning deck
-(top 2.3) now demonstrably chains to the first-floor balcony (deck 3.25,
-lip 3.75, rise 1.45 within the 0.9-2.1 grab window) on the SAME outward
-facade, completing the AC ground->first-floor vertical. BuildingBuilder's
-old hard skip that blocked balcony generation on the street wall is lifted
-(balconies at f>=1 now roll the same BAL_PROB as any side, shopfront
-dressing stays ground-only), so stacked awning->balcony actually spawns
-in the city (seeded, gated by BAL_MIN_SIDE). Smoke suite gained the
-stacked fixture (awning 2.3 + balcony 3.25/3.75 sharing the same lip plane
-x=-1.5) proving balcony grab trigger + non-awning classification + mount
-on deck, plus a height-delta audit (rise 1.45 inside window, no tuning).
+Iter 29: Phase O construction scaffolding on plaza-adjacent historic facades — a
+steel pole cage + plank decks (standable, tagged "scaffold") running the full
+facade height, giving AC mid-height traversal; deterministic, gated to historic
+district + plaza adjacency + multi-storey + long facade (SCAFF_PROB 0.45,
+SCAFF_MIN_SIDE 6.0). CityPlan now emits district + plaza_adjacent per spec so
+the gate is plan-true, MeshBatcher stamps vox_tag "scaffold" for the parkour
+controller, planks at each storey (wood, 0.10 thick) + two steel poles per
+storey provide both standable and ledge-grab geometry. Citytest gained
+`_test_scaffolds` (historic+plaza+multistorey+protrusion+plank/pole mats,
+determinism, 4 negative gates).
 
 ## This iteration
+[autopilot] iter 29: Phase O construction scaffold — CityPlan emits district + plaza_adjacent (historic + plaza-ring check), BuildingBuilder grows a full-height steel cage + wood plank decks (tagged "scaffold", SCAFF_PROJ 1.0, SCAFF_W 3.4) on one shuffled long facade of plaza-adjacent historic buildings; planks at each storey provide mid-height AC traversal. MeshBatcher now carries vox_tag scaffold. citytest + smoke green (0 failures); 1 new assertion passes ("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades").
 [autopilot] iter 28: Phase N awning->balcony chain — BuildingBuilder now
 hosts balconies on the street wall at f>=1 (same BAL_PROB, enabling
 stacked awning->balcony generation); smoke fixture proves the balcony lip
@@ -119,10 +119,15 @@ at dense roof packing. citytest + smoke green (0 failures).
     first-floor traversal a real AC-style chain; tune AWN_DECK_Y/BAL
     heights only if the gap is unreachable. Gate: --smoke.
     [COMPLETE in iter 28] rise 1.45 inside 0.9-2.1, no tuning needed.
-12. Phase O idea: construction scaffold on plaza-adjacent historic facades
+12. [Done] Phase O idea: construction scaffold on plaza-adjacent historic facades
     — steel pole cage + plank decks (standable) tagged "scaffold",
     deterministic, gated to plaza adjacency; adds mid-height AC
-    scaffolding traversal. Gate: --citytest.
+    scaffolding traversal. Gate: --citytest. [COMPLETE in iter 29]
+13. Phase P idea: facade cornices + pilasters — horizontal stone cornice
+    bands + vertical pilaster strips (grabbable ledge network) on historic
+    multi-storey facades, tagged "cornice"/"pilaster", deterministic,
+    gated to historic multi-storey + long facade; completes the AC
+    "ledges/pillars" parkour vocabulary. Gate: --citytest.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

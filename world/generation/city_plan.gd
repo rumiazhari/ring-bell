@@ -434,6 +434,35 @@ func _lot_rect(edge: int, br: Rect2, t0: float, t1: float, depth: float) -> Rect
 		_: return Rect2(br.position.x, br.position.y + t0, depth, t1 - t0)
 
 
+func _rect_for_cell(cell: Vector2i) -> Rect2:
+	var x0 := line_pos(0, cell.x)
+	var x1 := line_pos(0, cell.x + 1)
+	var z0 := line_pos(1, cell.y)
+	var z1 := line_pos(1, cell.y + 1)
+	return Rect2(
+			Vector2(x0 + line_half_width(0, cell.x),
+					z0 + line_half_width(1, cell.y)),
+			Vector2(x1 - x0 - line_half_width(0, cell.x) - line_half_width(0, cell.x + 1),
+					z1 - z0 - line_half_width(1, cell.y) - line_half_width(1, cell.y + 1)))
+
+func _kind_for_cell(cell: Vector2i) -> StringName:
+	var rect := _rect_for_cell(cell)
+	var center := rect.get_center()
+	var district := district_at_point(center)
+	var roll := WorldSeed.unit_float("blockkind", [cell.x, cell.y])
+	if district == DISTRICT_HISTORIC and roll < 0.07:
+		return &"plaza"
+	elif roll < 0.10:
+		return &"park"
+	return &"built"
+
+func _is_plaza_adjacent(cell: Vector2i) -> bool:
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			if _kind_for_cell(cell + Vector2i(dx, dy)) == &"plaza":
+				return true
+	return false
+
 func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 		rng: RandomNumberGenerator, corner: bool) -> Dictionary:
 	var district := district_at_point(lot.get_center())
@@ -448,6 +477,8 @@ func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 		"floors": floors,
 		"floor_h": snappedf(rng.randf_range(2.9, 3.25), 0.05),
 		"door_edge": edge,
+		"district": district,
+		"plaza_adjacent": _is_plaza_adjacent(cell),
 		"style": {
 			"wall": rng.randi_range(0, WALL_PALETTES - 1),
 			"roof": rng.randi_range(0, ROOF_PALETTES - 1),

@@ -69,6 +69,14 @@ const AWN_RAIL_T := 0.07          # front-lip member thickness
 const AWN_PROB := 0.55            # chance a given ground-floor facade gets one
 const AWN_MIN_SIDE := 5.0         # skip awnings on facades shorter than this
 
+# --- Phase O: construction scaffolding on plaza-adjacent historic facades ---
+const SCAFF_PROJ := 1.0           # scaffold depth beyond the wall face
+const SCAFF_W := 3.4              # scaffold width along the facade
+const SCAFF_PLANK_T := 0.10       # plank deck thickness
+const SCAFF_POLE_S := 0.08        # pole square section
+const SCAFF_PROB := 0.45          # chance a plaza-adjacent historic building gets one
+const SCAFF_MIN_SIDE := 6.0       # skip scaffolds on facades shorter than this
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -230,6 +238,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		if f == 0:
 			_awnings(b, off, w, d, fh, tag, spec, door_edge)
 		b.pop_layer()
+
+	# Phase O: construction scaffolding on plaza-adjacent historic facades.
+	# A steel pole cage + plank decks (standable) runs the full facade height,
+	# tagged "scaffold", deterministic, gated to plaza adjacency. Plank decks
+	# double as AC traversal ledges at each storey.
+	_scaffolds(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -446,6 +460,88 @@ static func _add_awning(b: MeshBatcher, cx: float, cy: float, cz: float,
 			b.add_destructible_box(Vector3(fr_x, ry, sz),
 				Vector3(ret_len, AWN_RAIL_H, AWN_RAIL_T), lip_c,
 				&"steel", true, "awning", 0)
+
+## Phase O: construction scaffolding on plaza-adjacent historic facades.
+## A steel pole cage + plank decks (standable) runs the FULL height of ONE
+## facade per building, giving AC-style mid-height traversal. Planks at each
+## storey are wood, poles/ledgers are steel, all tagged "scaffold". Gated to
+## historic district + plaza adjacency + multi-storey + long facade, seeded
+## per building so the same facade is chosen deterministically.
+static func _scaffolds(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	if not bool(spec.get("plaza_adjacent", false)):
+		return
+	if n < 2:
+		return
+	var rng := WorldSeed.rng_for("scaffold", [WorldSeed.str_hash(tag)])
+	if rng.randf() >= SCAFF_PROB:
+		return
+	# Shuffle side order deterministically, then pick first eligible long facade.
+	var sides: Array[int] = [0, 1, 2, 3]
+	for i in range(3, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp := sides[i]
+		sides[i] = sides[j]
+		sides[j] = tmp
+	var chosen_side := -1
+	var chosen_len := 0.0
+	for side in sides:
+		var length := w if (side == 0 or side == 2) else d
+		if length < SCAFF_MIN_SIDE:
+			continue
+		chosen_side = side
+		chosen_len = length
+		break
+	if chosen_side == -1:
+		return
+	var scaffold_w := minf(SCAFF_W, chosen_len - 1.0)
+	var horizontal := chosen_side == 0 or chosen_side == 2
+	var t := chosen_len * 0.5
+	var cx: float = 0.0
+	var cz: float = 0.0
+	match chosen_side:
+		0: cx = t; cz = WALL_T * 0.5 - SCAFF_PROJ * 0.5
+		1: cx = w - WALL_T * 0.5 + SCAFF_PROJ * 0.5; cz = t
+		2: cx = t; cz = d - WALL_T * 0.5 + SCAFF_PROJ * 0.5
+		_: cx = WALL_T * 0.5 - SCAFF_PROJ * 0.5; cz = t
+	var aw := scaffold_w if horizontal else SCAFF_PROJ
+	var ad := SCAFF_PROJ if horizontal else scaffold_w
+	var plank_c := Color("8b7355")
+	var pole_c := Color("6b6f73")
+	for f in n:
+		var plank_top := f * fh + 0.25
+		var plank_cy := plank_top - SCAFF_PLANK_T * 0.5
+		b.push_layer(tag + ":f%d" % f)
+		# Plank deck (wood, standable, tagged scaffold)
+		b.add_destructible_box(off + Vector3(cx, plank_cy, cz),
+				Vector3(aw, SCAFF_PLANK_T, ad), plank_c,
+				&"wood", true, "scaffold", f)
+		# Two vertical pole segments for this storey (steel)
+		var pole_y := f * fh + fh * 0.5
+		var pole_h := fh
+		var p1x: float
+		var p1z: float
+		var p2x: float
+		var p2z: float
+		if horizontal:
+			p1x = cx - scaffold_w * 0.5 + SCAFF_POLE_S * 0.5
+			p1z = cz
+			p2x = cx + scaffold_w * 0.5 - SCAFF_POLE_S * 0.5
+			p2z = cz
+		else:
+			p1x = cx
+			p1z = cz - scaffold_w * 0.5 + SCAFF_POLE_S * 0.5
+			p2x = cx
+			p2z = cz + scaffold_w * 0.5 - SCAFF_POLE_S * 0.5
+		b.add_destructible_box(off + Vector3(p1x, pole_y, p1z),
+				Vector3(SCAFF_POLE_S, pole_h, SCAFF_POLE_S), pole_c,
+				&"steel", true, "scaffold", f)
+		b.add_destructible_box(off + Vector3(p2x, pole_y, p2z),
+				Vector3(SCAFF_POLE_S, pole_h, SCAFF_POLE_S), pole_c,
+				&"steel", true, "scaffold", f)
+		b.pop_layer()
 
 
 const CELL_H := 2.5      # floor slab panel target edge (BOTH dimensions)
