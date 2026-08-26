@@ -1145,10 +1145,13 @@ static func _membrane_with_hole(b: MeshBatcher, off: Vector3, w: float,
 				Vector3(r.size.x, 0.04, r.size.y), color)
 
 
-## Flat-roof prop dressing (Phase D slice 4): AC condensers, a water tank,
+## Flat-roof prop dressing (Phase D slice 4/5): AC condensers, a water tank,
 ## vent pipes and an antenna mast scattered over the walkable roof deck.
-## Props are DESTRUCTIBLE boxes - standable cover that doubles as fresh
-## ledge-grab lips for the Phase E parkour system. Placement is deterministic
+## Phase D slice 5 adds ROOF-TYPE VARIETY: retail roofs get BILLBOARDS
+## (tall vertical ad panels), residential roofs get LAUNDRY LINES (horizontal
+## cables with struts) and PIGEON COOPS (small wooden hutches). Props are
+## DESTRUCTIBLE boxes - standable cover that doubles as fresh ledge-grab
+## lips for the Phase E parkour system. Placement is deterministic
 ## (WorldSeed.rng_for, same pattern as the chimney), confined to the deck
 ## area inset from the parapet line, and keeps a clear approach ring around
 ## the stair bulkhead so the roof exit never gets blocked. Pitched roofs
@@ -1169,9 +1172,12 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 	var target := 1 + rng.randi_range(0, maxi(budget - 1, 0))
 	var placed: Array[Dictionary] = []
 	var attempts := 0
+	var room_type := str(style.get("room_type", "residential"))
+	var is_retail := room_type == "retail"
 	while placed.size() < target and attempts < 40:
 		attempts += 1
-		var kind := rng.randi_range(0, 3)
+		# kind selection weighted by room_type for variety
+		var kind := rng.randi_range(0, 5 if is_retail else 4)  # 0-5 retail (adds billboard), 0-4 residential (adds pigeon coop)
 		var footprint := Vector2(0.95, 0.75)      # AC condenser
 		if kind == 1:
 			footprint = Vector2(1.25, 1.25)       # water tank
@@ -1179,6 +1185,10 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 			footprint = Vector2(0.55, 0.55)       # vent cluster
 		elif kind == 3:
 			footprint = Vector2(0.35, 0.35)       # antenna base
+		elif kind == 4:
+			footprint = Vector2(2.0, 0.3)         # billboard (retail) / laundry line (residential)
+		elif kind == 5:
+			footprint = Vector2(1.1, 1.1)         # pigeon coop (residential only)
 		var px := rng.randf_range(usable.position.x,
 				maxf(usable.end.x - footprint.x, usable.position.x))
 		var pz := rng.randf_range(usable.position.y,
@@ -1202,6 +1212,8 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 			1: _rp_water_tank(b, off, r, y)
 			2: _rp_vents(b, off, r, y)
 			3: _rp_antenna(b, off, r, y)
+			4: _rp_billboard_or_laundry(b, off, r, y, is_retail)
+			5: _rp_pigeon_coop(b, off, r, y)
 
 
 static func _rp_ac_unit(b: MeshBatcher, off: Vector3, r: Rect2,
@@ -1238,6 +1250,63 @@ static func _rp_antenna(b: MeshBatcher, off: Vector3, r: Rect2, y: float) -> voi
 			Vector3(0.12, 2.3, 0.12), Color("565d63"), &"steel")
 	b.add_destructible_box(off + Vector3(c.x, y + 1.95, c.y),
 			Vector3(0.90, 0.07, 0.07), Color("565d63"), &"steel")
+
+
+## Retail billboard OR residential laundry line (Phase D slice 5).
+## Single function avoids duplication: both are vertical posts with a
+## cross member. Retail = tall ad panel (steel frame + dark face).
+## Residential = laundry line (two posts + horizontal cables + struts).
+static func _rp_billboard_or_laundry(b: MeshBatcher, off: Vector3,
+		r: Rect2, y: float, is_retail: bool) -> void:
+	var c := r.get_center()
+	var w := r.size.x
+	var d := r.size.y
+	if is_retail:
+		# BILLBOARD: steel I-beam posts + large dark ad panel.
+		# Posts at the long edges, panel spans between them.
+		b.add_destructible_box(off + Vector3(c.x - w * 0.5 + 0.15, y + 4.5, c.y),
+				Vector3(0.3, 9.0, d), Color("3a3f44"), &"steel")
+		b.add_destructible_box(off + Vector3(c.x + w * 0.5 - 0.15, y + 4.5, c.y),
+				Vector3(0.3, 9.0, d), Color("3a3f44"), &"steel")
+		b.add_destructible_box(off + Vector3(c.x, y + 4.5, c.y),
+				Vector3(w - 0.6, 8.5, 0.15), Color("1a1a20"), &"wood")
+		# Small ladder rung on one post (visual ledge-grab lip).
+		b.add_destructible_box(off + Vector3(c.x - w * 0.5 + 0.15, y + 0.5, c.y + d * 0.5 + 0.1),
+				Vector3(0.08, 0.08, 0.3), Color("3a3f44"), &"steel")
+	else:
+		# LAUNDRY LINE: two wooden posts with horizontal cables.
+		var post_h := 2.2
+		b.add_destructible_box(off + Vector3(c.x - w * 0.5 + 0.1, y + post_h * 0.5, c.y),
+				Vector3(0.12, post_h, 0.12), FURN_WOOD_DARK, &"wood")
+		b.add_destructible_box(off + Vector3(c.x + w * 0.5 - 0.1, y + post_h * 0.5, c.y),
+				Vector3(0.12, post_h, 0.12), FURN_WOOD_DARK, &"wood")
+		# 3 cable strands (visual only, no collision needed - posts are the cover).
+		for i in 3:
+			var ch := y + 0.5 + float(i) * 0.55
+			b.add_visual_box(off + Vector3(c.x, ch, c.y),
+					Vector3(w - 0.3, 0.02, d), Color("cfc4b0"))
+
+
+## Pigeon coop (residential only, Phase D slice 5).
+## Small wooden hutch with slatted front and a perching ledge.
+## Destructible - standable cover + ledge-grab lip.
+static func _rp_pigeon_coop(b: MeshBatcher, off: Vector3, r: Rect2, y: float) -> void:
+	var c := r.get_center()
+	var w := r.size.x
+	var d := r.size.y
+	var h := 1.3
+	# Main box (hutch body).
+	b.add_destructible_box(off + Vector3(c.x, y + h * 0.5, c.y),
+			Vector3(w * 0.9, h, d * 0.9), FURN_WOOD_DARK, &"wood")
+	# Slatted front face (visual).
+	b.add_visual_box(off + Vector3(c.x, y + h * 0.5, c.y + d * 0.5),
+			Vector3(w * 0.85, h * 0.8, 0.06), FURN_WOOD)
+	# Perching ledge on top (standable + ledge-grab).
+	b.add_destructible_box(off + Vector3(c.x, y + h + 0.08, c.y),
+			Vector3(w, 0.16, d), FURN_WOOD, &"wood")
+	# Entry hole (visual only).
+	b.add_visual_box(off + Vector3(c.x, y + h * 0.6, c.y + d * 0.5),
+			Vector3(0.3, 0.3, 0.06), Color("1a1a20"))
 
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
