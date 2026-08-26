@@ -129,6 +129,13 @@ const SIGNAGE_SHOP_W_MAX := 1.45
 const SIGNAGE_SHOP_H := 0.42
 const SIGNAGE_HOUSE_S := 0.32    # square plaque
 
+# --- Phase Y: Prague facade drainpipes + eave gutters (historic patina) ---
+const DRAIN_T := 0.06            # pipe/gutter thin dimension (square pipe section)
+const DRAIN_MIN_SIDE := 5.0      # skip on facades shorter than this
+const DRAIN_PIPE_PROB := 0.62    # chance a historic long facade grows a pipe+gutter
+const DRAIN_GUTTER_H := 0.07     # gutter height (thin lip at the eave)
+const DRAIN_GUTTER_T := 0.08     # gutter protrusion beyond wall face
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -324,6 +331,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# long facade). Shop signs hang on non-entrance ground-floor walls,
 	# house numbers sit beside the doorway — the Prague old-town read.
 	_facade_signage(b, off, w, d, fh, n, tag, spec)
+
+	# Phase Y: Prague facade drainpipes + eave gutters — vertical zinc/copper
+	# downpipes + horizontal gutters at the eave, visual-only thin boxes pressed
+	# just outside historic long facades, deterministic per (side, building),
+	# completing the Prague roofline plumbing read without touching collision.
+	_facade_drainpipes(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -920,6 +933,69 @@ static func _facade_signage(b: MeshBatcher, off: Vector3, w: float, d: float,
 			b.add_box_rotated(off + Vector3(cx_s, cy, cz_s),
 					Vector3(aw_s, sh, ad_s), Basis.IDENTITY, c_shop, false, false, &"", "signage", 0)
 			b.pop_layer()
+
+## Phase Y: Prague facade drainpipes + eave gutters (historic patina).
+## Visual-only thin boxes pressed just outside historic long facades
+## (DRAIN_T 0.06 square pipe section), deterministic per (side, building)
+## via WorldSeed. Each qualifying facade rolls once: on success it grows
+## one vertical downpipe running the full facade height + one horizontal
+## eave gutter at the roofline. Zinc/copper patina palette, visual-only,
+## no collision or parkour change.
+static func _facade_drainpipes(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var total_h := n * fh
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for side in 4:
+		var length := w if (side == 0 or side == 2) else d
+		if length < DRAIN_MIN_SIDE:
+			continue
+		var rng := WorldSeed.rng_for("drainpipe", [WorldSeed.str_hash(tag), side])
+		if rng.randf() >= DRAIN_PIPE_PROB:
+			continue
+		# Lateral position: 32% or 68% along facade, jittered, clamped away from door.
+		var t := (0.32 if rng.randf() < 0.5 else 0.68) * length
+		t += rng.randf_range(-0.12, 0.12)
+		if side == door_edge:
+			var door_center := length * 0.5
+			if absf(t - door_center) < 1.6:
+				t = door_center + 1.75 * (1.0 if t > door_center else -1.0)
+		t = clampf(t, DRAIN_T * 0.5 + 0.35, length - DRAIN_T * 0.5 - 0.35)
+		var eps := 0.05
+		var cx: float = 0.0
+		var cz: float = 0.0
+		match side:
+			0: cx = t; cz = -DRAIN_T * 0.5 - eps
+			1: cx = w + DRAIN_T * 0.5 + eps; cz = t
+			2: cx = t; cz = d + DRAIN_T * 0.5 + eps
+			_: cx = -DRAIN_T * 0.5 - eps; cz = t
+		var cy := total_h * 0.5
+		var h := total_h - 0.14
+		var pipe_col: Color = Color("5a6d6e") if rng.randf() < 0.62 else Color("6a7a5e")
+		pipe_col = pipe_col.darkened(0.04).lightened(rng.randf_range(-0.04, 0.04))
+		b.push_layer(tag + ":f0")
+		b.add_box_rotated(off + Vector3(cx, cy, cz),
+				Vector3(DRAIN_T, h, DRAIN_T), Basis.IDENTITY, pipe_col, false, false, &"", "drainpipe", 0)
+		# Horizontal eave gutter: runs along the top edge just below the roof plane.
+		var gutter_y := total_h - DRAIN_GUTTER_H * 0.5 - 0.04
+		var gutter_len := length - 0.55
+		if gutter_len < 1.0:
+			b.pop_layer()
+			continue
+		var g_cx: float = 0.0
+		var g_cz: float = 0.0
+		var g_w: float = 0.0
+		var g_d: float = 0.0
+		match side:
+			0: g_cx = length * 0.5; g_cz = -DRAIN_GUTTER_T * 0.5 - eps; g_w = gutter_len; g_d = DRAIN_GUTTER_T
+			1: g_cx = w + DRAIN_GUTTER_T * 0.5 + eps; g_cz = length * 0.5; g_w = DRAIN_GUTTER_T; g_d = gutter_len
+			2: g_cx = length * 0.5; g_cz = d + DRAIN_GUTTER_T * 0.5 + eps; g_w = gutter_len; g_d = DRAIN_GUTTER_T
+			_: g_cx = -DRAIN_GUTTER_T * 0.5 - eps; g_cz = length * 0.5; g_w = DRAIN_GUTTER_T; g_d = gutter_len
+		var gutter_col := pipe_col.lightened(0.06)
+		b.add_box_rotated(off + Vector3(g_cx, gutter_y, g_cz),
+				Vector3(g_w, DRAIN_GUTTER_H, g_d), Basis.IDENTITY, gutter_col, false, false, &"", "drainpipe", 0)
+		b.pop_layer()
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
