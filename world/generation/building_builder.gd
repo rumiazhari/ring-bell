@@ -46,6 +46,9 @@ const PROP_CLEARANCE := 0.35       # minimum gap between adjacent roof props
 const BULKHEAD_RING := 1.2         # approach ring around the stair bulkhead
 const TOWER_FOOTPRINT := Vector2(1.8, 1.8)  # water-tower leg spread (base)
 const TOWER_MIN_AREA := 90.0       # only the largest retail decks get one
+const BH_CAP_OVERHANG := 0.3       # bulkhead cap overhang beyond bz walls
+const BH_RAIL_H := 0.45            # Phase H roof-exit rim height (grab lip)
+const BH_RAIL_T := 0.08            # rim member thickness
 
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
@@ -1121,8 +1124,35 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 		b.add_destructible_box(
 				off + Vector3(bz.get_center().x, total_h + bh_h + 0.09,
 						bz.get_center().y),
-				Vector3(bz.size.x + 0.3, 0.18, bz.size.y + 0.3), ROOF_COLORS[0],
+				Vector3(bz.size.x + BH_CAP_OVERHANG, 0.18,
+						bz.size.y + BH_CAP_OVERHANG), ROOF_COLORS[0],
 				&"wood")
+		# Phase H: steel rim railing around the bulkhead cap. Reads as a
+		# deliberate roof-exit landmark and hands the hut roof a grabbable lip
+		# (one more parkour mantle to a fresh vantage). Every member sits ABOVE
+		# the bulkhead wall top (total_h + bh_h), so the walk-through doorway
+		# lane below stays geometrically untouched. Tagged "bhexit" for tests.
+		var cap_top := total_h + bh_h + 0.18
+		var ry := cap_top + BH_RAIL_H * 0.5
+		var cx := bz.get_center().x
+		var cz := bz.get_center().y
+		var hw := bz.size.x * 0.5 + BH_CAP_OVERHANG * 0.5
+		var hd := bz.size.y * 0.5 + BH_CAP_OVERHANG * 0.5
+		var rim := [
+			[Vector3(cx, ry, cz - hd + BH_RAIL_T * 0.5),
+					Vector3(hw * 2.0, BH_RAIL_H, BH_RAIL_T)],
+			[Vector3(cx, ry, cz + hd - BH_RAIL_T * 0.5),
+					Vector3(hw * 2.0, BH_RAIL_H, BH_RAIL_T)],
+			[Vector3(cx - hw + BH_RAIL_T * 0.5, ry, cz),
+					Vector3(BH_RAIL_T, BH_RAIL_H,
+							hd * 2.0 - 2.0 * BH_RAIL_T)],
+			[Vector3(cx + hw - BH_RAIL_T * 0.5, ry, cz),
+					Vector3(BH_RAIL_T, BH_RAIL_H,
+							hd * 2.0 - 2.0 * BH_RAIL_T)],
+		]
+		for rl: Array in rim:
+			b.add_destructible_box(off + rl[0], rl[1], RAIL_COLOR,
+					&"steel", true, "bhexit", -1)
 
 	if style.get("attic", false):
 		_pitched_shell(b, off, w, d, total_h, roof_c, style)

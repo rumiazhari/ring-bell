@@ -157,6 +157,8 @@ func _run_all() -> void:
 			_test_roof_clutter())
 	_check("rooftop water-tower landmark on large retail decks",
 			_test_roof_tower())
+	_check("bulkhead roof-exit rim: above doorway lane, gated to stairs",
+			_test_bulkhead_rails())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -397,6 +399,86 @@ func _collect_tower(b: MeshBatcher) -> Array:
 				or not bool(s["collide"]):
 			continue
 		if String(s.get("building_id", "")) != "tower":
+			continue
+		out.append(s)
+	return out
+
+
+# --- 24d: Bulkhead roof-exit rim railing (Phase H) ----------------------------
+func _test_bulkhead_rails() -> bool:
+	# A stair building MUST finish its bulkhead with the Phase H rim:
+	# >=4 colliding steel boxes tagged "bhexit", every member standing
+	# strictly ABOVE the bulkhead wall top (the walk-through doorway lane
+	# below bh_h stays untouched), footprints confined to the bulkhead
+	# zone grown by the cap overhang, and a rebuild is byte-identical.
+	# A building WITHOUT stairs grows none.
+	var spec := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0, "floors": 3, "id": "bhrailtest",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b := MeshBatcher.new()
+	BuildingBuilder.build(b, spec)
+	var rims := _collect_bhexit(b)
+	if rims.size() < 4:
+		print("[CityTest] bhrail: expected >=4 rim segments, got %d"
+				% rims.size())
+		return false
+	var total_h := 9.0
+	var cap_zone: Rect2 = BuildingBuilder._zone_rect(
+			(spec["rect"] as Rect2).size, 3.0, 0).grow(0.14 + 0.15 + 0.05)
+	for s: Dictionary in rims:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y - sz.y * 0.5 <= total_h + 2.4:
+			print("[CityTest] bhrail: rail dips into doorway lane at %s"
+					% [pos])
+			return false
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5,
+				sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), cap_zone):
+			print("[CityTest] bhrail: rail outside bulkhead cap %s" % [r])
+			return false
+
+	# Determinism: rebuild is byte-identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, spec)
+	var rims2 := _collect_bhexit(b2)
+	if rims.size() != rims2.size():
+		print("[CityTest] bhrail: nondeterministic count %d vs %d"
+				% [rims.size(), rims2.size()])
+		return false
+	for i in rims.size():
+		if rims[i]["pos"] != rims2[i]["pos"] \
+				or rims[i]["size"] != rims2[i]["size"]:
+			print("[CityTest] bhrail: nondeterministic box %d" % i)
+			return false
+
+	# Gating: a flat deck WITHOUT stairs grows no rim.
+	var nostair := {
+		"rect": Rect2(0, 0, 30, 26),
+		"floor_h": 3.0, "floors": 1, "id": "bhrail-nostair",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nostair)
+	if not _collect_bhexit(b3).is_empty():
+		print("[CityTest] bhrail: non-stair building grew a rim")
+		return false
+	return true
+
+
+## Colliding steel specs tagged "bhexit" (bulkhead roof-exit rim).
+func _collect_bhexit(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if StringName(s["material"]) != &"steel" \
+				or not bool(s["collide"]):
+			continue
+		if String(s.get("building_id", "")) != "bhexit":
 			continue
 		out.append(s)
 	return out

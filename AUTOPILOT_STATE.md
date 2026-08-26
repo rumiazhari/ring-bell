@@ -1,22 +1,29 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 21
+LAST_ITER: 22
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 21: Phase G rooftop water-tower landmark. Added `_tower_landmark`
-to BuildingBuilder, gated to the LARGEST RETAIL flat decks (area >=
-TOWER_MIN_AREA = 90 m^2, no pitched attic shell): a tall standable steel
-tank on four legs + rim cap + ladder rungs, seeded by the deck rect and
-kept clear of the stair bulkhead keep-out ring. Tower boxes carry
-owner_tag "tower" and are destructible steel (collide = fresh vantage and
-ledge-grab lip). New helpers `is_retail_deck`, `usable_roof_rect`,
-`keepout_roof`. Added `--citytest` assertion `_test_roof_tower`
-(placement-bounded, stands >3.4 m above deck, deterministic, gated so
-small retail + residential decks grow none).
+Iter 22: Phase H bulkhead roof-exit rim railing. Extended `_roof`'s stair
+bulkhead block: the hut cap (now BH_CAP_OVERHANG = 0.3 m overhang) gets a
+4-segment steel rim railing (BH_RAIL_H = 0.45 m, BH_RAIL_T = 0.08 m,
+RAIL_COLOR steel, owner_tag "bhexit"). Every rim member sits strictly
+ABOVE the bulkhead wall top (total_h + bh_h) so the walk-through doorway
+lane stays geometrically untouched — the exit still reads as a deliberate
+landmark and the hut roof becomes a grabbable parkour lip (one more
+mantle to a fresh vantage). Gated to stair buildings only (no rim on
+non-stair decks). Added `--citytest` assertion `_test_bulkhead_rails`
+(>=4 colliding steel "bhexit" boxes above doorway lane, footprint inside
+the cap zone, deterministic, non-stair building grows none).
 
 ## This iteration
+[autopilot] iter 22: Phase H bulkhead roof-exit rim railing — 4-segment
+steel rail (0.45 m) around the hut cap, fully above the doorway lane
+(exit path untouched), hut roof becomes a grabbable parkour lip; rim
+tagged "bhexit", gated to stair buildings. citytest + smoke green (0
+failures); new `_test_bulkhead_rails` assertion passes.
+
 [autopilot] iter 21: Phase G rooftop water tower on large retail flat decks
 (area >= 90 m^2, no attic) — four legs + tank + rim cap + ladder rungs,
 seeded, clear of the bulkhead keep-out ring; tower boxes tagged "tower",
@@ -49,6 +56,10 @@ at dense roof packing. citytest + smoke green (0 failures).
 5. [Done] Phase G idea: rooftop water tower landmark on the largest retail
    flat decks (tall standable tank on legs = fresh vantage + ledge lips).
    Gate: --citytest. [COMPLETE in iter 21]
-6. [Next] Phase H idea: rooftop access railings / hatch lips on the stair
-   bulkhead roof exit so the exit reads as a deliberate landmark and gives
-   one more parkour lip. Gate: --citytest.
+6. [Done] Phase H idea: rooftop access railings on the stair bulkhead
+   roof exit — steel rim around the hut cap (reads as landmark + grabbable
+   parkour lip, sits above the doorway lane). Gate: --citytest.
+   [COMPLETE in iter 22]
+7. [Next] Phase I idea: roof-exit hatch lid / vents on the bulkhead cap so
+   the hut roof reads as a serviced plant room (small destructible steel
+   details on the cap, gated to the bulkhead cap zone). Gate: --citytest.
