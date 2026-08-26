@@ -1,23 +1,27 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 22
+LAST_ITER: 23
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 22: Phase H bulkhead roof-exit rim railing. Extended `_roof`'s stair
-bulkhead block: the hut cap (now BH_CAP_OVERHANG = 0.3 m overhang) gets a
-4-segment steel rim railing (BH_RAIL_H = 0.45 m, BH_RAIL_T = 0.08 m,
-RAIL_COLOR steel, owner_tag "bhexit"). Every rim member sits strictly
-ABOVE the bulkhead wall top (total_h + bh_h) so the walk-through doorway
-lane stays geometrically untouched — the exit still reads as a deliberate
-landmark and the hut roof becomes a grabbable parkour lip (one more
-mantle to a fresh vantage). Gated to stair buildings only (no rim on
-non-stair decks). Added `--citytest` assertion `_test_bulkhead_rails`
-(>=4 colliding steel "bhexit" boxes above doorway lane, footprint inside
-the cap zone, deterministic, non-stair building grows none).
+Iter 23: Phase I bulkhead plant-room details. On stair buildings only, the
+bulkhead cap (already BH_CAP_OVERHANG overhang + Phase H "bhexit" rim)
+now grows a serviced-plant-room set on the cap surface: a steel access
+hatch lid (0.95 m) + two galvanized vent louvers (0.5 x 0.25 m), all
+destructible steel tagged "bhplant", resting ON cap_top (above the
+doorway lane, inside the railed enclosure). Reads as a real mechanical
+room rather than a bare lid; adds extra carveable cover + small standable
+lips. Added `--citytest` assertion `_test_bulkhead_plant` (exactly 3
+colliding steel "bhplant" boxes on the cap, footprint inside the cap
+zone, deterministic, non-stair building grows none).
 
 ## This iteration
+[autopilot] iter 23: Phase I bulkhead plant-room details — steel hatch lid
++ 2 vent louvers on the cap surface (above doorway lane, inside the Phase
+H rim), tagged "bhplant", gated to stair buildings. citytest + smoke green
+(0 failures); new `_test_bulkhead_plant` assertion passes.
+
 [autopilot] iter 22: Phase H bulkhead roof-exit rim railing — 4-segment
 steel rail (0.45 m) around the hut cap, fully above the doorway lane
 (exit path untouched), hut roof becomes a grabbable parkour lip; rim
@@ -60,6 +64,11 @@ at dense roof packing. citytest + smoke green (0 failures).
    roof exit — steel rim around the hut cap (reads as landmark + grabbable
    parkour lip, sits above the doorway lane). Gate: --citytest.
    [COMPLETE in iter 22]
-7. [Next] Phase I idea: roof-exit hatch lid / vents on the bulkhead cap so
+7. [Done] Phase I idea: roof-exit hatch lid / vents on the bulkhead cap so
    the hut roof reads as a serviced plant room (small destructible steel
    details on the cap, gated to the bulkhead cap zone). Gate: --citytest.
+   [COMPLETE in iter 23]
+8. [Next] Phase J idea: rooftop access ladder from the deck to the bulkhead
+   cap rim — a steel rung ladder (destructible "bhplant") so the
+   plant-room roof is actually climbable, not just a mantle target.
+   Gate: --citytest.

@@ -159,6 +159,8 @@ func _run_all() -> void:
 			_test_roof_tower())
 	_check("bulkhead roof-exit rim: above doorway lane, gated to stairs",
 			_test_bulkhead_rails())
+	_check("bulkhead plant-room details: hatch+vents on cap, gated to stairs",
+			_test_bulkhead_plant())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -482,6 +484,87 @@ func _collect_bhexit(b: MeshBatcher) -> Array:
 			continue
 		out.append(s)
 	return out
+
+
+## Colliding steel specs tagged "bhplant" (Phase I serviced plant-room
+## details on the bulkhead cap: hatch lid + two vents).
+func _collect_bhplant(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if StringName(s["material"]) != &"steel" \
+				or not bool(s["collide"]):
+			continue
+		if String(s.get("building_id", "")) != "bhplant":
+			continue
+		out.append(s)
+	return out
+
+
+func _test_bulkhead_plant() -> bool:
+	# A stair building MUST finish its bulkhead cap with Phase I plant-room
+	# details: exactly 3 colliding steel boxes tagged "bhplant" (1 hatch
+	# lid + 2 vents), every box resting ON the cap surface (center y >=
+	# total_h + bh_h, sitting above the doorway lane), footprints confined
+	# to the bulkhead cap zone (inside the Phase H railed enclosure), and a
+	# rebuild is byte-identical. A building WITHOUT stairs grows none.
+	var spec := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0, "floors": 3, "id": "bhplanttest",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b := MeshBatcher.new()
+	BuildingBuilder.build(b, spec)
+	var plants := _collect_bhplant(b)
+	if plants.size() != 3:
+		print("[CityTest] bhplant: expected 3 plant boxes (hatch+2 vents), got %d"
+				% plants.size())
+		return false
+	var total_h := 9.0
+	var bh_h := 2.4
+	var cap_zone: Rect2 = BuildingBuilder._zone_rect(
+		(spec["rect"] as Rect2).size, 3.0, 0).grow(0.14 + 0.15 + 0.05)
+	for s: Dictionary in plants:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		# Must rest on / above the cap surface, above the doorway lane.
+		if pos.y - sz.y * 0.5 < total_h + bh_h:
+			print("[CityTest] bhplant: detail below cap at %s" % [pos])
+			return false
+		var r := Rect2(pos.x - sz.x * 0.5, pos.z - sz.z * 0.5,
+				sz.x, sz.z)
+		if not BuildingBuilder._obb_in_rect(
+				BuildingBuilder._rect_obb(r), cap_zone):
+			print("[CityTest] bhplant: detail outside bulkhead cap %s" % [r])
+			return false
+
+	# Determinism: rebuild is byte-identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, spec)
+	var plants2 := _collect_bhplant(b2)
+	if plants.size() != plants2.size():
+		print("[CityTest] bhplant: nondeterministic count %d vs %d"
+				% [plants.size(), plants2.size()])
+		return false
+	for i in plants.size():
+		if plants[i]["pos"] != plants2[i]["pos"] \
+				or plants[i]["size"] != plants2[i]["size"]:
+			print("[CityTest] bhplant: nondeterministic box %d" % i)
+			return false
+
+	# Gating: a flat deck WITHOUT stairs grows no plant details.
+	var nostair := {
+		"rect": Rect2(0, 0, 30, 26),
+		"floor_h": 3.0, "floors": 1, "id": "bhplant-nostair",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nostair)
+	if not _collect_bhplant(b3).is_empty():
+		print("[CityTest] bhplant: non-stair building grew plant details")
+		return false
+	return true
 
 
 

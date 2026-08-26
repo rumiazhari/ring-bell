@@ -1153,6 +1153,25 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 		for rl: Array in rim:
 			b.add_destructible_box(off + rl[0], rl[1], RAIL_COLOR,
 					&"steel", true, "bhexit", -1)
+		# Phase I: serviced plant-room details on the bulkhead cap. A steel
+		# access hatch lid + two galvanized vent louvers sit ON the cap
+		# surface (cap_top), inside the Phase H railed enclosure, so the hut
+		# roof reads as a real mechanical room rather than a bare lid. All
+		# destructible steel (extra carveable cover + standable lips),
+		# tagged "bhplant" for tests, deterministic, and gated to stair
+		# buildings only (no plant details on plain flat decks).
+		var plant_c := Color("9aa0a6")
+		var hatch := [Vector3(cx + bz.size.x * 0.12,
+				cap_top + 0.06, cz),
+				Vector3(0.95, 0.12, 0.95)]
+		b.add_destructible_box(off + hatch[0], hatch[1], plant_c,
+				&"steel", true, "bhplant", -1)
+		for vz: float in [cz - bz.size.y * 0.18, cz + bz.size.y * 0.18]:
+			var vent := [Vector3(cx - bz.size.x * 0.25,
+					cap_top + 0.125, vz),
+					Vector3(0.5, 0.25, 0.16)]
+			b.add_destructible_box(off + vent[0], vent[1], plant_c,
+					&"steel", true, "bhplant", -1)
 
 	if style.get("attic", false):
 		_pitched_shell(b, off, w, d, total_h, roof_c, style)
