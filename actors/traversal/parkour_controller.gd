@@ -16,6 +16,11 @@ extends Node
 ## Phase F slice 2: a radial compass fan finds graspable lips in ANY direction
 ## (NPCs chased off rooftops flee with their back to the parapet), and the
 ## stamina cost scales with lip height instead of being flat.
+## Phase M: grabs on feature-tagged shapes (vox_tag meta stamped by
+## MeshBatcher.flush_into, e.g. &"awning" street canopies) are classified
+## separately - awning_grabs counts them, last_grab_was_awning reports the
+## latest, and the follow-through uses a gentler canvas-deck drive speed so
+## ground-floor awning chains read as soft, forgiving parkour.
 
 const JUMP_SPEED := 6.4                # apex ~1.14 m: clears crates, not walls
 const JUMP_STAMINA_COST := 6.0
@@ -62,6 +67,7 @@ const CLIMB_FOLLOW_TIME := 0.6         # seconds of assisted drive after a grab
 const CLIMB_FOLLOW_STEER := 12.0       # lerp rate toward the drive velocity
 const CLIMB_DRIVE_SPEED := 2.2         # m/s toward a plain crate/box ledge
 const CORNICE_DRIVE_SPEED := 3.0       # stronger drive onto building rooftops
+const AWNING_DRIVE_SPEED := 2.6        # canvas deck: firm but forgiving assist
 
 ## Fires on every successful ledge grab. is_building is true when the grabbed
 ## wall belongs to batched city structure (vox_material == &"concrete"), i.e.
@@ -73,6 +79,8 @@ var _peak_y := 0.0
 var ledge_grabs := 0                   # lifetime counter (tests/HUD)
 var rooftop_mantles := 0               # grabs that mounted batched structure
 var last_grab_was_building := false    # HUD/test readout of the latest grab
+var last_grab_was_awning := false      # latest grab hit a feature-tagged awning
+var awning_grabs := 0                  # lifetime counter of awning grabs
 var last_stamina_cost := 0.0           # stamina charged by the latest grab
 var _ledge_cooldown := 0.0
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
@@ -248,8 +256,16 @@ func _commit_grab(dir: Vector3, wall_hit: Dictionary, rise: float) -> bool:
 	last_grab_was_building = is_building
 	if is_building:
 		rooftop_mantles += 1
+	# Phase M: feature-tagged grabs (street awnings today) count as their
+	# own soft-structure class - gentler follow-through than a concrete
+	# cornice, own lifetime counter for tests/HUD.
+	last_grab_was_awning = _hit_vox_tag(wall_hit) == &"awning"
+	if last_grab_was_awning:
+		awning_grabs += 1
 	_climb_dir = dir
 	_climb_speed = CORNICE_DRIVE_SPEED if is_building else CLIMB_DRIVE_SPEED
+	if last_grab_was_awning:
+		_climb_speed = AWNING_DRIVE_SPEED
 	_climb_time_left = CLIMB_FOLLOW_TIME
 	ledge_grabbed.emit(is_building)
 	return true
@@ -271,18 +287,31 @@ func _ledge_stamina_cost(rise: float) -> float:
 ## vox_material meta (see MeshBatcher.flush_into); plain props, ground slabs
 ## and ad-hoc test boxes have no such meta.
 func _hit_is_concrete(hit: Dictionary) -> bool:
+	return _hit_meta(hit, "vox_material") == &"concrete"
+
+
+## Phase M: feature tag stamped by MeshBatcher.flush_into (vox_tag meta,
+## e.g. &"awning") - lets traversal classify WHAT it grabbed. &"" when the
+## shape carries no tag (plain props, untagged structure, test boxes).
+func _hit_vox_tag(hit: Dictionary) -> StringName:
+	return _hit_meta(hit, "vox_tag")
+
+
+## Shared shape-meta lookup for a physics ray hit: resolves the hit's
+## CollisionShape3D and reads one StringName meta (&"" when absent).
+func _hit_meta(hit: Dictionary, meta: String) -> StringName:
 	var collider: Object = hit.get("collider")
 	if not (collider is CollisionObject3D):
-		return false
+		return &""
 	var body := collider as CollisionObject3D
 	var shape_idx := int(hit.get("shape", -1))
 	if shape_idx < 0:
-		return false
+		return &""
 	var shape_node := body.shape_owner_get_owner(
 			body.shape_find_owner(shape_idx)) as CollisionShape3D
 	if shape_node == null:
-		return false
-	return StringName(shape_node.get_meta("vox_material", &"")) == &"concrete"
+		return &""
+	return StringName(shape_node.get_meta(meta, &""))
 
 
 ## Phase F follow-through: for a short window after a grab, steer horizontal

@@ -169,6 +169,10 @@ func _run_all() -> void:
 		_check("plain crate ledge not flagged as rooftop",
 				not player.parkour.last_grab_was_building,
 				"last_building=%s" % player.parkour.last_grab_was_building)
+		# Phase M: ...and not a feature-tagged awning either.
+		_check("plain crate not flagged as awning",
+				not player.parkour.last_grab_was_awning,
+				"last_awning=%s" % player.parkour.last_grab_was_awning)
 		# Negative control: tall wall (no ledge within reach) should NOT trigger grab.
 		var wall_pos := box_pos + Vector3(0.0, 0.0, 80.0)
 		var wall_body := StaticBody3D.new()
@@ -291,6 +295,62 @@ func _run_all() -> void:
 				player.global_position.y < 0.5,
 				"y=%.2f" % player.global_position.y)
 		player.stamina = Survivor.STAMINA_MAX
+
+		# --- Phase M: street-awning grab classification -------------------
+		# Mimics the iter-26 geometry: standable wood canopy deck (top at
+		# 2.3 m like AWN_DECK_Y) with a steel front lip (top at 2.75 m like
+		# AWN_DECK_Y + AWN_RAIL_H), both stamped vox_tag "awning" exactly
+		# as MeshBatcher.flush_into now does for real city awnings. The
+		# grab must classify as AWNING (soft structure: gentler
+		# follow-through drive, own lifetime counter) yet NOT as a concrete
+		# rooftop mantle.
+		var awn_pos := box_pos + Vector3(0.0, 0.0, 160.0)
+		var awn_body := StaticBody3D.new()
+		var awn_deck_shape := CollisionShape3D.new()
+		var awn_deck_box := BoxShape3D.new()
+		awn_deck_box.size = Vector3(3.0, 0.12, 2.4)   # deck top at y=2.3
+		awn_deck_shape.shape = awn_deck_box
+		awn_deck_shape.position = Vector3(0.0, 2.24, 0.0)
+		awn_deck_shape.set_meta("vox_material", &"wood")
+		awn_deck_shape.set_meta("vox_tag", &"awning")
+		var awn_lip_shape := CollisionShape3D.new()
+		var awn_lip_box := BoxShape3D.new()
+		awn_lip_box.size = Vector3(0.07, 0.45, 2.4)   # lip top at y=2.75
+		awn_lip_shape.shape = awn_lip_box
+		awn_lip_shape.position = Vector3(-1.465, 2.525, 0.0)
+		awn_lip_shape.set_meta("vox_material", &"steel")
+		awn_lip_shape.set_meta("vox_tag", &"awning")
+		awn_body.add_child(awn_deck_shape)
+		awn_body.add_child(awn_lip_shape)
+		awn_body.global_position = awn_pos   # local y=0 sits on the floor slab
+		get_tree().current_scene.add_child(awn_body)
+		# Drop beside the OUTER face of the front lip, descending past it.
+		var awn_face_x := awn_pos.x - 1.5   # outer lip plane
+		var awn_grabs_before: int = player.parkour.ledge_grabs
+		player.global_position = Vector3(awn_face_x - 0.45, 4.6, awn_pos.z)
+		player.velocity = Vector3.ZERO
+		player.facing = Vector3.RIGHT
+		player.stamina = Survivor.STAMINA_MAX
+		player.exhausted = false
+		player.request_move(Vector3.ZERO, false)
+		await _wait(2.5)
+		player.request_move(Vector3.ZERO, false)
+		await _wait(0.5)
+		_check("awning grab triggered during fall",
+				player.parkour.ledge_grabs == awn_grabs_before + 1,
+				"grabs=%d expected=%d" % [player.parkour.ledge_grabs,
+						awn_grabs_before + 1])
+		_check("awning grab classified as awning",
+				player.parkour.last_grab_was_awning
+						and player.parkour.awning_grabs == 1,
+				"awning=%s count=%d" % [player.parkour.last_grab_was_awning,
+						player.parkour.awning_grabs])
+		_check("awning grab not counted as rooftop mantle",
+				not player.parkour.last_grab_was_building,
+				"last_building=%s" % player.parkour.last_grab_was_building)
+		_check("survivor mounted awning deck",
+				player.global_position.y > 2.0,
+				"y=%.2f" % player.global_position.y)
 
 		# Phase F slice 3: HUD stamina-bar flash + grab counter readout.
 		var hud: HUD = null

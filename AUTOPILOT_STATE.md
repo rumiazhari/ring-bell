@@ -1,21 +1,29 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 26
+LAST_ITER: 27
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 26: Phase L street awnings — AC-style sloped canopy decks projecting from
-the GROUND-floor (shopfront) street facade, capped by a steel front lip
-(AWN_RAIL_H = 0.45 m) that doubles as a grabbable parkour ledge whose TOP sits
-above the standable canopy deck (AWN_DECK_Y = 2.3 m). Deterministic per
-(side, building) via WorldSeed; boxes tagged "awning" (wood canopy + steel
-lip), gated to the entrance street wall and facades >= AWN_MIN_SIDE, never on
-upper storeys. Added `--citytest` assertion `_test_awnings` (>=1 "awning"
-deck box at ground level on the street wall, protruding past the wall face,
-wood deck + steel lip present, byte-identical rebuild, tiny-facade grows none).
+Iter 27: Phase M awning-led low-mantle traversal - the Phase-E parkour
+controller now CLASSIFIES grabs on feature-tagged shapes via a new vox_tag
+meta stamped by MeshBatcher.flush_into (whitelist: awning/balcony/tower/
+bhplant/bhladder/bhexit). Awning grabs get their own lifetime counter
+(awning_grabs), readout (last_grab_was_awning), and a gentler canvas-deck
+follow-through drive (AWNING_DRIVE_SPEED 2.6 m/s, between crate 2.2 and
+cornice 3.0) so ground-floor street canopies chain as soft, forgiving AC-style
+parkour. Signal signature unchanged; HUD untouched. Smoke suite gained the
+full synthetic awning fixture (wood deck top 2.3 m + steel lip top 2.75 m,
+vox_tag "awning") proving trigger + classification + non-rooftop + mount,
+plus a plain-crate negative control.
 
 ## This iteration
+[autopilot] iter 27: Phase M awning-grab classification in the parkour
+controller (vox_tag meta from MeshBatcher, awning_grabs counter, gentler
+AWNING_DRIVE_SPEED follow-through); smoke fixture mimics real iter-26
+awning geometry. citytest + smoke green (0 failures); 5 new/extended
+assertions pass ("awning grab classified as awning", "survivor mounted
+awning deck", etc.).
 [autopilot] iter 26: Phase L street awnings — sloped canopy deck from the
 ground-floor street facade + steel front lip (grabbable parkour ledge);
 deterministic, gated to street wall + AWN_MIN_SIDE, tagged "awning".
@@ -90,10 +98,17 @@ at dense roof packing. citytest + smoke green (0 failures).
    deterministic, gated to multi-storey, tagged "balcony". Directly serves
    the Prague directive's named "balconies" parkour feature. Gate: --citytest.
    [COMPLETE in iter 25]
-10. Phase M idea: awning-led low-mantle traversal — the street canopy
+10. [Done] Phase M idea: awning-led low-mantle traversal — the street canopy
    deck (AWN_DECK_Y) becomes a grabbable entry perch feeding ledge/awning
-   chaining on the ground floor; wire the Phase-E parkour controller to treat
-   "awning" boxes as ledge-grabable. Gate: --smoke.
+   chaining on the ground floor; the Phase-E parkour controller now treats
+   "awning" boxes as their own soft-structure grab class (vox_tag meta,
+   awning_grabs counter, AWNING_DRIVE_SPEED follow-through). Gate: --smoke.
+   [COMPLETE in iter 27]
+11. Phase N idea: awning->balcony chain reach audit - verify (smoke fixture)
+    that from a standable awning deck (2.3 m) a jump-grab can catch the
+    first balcony deck of a 2-storey facade, making ground->first-floor
+    traversal a real AC-style chain; tune AWN_DECK_Y/BAL heights only if
+    the gap is unreachable. Gate: --smoke.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

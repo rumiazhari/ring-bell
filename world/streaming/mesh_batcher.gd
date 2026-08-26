@@ -131,7 +131,7 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 	})
 	if collide:
 		_colliders.append({"pos": pos, "size": size.abs(), "basis": basis,
-				"id": id, "material": material})
+				"id": id, "material": material, "tag": owner_tag})
 
 
 ## Start tagging subsequent boxes with `key` (see layer_nodes).
@@ -244,6 +244,14 @@ func flush_into(parent: Node3D, body_layer := 1) -> Dictionary:
 				shape_node.set_meta("vox_id", int(col["id"]))
 				shape_node.set_meta("vox_material",
 						StringName(col["material"]))
+			# Phase M: known feature tags ride along as vox_tag so the
+			# parkour controller can classify WHAT it grabbed, not just
+			# whether the wall is batched structure. Building-id owner
+			# tags are deliberately not stamped.
+			var feat_tag := String(col["tag"])
+			if feat_tag in ["awning", "balcony", "tower", "bhplant",
+					"bhladder", "bhexit"]:
+				shape_node.set_meta("vox_tag", StringName(feat_tag))
 			_shape_nodes[int(col["id"])] = shape_node
 			body.add_child(shape_node)
 	return stats
