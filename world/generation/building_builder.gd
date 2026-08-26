@@ -111,6 +111,14 @@ const LITTER_PROB := 0.58        # chance a historic facade seeds sidewalk litte
 const LITTER_MIN_SIDE := 5.0
 const LITTER_Y := 0.035          # litter sits just above the pavement visual
 
+# --- Phase U: interior window glow — faint warm light behind intact glass --
+const WINDOW_GLOW_PROB := 0.32   # chance an intact historic window glows at night
+const WINDOW_GLOW_MIN_SIDE := 5.0
+const WINDOW_GLOW_RANGE := 5.5
+const WINDOW_GLOW_ENERGY := 1.15
+const WINDOW_GLOW_COLOR := Color(1.0, 0.88, 0.62)
+const WINDOW_GLOW_INSET := 0.65  # distance inside wall face to place the point light
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -881,12 +889,13 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 					y0 + obot + oh, lh, col)
 		# Glass pane centered INSIDE the aperture (windows only).
 		if bool(o["glass"]):
+			var cur_idx := win_idx
 			var is_broken := false
 			if is_historic and tag != "":
 				var length_b := w if horizontal else d
 				if length_b >= BROKEN_MIN_SIDE:
 					var rng_br := WorldSeed.rng_for("broken_win",
-							[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + win_idx])
+							[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + cur_idx])
 					if rng_br.randf() < BROKEN_WIN_PROB:
 						is_broken = true
 			win_idx += 1
@@ -915,6 +924,25 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 				b.add_destructible_box(
 						off + Vector3(p.x, y0 + obot + oh * 0.5, p.y), gsize,
 						WINDOW_COLOR, &"glass", true, "", -1)
+				# Phase U: faint warm interior glow behind intact historic glass.
+				# Night-only OmniLight via MeshBatcher.window_glows() -> ChunkBuilder.
+				# Deterministic per (building, side, floor, window) via WorldSeed,
+				# gated to historic + long facade, intact pane only, sparse.
+				if is_historic and tag != "":
+					var length_g := w if horizontal else d
+					if length_g >= WINDOW_GLOW_MIN_SIDE:
+						var rng_glow := WorldSeed.rng_for("window_glow",
+								[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + cur_idx])
+						if rng_glow.randf() < WINDOW_GLOW_PROB:
+							var glow_inside := WINDOW_GLOW_INSET
+							var glow_p := Vector2.ZERO
+							match side:
+								0: glow_p = Vector2(oc, WALL_T + glow_inside)
+								1: glow_p = Vector2(w - WALL_T - glow_inside, oc)
+								2: glow_p = Vector2(oc, d - WALL_T - glow_inside)
+								_: glow_p = Vector2(WALL_T + glow_inside, oc)
+							var glow_y := y0 + obot + oh * 0.5
+							b.add_window_glow(off + Vector3(glow_p.x, glow_y, glow_p.y))
 		else:
 			# Door opening: no window index to advance, but keep ordering stable.
 			pass

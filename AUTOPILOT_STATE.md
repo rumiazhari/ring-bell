@@ -1,13 +1,14 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 34
+LAST_ITER: 35
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 34: Phase T handheld lantern — player carries a bobbing warm OmniLight (range 10, energy 2.2, color 1.0/0.85/0.58, shoulder offset 0.35/1.10/0.25, group player_lantern) that is night-only (GameClock.is_night()) and bobs sinusoidally (BOB_AMPL 0.045 + walk sway), making DayNightController genuine darkness survivable as light-as-gameplay; Survivor owns the light as a child so it follows/stream-teleports automatically; citytest gained _test_player_lantern (range/energy/color thresholds, day-off/night-on toggle + re-toggle, bob displacement, NPC no-lantern, child-follow global).
+Iter 35: Phase U interior window glow — intact historic windows sprout a faint warm interior OmniLight (WINDOW_GLOW_RANGE 5.5, ENERGY 1.15, color 1.0/0.88/0.62, inset 0.65, prob 0.32, MIN_SIDE 5.0, group window_glow) night-only via DayNightController live re-query, vs broken panes stay dark; MeshBatcher.window_glows() + ChunkBuilder materializes batched lights counted in manifest.
 
 ## This iteration
+[autopilot] iter 35: Phase U interior window glow — intact historic long facades now leak warm light: each intact window has a 0.32-deterministic chance (WorldSeed "window_glow") to sprout an interior OmniLight 0.65m behind the glass at window centre (range 5.5, energy 1.15, warm 1.0/0.88/0.62, shadow off, group window_glow), night-only via DayNightController live group query; broken panes never glow; gated to historic + long facade, deterministic via MeshBatcher.window_glows() and manifest equality; ChunkBuilder spawns per-chunk lights counted in stats["window_glows"]; citytest + smoke green (0 failures); 1 new assertion passes ("window interior glow: faint warm lights behind intact historic glass at night (deterministic)").
 [autopilot] iter 34: Phase T handheld lantern — Survivor now spawns a warm handheld OmniLight (LANTERN_RANGE 10.0, LANTERN_ENERGY 2.2, LANTERN_COLOR 1.0/0.85/0.58, offset 0.35/1.10/0.25, shadow off, group player_lantern, bob AMPL 0.045 FREQ 4.2) as a child of the player only (NPCs get none); _update_lantern tracks GameClock.is_night() each physics frame and adds sinusoidal bob (idle + walk) so the pool reads as carried; refresh_lantern() helper for headless tests; citytest + smoke green (0 failures); 1 new assertion passes ("player lantern: warm handheld light at night with bob").
 [autopilot] iter 33: Phase S genuine night darkness + streamed streetlamp warm pools — DayNightController makes night truly dark (NIGHT_SUN 0.015 vs day 1.35, NIGHT_AMBIENT 0.03 vs 0.60, NIGHT_BG dark navy 0.015/0.022/0.045 + fog 0.008 night → 0.0025 day) and re-queries streetlamp group live each frame (fixes stale-cache bug that left CITY dark); ChunkBuilder._lamp_post now emits a real OmniLight3D per avenue lamp (range 13, energy 2.8, warm color) via MeshBatcher.street_lights() counted in manifest; citytest + smoke green (0 failures); 1 new assertion passes ("streetlamp night lights: genuine darkness + avenue-aligned warm pools").
 [autopilot] iter 32: Phase R broken windows + street litter — historic long facades lose ~30% of window panes (BROKEN_WIN_PROB 0.30, BROKEN_DARK_T 0.03 dark interior plane tagged broken) + sidewalk litter (LITTER_PROB 0.58, 2-4 per side at LITTER_Y 0.035 tagged litter); both visual-only, deterministic per (building,side,floor,window) via WorldSeed, gated to historic + long facade (>=5.0); leaves eerie dark interiors and gritty sidewalks without touching collision. citytest + smoke green (0 failures); 1 new assertion passes ("broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades").
@@ -150,11 +151,13 @@ at dense roof packing. citytest + smoke green (0 failures).
     [COMPLETE in iter 33] genuine darkness + warm avenue pools, luminance/energy
     thresholds + avenue alignment + y=4.1 + determinism + node creation passing.
 17. [Done] Phase T idea: lantern/torch handheld light as player-carried gameplay light —
-    a bobbing point light following the player at night that makes darkness
-    survivable and ties into the directive's "light as gameplay" survival
-    mechanic. Gate: --smoke or --citytest.
-    [COMPLETE in iter 34] Survivor LANTERN_RANGE 10 / ENERGY 2.2 / warm 1.0,0.85,0.58 shoulder offset 0.35,1.10,0.25 group player_lantern, night-only via GameClock.is_night() + sinusoidal bob (AMPL 0.045, FREQ 4.2 + walk sway); citytest + smoke green (0 failures); 1 new assertion ("player lantern: warm handheld light at night with bob").
-18. Phase U idea: interior window glow — intact windows leak a faint warm interior point/spot at night (vs broken panes stay dark), reinforcing the lantern vs streetlamp reading and giving the Prague core a lived-in night silhouette from the street. Gate: --citytest or --smoke.
+   a bobbing point light following the player at night that makes darkness
+   survivable and ties into the directive's "light as gameplay" survival
+   mechanic. Gate: --smoke or --citytest.
+   [COMPLETE in iter 34] Survivor LANTERN_RANGE 10 / ENERGY 2.2 / warm 1.0,0.85,0.58 shoulder offset 0.35,1.10,0.25 group player_lantern, night-only via GameClock.is_night() + sinusoidal bob (AMPL 0.045, FREQ 4.2 + walk sway); citytest + smoke green (0 failures); 1 new assertion ("player lantern: warm handheld light at night with bob").
+18. [Done] Phase U idea: interior window glow — intact windows leak a faint warm interior point/spot at night (vs broken panes stay dark), reinforcing the lantern vs streetlamp reading and giving the Prague core a lived-in night silhouette from the street. Gate: --citytest or --smoke.
+   [COMPLETE in iter 35] faint warm interior OmniLights 0.65m behind intact historic glass (WINDOW_GLOW_RANGE 5.5 ENERGY 1.15 warm 1.0/0.88/0.62 PROB 0.32 MIN_SIDE 5.0 group window_glow) night-only via DayNightController live re-query, vs broken panes stay dark; MeshBatcher.window_glows() deterministic via WorldSeed "window_glow" and manifest equality; ChunkBuilder spawns per-chunk lights counted in stats["window_glows"]; citytest + smoke green (0 failures); 1 new assertion ("window interior glow: faint warm lights behind intact historic glass at night").
+19. Phase V idea: volumetric street ambience — faint ground fog / bloom halo around streetlamps + window glows via WorldEnvironment fog + emissive tweak, reinforcing light-as-gameplay without new geometry. Gate: --smoke or --citytest (fog params / luminance).
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

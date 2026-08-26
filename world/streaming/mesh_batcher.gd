@@ -24,6 +24,7 @@ extends RefCounted
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
+var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
 var _destroyed := {}                   # id -> true
 var _colliders: Array[Dictionary] = [] # {pos,size,basis,id,material}
 var _prop_defs: Array[Dictionary] = [] # dynamic DestructibleProp manifests
@@ -153,9 +154,15 @@ func props() -> Array[Dictionary]:
 func add_street_lamp(pos: Vector3) -> void:
 	_street_lights.append(pos)
 
-
 func street_lights() -> Array[Vector3]:
 	return _street_lights
+
+## Phase U: interior window glow positions (warm OmniLight per intact window).
+func add_window_glow(pos: Vector3) -> void:
+	_window_glows.append(pos)
+
+func window_glows() -> Array[Vector3]:
+	return _window_glows
 
 
 ## Live spec list (tests / persistence readers). Treat as read-only.
@@ -205,7 +212,8 @@ func apply_floor_gate_probe(tag: String, max_floor: int, faded: Array,
 func manifest() -> Dictionary:
 	return {"boxes": _box_count, "colliders": _colliders.duplicate(true),
 			"group_keys": _group_keys(), "props": _prop_defs.duplicate(true),
-			"street_lights": _street_lights.duplicate()}
+			"street_lights": _street_lights.duplicate(),
+			"window_glows": _window_glows.duplicate()}
 
 
 func _group_keys() -> Array:

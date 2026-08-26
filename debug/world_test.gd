@@ -179,6 +179,8 @@ func _run_all() -> void:
 		_test_streetlamps_and_darkness())
 	_check("player lantern: warm handheld light at night with bob (deterministic)",
 		_test_player_lantern())
+	_check("window interior glow: faint warm lights behind intact historic glass at night (deterministic)",
+		_test_window_glows())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -2471,6 +2473,14 @@ func _manifest_equal(a: Dictionary, b: Dictionary) -> bool:
 	for i in sa.size():
 		if sa[i] != sb[i]:
 			return false
+	# Phase U: interior window glows must be deterministic too.
+	var wa: Array = a.get("window_glows", [])
+	var wb: Array = b.get("window_glows", [])
+	if wa.size() != wb.size():
+		return false
+	for i in wa.size():
+		if wa[i] != wb[i]:
+			return false
 	return true
 
 
@@ -2904,6 +2914,199 @@ func _test_player_lantern() -> bool:
 
 	holder.queue_free()
 	GameClock.total_minutes = saved_clock
+	return true
+
+
+# --- 24m: Window interior glow (Phase U) — warm lights behind intact glass ----
+func _test_window_glows() -> bool:
+	# Constants must be in useful faint-light band: visible in genuine darkness
+	# but dimmer / smaller than streetlamps so lantern still matters.
+	if BuildingBuilder.WINDOW_GLOW_RANGE < 4.0 or BuildingBuilder.WINDOW_GLOW_RANGE > 7.0:
+		print("[CityTest] window_glow: range %.2f not in [4,7]" % BuildingBuilder.WINDOW_GLOW_RANGE)
+		return false
+	if BuildingBuilder.WINDOW_GLOW_ENERGY < 0.7 or BuildingBuilder.WINDOW_GLOW_ENERGY > 1.6:
+		print("[CityTest] window_glow: energy %.2f not in [0.7,1.6]" % BuildingBuilder.WINDOW_GLOW_ENERGY)
+		return false
+	if BuildingBuilder.WINDOW_GLOW_COLOR.get_luminance() < 0.5:
+		print("[CityTest] window_glow: color too dim %s" % BuildingBuilder.WINDOW_GLOW_COLOR)
+		return false
+	if BuildingBuilder.WINDOW_GLOW_COLOR.r < 0.9 or BuildingBuilder.WINDOW_GLOW_COLOR.g < 0.6:
+		print("[CityTest] window_glow: color not warm %s" % BuildingBuilder.WINDOW_GLOW_COLOR)
+		return false
+	if BuildingBuilder.WINDOW_GLOW_PROB < 0.15 or BuildingBuilder.WINDOW_GLOW_PROB > 0.5:
+		print("[CityTest] window_glow: prob %.2f not in [0.15,0.5]" % BuildingBuilder.WINDOW_GLOW_PROB)
+		return false
+	if BuildingBuilder.WINDOW_GLOW_INSET < 0.4 or BuildingBuilder.WINDOW_GLOW_INSET > 1.2:
+		print("[CityTest] window_glow: inset %.2f not in [0.4,1.2]" % BuildingBuilder.WINDOW_GLOW_INSET)
+		return false
+
+	# Use a synthetic historic building: find one id that actually glows.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 4,
+		"id": "glowtest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found_glows: Array = []
+	var found_glass_hist := -1
+	for try_id in ["glowtest", "glowtest2", "glowtest3", "glowtest4", "glowtest5", "glowtest6", "glowtest7", "glowtest8"]:
+		var s_hist := base.duplicate(true)
+		s_hist["id"] = try_id
+		s_hist["district"] = "historic"
+		var b_hist := MeshBatcher.new()
+		BuildingBuilder.build(b_hist, s_hist)
+		var gl := b_hist.window_glows()
+		var g_hist := _count_glass(b_hist)
+		var br := _collect_broken(b_hist).size()
+		# Need at least one glow, at least one broken (so distinction testable),
+		# and glows strictly fewer than total glass (sparse, intacts only).
+		if not gl.is_empty() and br > 0 and gl.size() < g_hist:
+			found_spec = s_hist
+			found_glows = gl
+			found_glass_hist = g_hist
+			break
+	if found_glows.is_empty():
+		print("[CityTest] window_glow: historic building grew no glows (tried 8 ids; glass=%d)" % found_glass_hist)
+		return false
+	# Every glow must be INSIDE the footprint (interior light), not outside like streetlamp,
+	# and at window height (above sill, below roof), and near a wall face.
+	var w: float = 12.0
+	var d: float = 10.0
+	var fh: float = 3.0
+	var n: int = 4
+	var total_h := n * fh
+	for pos: Vector3 in found_glows:
+		if pos.x < -0.05 or pos.x > w + 0.05 or pos.z < -0.05 or pos.z > d + 0.05:
+			print("[CityTest] window_glow: glow outside footprint at %s" % pos)
+			return false
+		if pos.y < BuildingBuilder.WIN_SILL + 0.15 or pos.y > total_h + 0.05:
+			print("[CityTest] window_glow: glow y %.2f not at window height at %s" % [pos.y, pos])
+			return false
+		# Must be inset from a wall face (not dead centre).
+		var dist_to_wall := minf(minf(pos.x, w - pos.x), minf(pos.z, d - pos.z))
+		if dist_to_wall > 1.2:
+			print("[CityTest] window_glow: glow too far from wall (dist %.2f) at %s" % [dist_to_wall, pos])
+			return false
+		if dist_to_wall < 0.25:
+			print("[CityTest] window_glow: glow too close to wall face (still outside?) at %s" % pos)
+			return false
+	# Determinism: rebuild identical glows.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var gl2: Array = b2.window_glows()
+	if found_glows.size() != gl2.size():
+		print("[CityTest] window_glow: nondeterministic count %d vs %d" % [found_glows.size(), gl2.size()])
+		return false
+	for i in found_glows.size():
+		if found_glows[i] != gl2[i]:
+			print("[CityTest] window_glow: nondeterministic pos %d %s vs %s" % [i, found_glows[i], gl2[i]])
+			return false
+	# Gating: non-historic building must grow none.
+	var outer := base.duplicate(true)
+	outer["id"] = String(found_spec["id"]) + "-outer"
+	outer["district"] = "outer"
+	var b_outer := MeshBatcher.new()
+	BuildingBuilder.build(b_outer, outer)
+	if not b_outer.window_glows().is_empty():
+		print("[CityTest] window_glow: non-historic building wrongly has %d glows" % b_outer.window_glows().size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "glow-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b_tiny := MeshBatcher.new()
+	BuildingBuilder.build(b_tiny, tiny)
+	if not b_tiny.window_glows().is_empty():
+		print("[CityTest] window_glow: tiny-facade building wrongly has glows")
+		return false
+	# Chunk build: OmniLight nodes must match manifest and carry correct params.
+	var plan := CityPlan.new()
+	# Find a real avenue chunk that also likely contains historic buildings (core).
+	var avenue_coord := Vector2i.ZERO
+	var probe_found := false
+	for coord in [Vector2i(0, 0), Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(2, 0), Vector2i(0, 2), Vector2i(-1, -1)]:
+		var rect := WorldSeed.chunk_rect(coord)
+		var has_av := false
+		for axis in 2:
+			for li in plan.lines_in_range(axis, rect.position.x if axis == 0 else rect.position.y, rect.end.x if axis == 0 else rect.end.y):
+				if plan.is_avenue(axis, li):
+					has_av = true
+					break
+			if has_av:
+				break
+		# Also check chunk has at least some historic glows by trial fill.
+		var b_probe := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_probe, plan, coord)
+		if has_av and not b_probe.window_glows().is_empty():
+			avenue_coord = coord
+			probe_found = true
+			break
+		if not probe_found and not b_probe.window_glows().is_empty():
+			avenue_coord = coord
+			probe_found = true
+	# Fallback: at least find any chunk with glows.
+	if not probe_found:
+		for coord in [Vector2i(0, 0), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(2, -2), Vector2i(-2, -2)]:
+			var b_probe2 := MeshBatcher.new()
+			ChunkBuilder.fill_batcher(b_probe2, plan, coord)
+			if not b_probe2.window_glows().is_empty():
+				avenue_coord = coord
+				probe_found = true
+				break
+	if not probe_found:
+		print("[CityTest] window_glow: no chunk with glows found in probe ring")
+		return false
+	var b_chunk := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b_chunk, plan, avenue_coord)
+	var manifest_glows: Array = b_chunk.window_glows()
+	if manifest_glows.is_empty():
+		print("[CityTest] window_glow: chunk %s has 0 glows" % avenue_coord)
+		return false
+	for pos: Vector3 in manifest_glows:
+		if pos.y < 0.8 or pos.y > 30.0:
+			print("[CityTest] window_glow: chunk glow y %.2f out of range at %s" % [pos.y, pos])
+			return false
+	var parent := Node3D.new()
+	add_child(parent)
+	var st := ChunkBuilder.build(parent, plan, avenue_coord, b_chunk)
+	var chunk: Node3D = parent.get_child(0) if parent.get_child_count() > 0 else null
+	var glow_nodes := 0
+	if chunk != null:
+		for child in chunk.get_children():
+			if child is OmniLight3D and child.is_in_group(&"window_glow"):
+				glow_nodes += 1
+				var om: OmniLight3D = child as OmniLight3D
+				if absf(om.omni_range - BuildingBuilder.WINDOW_GLOW_RANGE) > 0.01:
+					print("[CityTest] window_glow: node range %.2f != %.2f" % [om.omni_range, BuildingBuilder.WINDOW_GLOW_RANGE])
+					parent.queue_free()
+					return false
+				if absf(om.light_energy - BuildingBuilder.WINDOW_GLOW_ENERGY) > 0.01:
+					print("[CityTest] window_glow: energy %.2f != %.2f" % [om.light_energy, BuildingBuilder.WINDOW_GLOW_ENERGY])
+					parent.queue_free()
+					return false
+				if om.shadow_enabled:
+					print("[CityTest] window_glow: shadow_enabled should be false")
+					parent.queue_free()
+					return false
+				if om.light_color.get_luminance() < 0.5:
+					print("[CityTest] window_glow: color too dim %s" % om.light_color)
+					parent.queue_free()
+					return false
+	parent.queue_free()
+	if glow_nodes != manifest_glows.size():
+		print("[CityTest] window_glow: node count %d != manifest %d" % [glow_nodes, manifest_glows.size()])
+		return false
+	if int(st.get("window_glows", -1)) != manifest_glows.size():
+		print("[CityTest] window_glow: stats %s != %d" % [st.get("window_glows", -1), manifest_glows.size()])
+		return false
 	return true
 
 

@@ -80,6 +80,9 @@ func _process(_delta: float) -> void:
 	for lamp in get_tree().get_nodes_in_group(&"streetlamp"):
 		if is_instance_valid(lamp):
 			lamp.visible = night
+	for glow in get_tree().get_nodes_in_group(&"window_glow"):
+		if is_instance_valid(glow):
+			glow.visible = night
 
 
 ## 0.0 at night, 1.0 mid-day with dawn/dusk ramps around sunrise/sunset.

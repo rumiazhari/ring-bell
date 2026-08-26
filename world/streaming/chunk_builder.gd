@@ -130,6 +130,22 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		chunk.add_child(lamp)
 		lamp_lights += 1
 	stats["street_lights"] = lamp_lights
+	# Phase U: interior window glows (faint warm, night-only)
+	var win_glows := 0
+	for pos: Vector3 in batcher.window_glows():
+		var glow := OmniLight3D.new()
+		glow.name = "WindowGlow_%d" % win_glows
+		glow.position = pos
+		glow.omni_range = BuildingBuilder.WINDOW_GLOW_RANGE
+		glow.omni_attenuation = 1.35
+		glow.light_energy = BuildingBuilder.WINDOW_GLOW_ENERGY
+		glow.light_color = BuildingBuilder.WINDOW_GLOW_COLOR
+		glow.shadow_enabled = false
+		glow.visible = GameClock.is_night()
+		glow.add_to_group(&"window_glow")
+		chunk.add_child(glow)
+		win_glows += 1
+	stats["window_glows"] = win_glows
 	stats["boxes"] = batcher.box_count()
 	stats["colliders"] = batcher.collider_count()
 	stats["mat_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0
