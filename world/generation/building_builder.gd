@@ -50,6 +50,15 @@ const BH_CAP_OVERHANG := 0.3       # bulkhead cap overhang beyond bz walls
 const BH_RAIL_H := 0.45            # Phase H roof-exit rim height (grab lip)
 const BH_RAIL_T := 0.08            # rim member thickness
 
+# --- Phase K: facade balconies (AC-style climbable-city parkour feature) -----
+const BAL_PROJ := 0.7             # balcony deck protrusion beyond the wall face
+const BAL_W := 2.2                # balcony deck width (along the facade)
+const BAL_DECK_T := 0.16          # deck slab thickness
+const BAL_RAIL_H := 0.5           # railing lip height (grabbable parkour ledge)
+const BAL_RAIL_T := 0.07          # railing member thickness
+const BAL_PROB := 0.7             # chance a given (floor, side) gets a balcony
+const BAL_MIN_SIDE := 6.0         # skip balconies on facades shorter than this
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -197,6 +206,12 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		_furnish(b, off, w, d, fh, f, tag, zone,
 				door_edge if f == 0 else -1,
 				str(style.get("room_type", "residential")))
+		# Phase K: AC-style facade balconies on the upper storeys - a
+		# cantilevered concrete deck + steel railing lip that doubles as a
+		# grabbable parkour ledge. Deterministic per (floor, side, building),
+		# gated to human-scale storeys above ground, on the long facades only.
+		if f >= 1:
+			_balconies(b, off, w, d, fh, f, tag, spec)
 		b.pop_layer()
 
 	# --- staircase --------------------------------------------------------------
@@ -239,6 +254,89 @@ static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
 				door_edge == side)
 		b.pop_layer()
+
+
+## Phase K: AC-style facade balconies. A cantilevered concrete deck juts out
+## from one upper-storey facade per (floor, side), capped by a steel railing
+## whose top edge is a grabbable parkour lip. The deck is STANDABLE (collides)
+## so the player can mantle onto it from the street or from a lower balcony;
+## the railing is a thin tall steel lip that the Phase-E parkour grab can
+## catch. Placement is deterministic (one choice RNG per floor/side/building),
+## gated to floors above ground and to facades long enough to host a believable
+## balcony, and never on the entrance (door) wall so shopfronts stay clear.
+static func _balconies(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, f: int, tag: String, spec: Dictionary) -> void:
+	var door_edge: int = int(spec.get("door_edge", 0))
+	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
+	for side in 4:
+		if side == door_edge:
+			continue   # keep the shopfront/entrance wall clear
+		var length := w if (side == 0 or side == 2) else d
+		if length < BAL_MIN_SIDE:
+			continue   # balcony needs a believable run of facade
+		var rng := WorldSeed.rng_for("balcony",
+			[WorldSeed.str_hash(tag), f * 7, side])
+		if rng.randf() >= BAL_PROB:
+			continue   # ~30% of eligible facades get one - avoids total coverage
+		var slot: Vector3 = _balcony_slot(w, d, side, f, fh)
+		var cx := off.x + slot.x
+		var cy := off.y + slot.y
+		var cz := off.z + slot.z
+		_add_balcony(b, cx, cy, cz, side)
+
+
+## World-local center (no building offset) of a balcony deck for `side`.
+static func _balcony_slot(w: float, d: float, side: int, f: int,
+		fh: float) -> Vector3:
+	var y := f * fh + 0.25          # deck top just above the storey floor
+	var t := (w if (side == 0 or side == 2) else d) * 0.5  # centered on facade
+	match side:
+		0: return Vector3(t, y, WALL_T * 0.5 - BAL_PROJ * 0.5)      # N (-Z)
+		1: return Vector3(w - WALL_T * 0.5 + BAL_PROJ * 0.5, y, t)  # E (+X)
+		2: return Vector3(t, y, d - WALL_T * 0.5 + BAL_PROJ * 0.5)  # S (+Z)
+		_: return Vector3(WALL_T * 0.5 - BAL_PROJ * 0.5, y, t)      # W (-X)
+
+
+## One balcony: concrete deck (standable) + 3-segment steel railing lip.
+static func _add_balcony(b: MeshBatcher, cx: float, cy: float, cz: float,
+		side: int) -> void:
+	var horizontal := side == 0 or side == 2
+	var aw := BAL_W if horizontal else BAL_PROJ
+	var ad := BAL_PROJ if horizontal else BAL_W
+	# Deck slab - concrete, standable (collides). Thin cantilever.
+	b.add_destructible_box(Vector3(cx, cy - BAL_DECK_T * 0.5, cz),
+			Vector3(aw, BAL_DECK_T, ad), Color("8a8074").darkened(0.1),
+			&"concrete", true, "balcony", -1)
+	# Steel railing lip: front rail (the grabbable parkour edge) + two returns.
+	# Top of the front rail sits BAL_RAIL_H above the deck -> catchable ledge.
+	var ry := cy + BAL_RAIL_H * 0.5
+	var rail_c := Color("6b6f73")
+	# Front rail runs along the facade edge, facing out into the city.
+	var fr_w := BAL_W if horizontal else BAL_RAIL_T
+	var fr_d := BAL_RAIL_T if horizontal else BAL_W
+	var fr_x: float = cx
+	var fr_z: float = cz
+	if horizontal:
+		fr_z += (BAL_PROJ - BAL_RAIL_T) * 0.5 * (1.0 if side == 2 else -1.0)
+	else:
+		fr_x += (BAL_PROJ - BAL_RAIL_T) * 0.5 * (1.0 if side == 1 else -1.0)
+	b.add_destructible_box(Vector3(fr_x, ry, fr_z),
+			Vector3(fr_w, BAL_RAIL_H, fr_d), rail_c,
+			&"steel", true, "balcony", -1)
+	# Two side returns (short steel posts along the deck edges).
+	var ret_len := BAL_PROJ - 2.0 * BAL_RAIL_T
+	if horizontal:
+		for sx: float in [cx - BAL_W * 0.5 + BAL_RAIL_T * 0.5,
+				cx + BAL_W * 0.5 - BAL_RAIL_T * 0.5]:
+			b.add_destructible_box(Vector3(sx, ry, fr_z),
+					Vector3(BAL_RAIL_T, BAL_RAIL_H, ret_len), rail_c,
+					&"steel", true, "balcony", -1)
+	else:
+		for sz: float in [cz - BAL_W * 0.5 + BAL_RAIL_T * 0.5,
+				cz + BAL_W * 0.5 - BAL_RAIL_T * 0.5]:
+			b.add_destructible_box(Vector3(fr_x, ry, sz),
+					Vector3(ret_len, BAL_RAIL_H, BAL_RAIL_T), rail_c,
+					&"steel", true, "balcony", -1)
 
 
 const CELL_H := 2.5      # floor slab panel target edge (BOTH dimensions)

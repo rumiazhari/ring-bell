@@ -1,11 +1,26 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 24
+LAST_ITER: 25
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 24: Phase J bulkhead roof-access ladder — a vertical run of destructible
+Iter 25: Phase K facade balconies — AC-style cantilevered concrete decks
+protruding from upper-storey facades (f>=1, non-entrance, long facades only),
+each capped by a steel railing lip (BAL_RAIL_H = 0.5 m) that doubles as a
+grabbable parkour ledge. Deterministic per (floor, side, building) via
+WorldSeed; boxes tagged "balcony" (standable concrete deck + steel lip).
+Added `--citytest` assertion `_test_balconies` (>=1 "balcony" box on a
+multi-storey building, above ground/inside footprint band, gated to
+multi-storey, byte-identical rebuild, single-storey grows none).
+
+## This iteration
+[autopilot] iter 25: Phase K facade balconies — cantilevered concrete decks
++ steel railing lip (grabbable parkour ledge) on upper-storey facades,
+deterministic, gated to multi-storey, tagged "balcony". citytest + smoke +
+cityruntime green (0 failures); new `_test_balconies` assertion passes.
+
+[autopilot] iter 24: Phase J bulkhead roof-access ladder — a vertical run of destructible
 steel rungs on the hut's +Z face climbing from just above the deck up to the
 Phase H rim top, so the serviced plant-room roof (Phase H rim + Phase I hatch)
 is actually CLIMBABLE rather than a mantle-only target. Rungs tagged "bhladder",
@@ -13,13 +28,6 @@ deterministic, gated to stair buildings. Added `--citytest` assertion
 `_test_bulkhead_ladder` (>=4 ascending steel "bhladder" rungs, footprints
 inside the cap zone, bottom near deck + top at cap, deterministic, non-stair
 buildings grow none).
-
-## This iteration
-[autopilot] iter 24: Phase J bulkhead roof-access ladder — vertical steel
-rung ladder on the hut's +Z face from the deck to the rim top (climbable, not
-just a mantle target), destructible steel tagged "bhladder", gated to stair
-buildings. citytest + smoke green (0 failures); new `_test_bulkhead_ladder`
-assertion passes.
 
 [autopilot] iter 23: Phase I bulkhead plant-room details — steel hatch lid
 + 2 vent louvers on the cap surface (above doorway lane, inside the Phase
@@ -72,10 +80,15 @@ at dense roof packing. citytest + smoke green (0 failures).
    the hut roof reads as a serviced plant room (small destructible steel
    details on the cap, gated to the bulkhead cap zone). Gate: --citytest.
    [COMPLETE in iter 23]
-8. [Next] Phase J idea: rooftop access ladder from the deck to the bulkhead
-   cap rim — a steel rung ladder (destructible "bhplant") so the
+8. [Done] Phase J idea: rooftop access ladder from the deck to the bulkhead
+   cap rim — a steel rung ladder (destructible "bhladder") so the
    plant-room roof is actually climbable, not just a mantle target.
-   Gate: --citytest.
+   Gate: --citytest. [COMPLETE in iter 24]
+9. [Done] Phase K idea: facade balconies — AC-style cantilevered concrete
+   decks + steel railing lip (grabbable parkour ledge) on upper storeys,
+   deterministic, gated to multi-storey, tagged "balcony". Directly serves
+   the Prague directive's named "balconies" parkour feature. Gate: --citytest.
+   [COMPLETE in iter 25]
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:

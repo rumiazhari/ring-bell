@@ -163,6 +163,8 @@ func _run_all() -> void:
 			_test_bulkhead_plant())
 	_check("bulkhead access ladder: climbable rungs deck->rim, gated to stairs",
 			_test_bulkhead_ladder())
+	_check("facade balconies: deck+steel lip on upper storeys, gated to multi-storey",
+			_test_balconies())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -665,6 +667,108 @@ func _test_bulkhead_ladder() -> bool:
 	BuildingBuilder.build(b3, nostair)
 	if not _collect_bhladder(b3).is_empty():
 		print("[CityTest] bhladder: non-stair building grew a ladder")
+		return false
+	return true
+
+
+## Colliding boxes tagged "balcony" (Phase K facade balconies).
+func _collect_balcony(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if not bool(s.get("collide", false)):
+			continue
+		if String(s.get("building_id", "")) != "balcony":
+			continue
+		out.append(s)
+	return out
+
+
+# --- 24e: Facade balconies (Phase K) ------------------------------------------
+func _test_balconies() -> bool:
+	# A multi-storey building MUST grow AC-style facade balconies on some of
+	# its upper-storey (f>=1) facades: colliding boxes tagged "balcony",
+	# confined to a believable protrusion band just beyond the wall face,
+	# with a standable concrete deck and a steel railing lip whose TOP sits
+	# BAL_RAIL_H above the deck (a grabbable parkour ledge). They must hang
+	# on a floor >=1 above grade, never on the ground floor, and a rebuild is
+	# byte-identical. A single-storey building (no upper storey) grows none.
+	var spec := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0, "floors": 4, "id": "balconytest",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b := MeshBatcher.new()
+	BuildingBuilder.build(b, spec)
+	var bal := _collect_balcony(b)
+	if bal.is_empty():
+		print("[CityTest] balcony: multi-storey building grew no balconies")
+		return false
+	var total_h := 12.0   # 4 floors * 3.0
+	var fh := 3.0
+	var BAL_RAIL_H := 0.5
+	var saw_upper := false
+	for s: Dictionary in bal:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y - sz.y * 0.5 < fh * 0.5:
+			print("[CityTest] balcony: box too low (ground floor?) at %s" % [pos])
+			return false
+		if pos.y - sz.y * 0.5 > total_h:
+			print("[CityTest] balcony: box above the roof at %s" % [pos])
+			return false
+		saw_upper = true
+		# Protrusion must stay within the balcony band beyond a wall face.
+		var ox: float = pos.x - sz.x * 0.5
+		var ox2: float = pos.x + sz.x * 0.5
+		var oz: float = pos.z - sz.z * 0.5
+		var oz2: float = pos.z + sz.z * 0.5
+		var beyond_x := ox < -0.05 or ox2 > 12.0 + 0.05
+		var beyond_z := oz < -0.05 or oz2 > 10.0 + 0.05
+		var protrudes := false
+		if beyond_x and oz >= -0.05 and oz2 <= 10.0 + 0.05:
+			protrudes = true
+		if beyond_z and ox >= -0.05 and ox2 <= 12.0 + 0.05:
+			protrudes = true
+		if not protrudes and (beyond_x or beyond_z):
+			print("[CityTest] balcony: box outside footprint band %s" % [pos])
+			return false
+		if StringName(s["material"]) == &"steel":
+			# The railing upright IS the grabbable parkour lip, so its
+			# vertical extent must read as BAL_RAIL_H exactly.
+			if absf(sz.y - BAL_RAIL_H) > 0.05:
+				print("[CityTest] balcony: rail lip height %f != %f"
+						% [sz.y, BAL_RAIL_H])
+				return false
+	if not saw_upper:
+		print("[CityTest] balcony: no upper-storey boxes")
+		return false
+
+	# Determinism: rebuild is byte-identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, spec)
+	var bal2 := _collect_balcony(b2)
+	if bal.size() != bal2.size():
+		print("[CityTest] balcony: nondeterministic count %d vs %d"
+				% [bal.size(), bal2.size()])
+		return false
+	for i in bal.size():
+		if bal[i]["pos"] != bal2[i]["pos"] \
+				or bal[i]["size"] != bal2[i]["size"]:
+			print("[CityTest] balcony: nondeterministic box %d" % i)
+			return false
+
+	# Gating: a single-storey building grows no balconies.
+	var one := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0, "floors": 1, "id": "balcony-1storey",
+		"door_edge": 0,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, one)
+	if not _collect_balcony(b3).is_empty():
+		print("[CityTest] balcony: single-storey building wrongly grew one")
 		return false
 	return true
 
