@@ -181,6 +181,8 @@ func _run_all() -> void:
 		_test_player_lantern())
 	_check("window interior glow: faint warm lights behind intact historic glass at night (deterministic)",
 		_test_window_glows())
+	_check("volumetric ambience: ground fog + bloom halo around streetlamps/window glows at night (deterministic)",
+		_test_volumetric_ambience())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -3107,6 +3109,133 @@ func _test_window_glows() -> bool:
 	if int(st.get("window_glows", -1)) != manifest_glows.size():
 		print("[CityTest] window_glow: stats %s != %d" % [st.get("window_glows", -1), manifest_glows.size()])
 		return false
+	return true
+
+
+# --- 24n: Volumetric ambience (Phase V) — ground fog + bloom halo ----
+func _test_volumetric_ambience() -> bool:
+	# DayNightController must expose soft night haze + bloom that makes
+	# streetlamp/window pools read through a faint volumetric veil.
+	# Contract:
+	#   - Environment.glow_enabled + volumetric_fog_enabled + fog_enabled
+	#   - Glow params in sane halo range (not disabled, not blown out)
+	#   - Volumetric density breathes night 0.015-0.035 → day 0.003-0.01
+	#   - Night halo brighter than day (intensity + emission_energy)
+	#   - Fog base density breathes night → day (existing Phase S still holds)
+	if DayNightController.GLOW_INTENSITY_NIGHT < 0.35 or DayNightController.GLOW_INTENSITY_NIGHT > 0.85:
+		print("[CityTest] volumetric: GLOW_INTENSITY_NIGHT %.2f not in [0.35,0.85]" % DayNightController.GLOW_INTENSITY_NIGHT)
+		return false
+	if DayNightController.GLOW_INTENSITY_DAY < 0.15 or DayNightController.GLOW_INTENSITY_DAY > 0.55:
+		print("[CityTest] volumetric: GLOW_INTENSITY_DAY %.2f not in [0.15,0.55]" % DayNightController.GLOW_INTENSITY_DAY)
+		return false
+	if DayNightController.GLOW_INTENSITY_NIGHT <= DayNightController.GLOW_INTENSITY_DAY:
+		print("[CityTest] volumetric: night glow %.2f not > day glow %.2f" % [DayNightController.GLOW_INTENSITY_NIGHT, DayNightController.GLOW_INTENSITY_DAY])
+		return false
+	if absf(DayNightController.GLOW_STRENGTH - 1.0) > 0.35:
+		print("[CityTest] volumetric: GLOW_STRENGTH %.2f not ~1.0" % DayNightController.GLOW_STRENGTH)
+		return false
+	if DayNightController.GLOW_BLOOM < 0.06 or DayNightController.GLOW_BLOOM > 0.22:
+		print("[CityTest] volumetric: GLOW_BLOOM %.2f not in [0.06,0.22]" % DayNightController.GLOW_BLOOM)
+		return false
+	if DayNightController.GLOW_HDR_THRESHOLD < 0.70 or DayNightController.GLOW_HDR_THRESHOLD > 1.05:
+		print("[CityTest] volumetric: GLOW_HDR_THRESHOLD %.2f not in [0.70,1.05]" % DayNightController.GLOW_HDR_THRESHOLD)
+		return false
+	if DayNightController.VOL_FOG_DENSITY_NIGHT < 0.012 or DayNightController.VOL_FOG_DENSITY_NIGHT > 0.035:
+		print("[CityTest] volumetric: VOL_FOG_DENSITY_NIGHT %.3f not in [0.012,0.035]" % DayNightController.VOL_FOG_DENSITY_NIGHT)
+		return false
+	if DayNightController.VOL_FOG_DENSITY_DAY < 0.002 or DayNightController.VOL_FOG_DENSITY_DAY > 0.010:
+		print("[CityTest] volumetric: VOL_FOG_DENSITY_DAY %.3f not in [0.002,0.010]" % DayNightController.VOL_FOG_DENSITY_DAY)
+		return false
+	if DayNightController.VOL_FOG_DENSITY_NIGHT <= DayNightController.VOL_FOG_DENSITY_DAY:
+		print("[CityTest] volumetric: night vol fog %.3f not > day %.3f" % [DayNightController.VOL_FOG_DENSITY_NIGHT, DayNightController.VOL_FOG_DENSITY_DAY])
+		return false
+	if DayNightController.VOL_FOG_EMISSION_NIGHT <= DayNightController.VOL_FOG_EMISSION_DAY:
+		print("[CityTest] volumetric: night emission %.2f not > day %.2f" % [DayNightController.VOL_FOG_EMISSION_NIGHT, DayNightController.VOL_FOG_EMISSION_DAY])
+		return false
+	if DayNightController.VOL_FOG_EMISSION_NIGHT < 0.25 or DayNightController.VOL_FOG_EMISSION_NIGHT > 0.85:
+		print("[CityTest] volumetric: VOL_FOG_EMISSION_NIGHT %.2f not in [0.25,0.85]" % DayNightController.VOL_FOG_EMISSION_NIGHT)
+		return false
+	if DayNightController.VOL_FOG_ALBEDO.get_luminance() < 0.35:
+		print("[CityTest] volumetric: VOL_FOG_ALBEDO too dark %s" % DayNightController.VOL_FOG_ALBEDO)
+		return false
+	if DayNightController.VOL_FOG_EMISSION.get_luminance() < 0.40:
+		print("[CityTest] volumetric: VOL_FOG_EMISSION too dim %s" % DayNightController.VOL_FOG_EMISSION)
+		return false
+	# Instantiate controller and inspect the live Environment after _ready.
+	var dnc := DayNightController.new()
+	# Call _ready synchronously (add_child would defer _ready by one frame,
+	# which would make this test a coroutine requiring await).
+	dnc._ready()
+	# Access private _env via direct property (GDScript allows _env if we cast).
+	var env: Environment = dnc.get("_env")
+	if env == null:
+		# Fallback: fetch WorldEnvironment child.
+		var we: WorldEnvironment = null
+		for c in dnc.get_children():
+			if c is WorldEnvironment:
+				we = c
+				break
+		if we != null:
+			env = we.environment
+	if env == null:
+		print("[CityTest] volumetric: DayNightController._env is null")
+		dnc.free()
+		return false
+	if not env.glow_enabled:
+		print("[CityTest] volumetric: glow_enabled false")
+		dnc.free()
+		return false
+	if not env.volumetric_fog_enabled:
+		print("[CityTest] volumetric: volumetric_fog_enabled false")
+		dnc.free()
+		return false
+	if not env.fog_enabled:
+		print("[CityTest] volumetric: fog_enabled false")
+		dnc.free()
+		return false
+	if absf(env.glow_strength - DayNightController.GLOW_STRENGTH) > 0.01:
+		print("[CityTest] volumetric: env glow_strength %.2f != %.2f" % [env.glow_strength, DayNightController.GLOW_STRENGTH])
+		dnc.free()
+		return false
+	if absf(env.glow_bloom - DayNightController.GLOW_BLOOM) > 0.01:
+		print("[CityTest] volumetric: env glow_bloom %.2f != %.2f" % [env.glow_bloom, DayNightController.GLOW_BLOOM])
+		dnc.free()
+		return false
+	if absf(env.volumetric_fog_density - DayNightController.VOL_FOG_DENSITY_DAY) > 0.001 and absf(env.volumetric_fog_density - DayNightController.VOL_FOG_DENSITY_NIGHT) > 0.001:
+		# At spawn time day_factor depends on GameClock; just require within the lerp range.
+		if env.volumetric_fog_density < DayNightController.VOL_FOG_DENSITY_DAY - 0.001 or env.volumetric_fog_density > DayNightController.VOL_FOG_DENSITY_NIGHT + 0.001:
+			print("[CityTest] volumetric: env vol density %.3f out of night/day range [%.3f,%.3f]" % [env.volumetric_fog_density, DayNightController.VOL_FOG_DENSITY_DAY, DayNightController.VOL_FOG_DENSITY_NIGHT])
+			dnc.free()
+			return false
+	# Verify breathing: force night then day and call _process.
+	var saved_minute := GameClock.get_minute_of_day()
+	# Night: 02:00 -> day_factor 0
+	GameClock.total_minutes = float(2 * 60)
+	dnc._process(0.0)
+	var night_vol := env.volumetric_fog_density
+	var night_glow := env.glow_intensity
+	var night_emit := env.volumetric_fog_emission_energy
+	# Day: 12:00 -> day_factor 1
+	GameClock.total_minutes = float(12 * 60)
+	dnc._process(0.0)
+	var day_vol := env.volumetric_fog_density
+	var day_glow := env.glow_intensity
+	var day_emit := env.volumetric_fog_emission_energy
+	# Restore clock
+	GameClock.total_minutes = float(saved_minute)
+	if night_vol <= day_vol + 0.001:
+		print("[CityTest] volumetric: night vol %.3f not > day vol %.3f" % [night_vol, day_vol])
+		dnc.free()
+		return false
+	if night_glow <= day_glow + 0.01:
+		print("[CityTest] volumetric: night glow %.2f not > day glow %.2f" % [night_glow, day_glow])
+		dnc.free()
+		return false
+	if night_emit <= day_emit + 0.01:
+		print("[CityTest] volumetric: night emit %.2f not > day emit %.2f" % [night_emit, day_emit])
+		dnc.free()
+		return false
+	dnc.free()
 	return true
 
 

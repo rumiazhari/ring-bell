@@ -8,6 +8,10 @@ extends Node
 ## near-black) so streetlamp spill becomes the only readable light source.
 ## Lamps are re-queried live each frame so streamed CITY chunks (created
 ## after this controller) are picked up without a stale _lamps cache.
+## Phase V: volumetric street ambience — faint ground fog + bloom halo
+## around streetlamps / window glows via Environment glow + volumetric fog
+## that breathes with darkness, reinforcing light-as-gameplay without
+## new geometry.
 
 const HOUR_SUNRISE := 6.0
 const HOUR_SUNSET := 20.0
@@ -22,6 +26,21 @@ const NIGHT_AMBIENT := 0.03
 const DAY_AMBIENT := 0.60
 const NIGHT_BG := Color(0.015, 0.022, 0.045)
 const DAY_BG := Color(0.42, 0.52, 0.66)
+
+# Phase V: volumetric street ambience — faint ground fog + bloom halos
+# that make lamp/window pools read through a soft haze at night.
+const GLOW_INTENSITY_NIGHT := 0.62
+const GLOW_INTENSITY_DAY := 0.28
+const GLOW_STRENGTH := 1.0
+const GLOW_BLOOM := 0.12
+const GLOW_HDR_THRESHOLD := 0.88
+const GLOW_HDR_SCALE := 1.6
+const VOL_FOG_DENSITY_NIGHT := 0.022
+const VOL_FOG_DENSITY_DAY := 0.005
+const VOL_FOG_EMISSION_NIGHT := 0.52
+const VOL_FOG_EMISSION_DAY := 0.08
+const VOL_FOG_ALBEDO := Color(0.60, 0.63, 0.70)
+const VOL_FOG_EMISSION := Color(0.86, 0.68, 0.42)
 
 var _sun: DirectionalLight3D
 var _env: Environment
@@ -43,11 +62,30 @@ func _ready() -> void:
 	_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	_env.ambient_light_color = Color(0.72, 0.76, 0.86)
 	_env.ambient_light_energy = 0.5
-	# Subtle volumetric fog at night sells depth + makes lamp halos read.
+	# Subtle depth fog at night sells distance + makes lamp halos read.
 	_env.fog_enabled = true
 	_env.fog_light_color = Color(0.55, 0.62, 0.78)
 	_env.fog_light_energy = 0.18
 	_env.fog_density = 0.003
+	# Phase V: bloom halo around every bright lamp/window point.
+	_env.glow_enabled = true
+	_env.glow_intensity = GLOW_INTENSITY_DAY
+	_env.glow_strength = GLOW_STRENGTH
+	_env.glow_bloom = GLOW_BLOOM
+	_env.glow_hdr_threshold = GLOW_HDR_THRESHOLD
+	_env.glow_hdr_scale = GLOW_HDR_SCALE
+	_env.glow_normalized = true
+	_env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	# Phase V: volumetric ground fog — faint haze that catches lamp spill.
+	_env.volumetric_fog_enabled = true
+	_env.volumetric_fog_density = VOL_FOG_DENSITY_DAY
+	_env.volumetric_fog_albedo = VOL_FOG_ALBEDO
+	_env.volumetric_fog_emission = VOL_FOG_EMISSION
+	_env.volumetric_fog_emission_energy = VOL_FOG_EMISSION_DAY
+	_env.volumetric_fog_gi_inject = 0.45
+	_env.volumetric_fog_length = 64.0
+	_env.volumetric_fog_detail_spread = 6.0
+	_env.volumetric_fog_sky_affect = 0.15
 	_world_env.environment = _env
 	add_child(_world_env)
 
@@ -73,16 +111,22 @@ func _process(_delta: float) -> void:
 	# Fog density breathes with darkness: thicker at night for eerie depth.
 	_env.fog_density = lerpf(0.008, 0.0025, day_factor)
 	_env.fog_light_energy = lerpf(0.12, 0.18, day_factor)
+	# Phase V: volumetric fog + glow also breathe — denser/brighter at night
+	# so lamp/window halos punch through a faint haze, thin by day.
+	_env.volumetric_fog_density = lerpf(VOL_FOG_DENSITY_NIGHT, VOL_FOG_DENSITY_DAY, day_factor)
+	_env.volumetric_fog_emission_energy = lerpf(VOL_FOG_EMISSION_NIGHT, VOL_FOG_EMISSION_DAY, day_factor)
+	_env.glow_intensity = lerpf(GLOW_INTENSITY_NIGHT, GLOW_INTENSITY_DAY, day_factor)
 
 	var night := GameClock.is_night()
 	# Live query so streamed CITY lamps (spawned long after _ready) are
 	# included; avoids the stale-cache bug that kept CITY dark at night.
-	for lamp in get_tree().get_nodes_in_group(&"streetlamp"):
-		if is_instance_valid(lamp):
-			lamp.visible = night
-	for glow in get_tree().get_nodes_in_group(&"window_glow"):
-		if is_instance_valid(glow):
-			glow.visible = night
+	if is_inside_tree():
+		for lamp in get_tree().get_nodes_in_group(&"streetlamp"):
+			if is_instance_valid(lamp):
+				lamp.visible = night
+		for glow in get_tree().get_nodes_in_group(&"window_glow"):
+			if is_instance_valid(glow):
+				glow.visible = night
 
 
 ## 0.0 at night, 1.0 mid-day with dawn/dusk ramps around sunrise/sunset.
