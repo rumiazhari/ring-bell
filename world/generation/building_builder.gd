@@ -136,6 +136,14 @@ const DRAIN_PIPE_PROB := 0.62    # chance a historic long facade grows a pipe+gu
 const DRAIN_GUTTER_H := 0.07     # gutter height (thin lip at the eave)
 const DRAIN_GUTTER_T := 0.08     # gutter protrusion beyond wall face
 
+# --- Phase Z: Prague window shutters (hinged wooden shutters flanking windows) ---
+const SHUTTER_T := 0.025         # thin plane pressed to wall (visual-only)
+const SHUTTER_W := 0.30          # shutter width along facade
+const SHUTTER_H := 1.22          # shutter height (fits inside WIN_H 1.35 with margin)
+const SHUTTER_GAP := 0.04        # gap from window edge to shutter inner edge
+const SHUTTER_MIN_SIDE := 5.0    # skip on facades shorter than this
+const SHUTTER_PROB := 0.52       # chance a historic window grows a pair of shutters
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -337,6 +345,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# just outside historic long facades, deterministic per (side, building),
 	# completing the Prague roofline plumbing read without touching collision.
 	_facade_drainpipes(b, off, w, d, fh, n, tag, spec)
+
+	# Phase Z: Prague window shutters — hinged wooden shutters flanking
+	# historic windows, visual-only thin planes pressed just outside the wall
+	# beside each window opening, deterministic per (building, side, floor,
+	# window) via WorldSeed shutter, gated to historic + long facade. Gives
+	# the Prague core its shuttered-window rhythm without touching collision.
+	_facade_shutters(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -996,6 +1011,68 @@ static func _facade_drainpipes(b: MeshBatcher, off: Vector3, w: float, d: float,
 		b.add_box_rotated(off + Vector3(g_cx, gutter_y, g_cz),
 				Vector3(g_w, DRAIN_GUTTER_H, g_d), Basis.IDENTITY, gutter_col, false, false, &"", "drainpipe", 0)
 		b.pop_layer()
+
+## Phase Z: Prague window shutters — hinged wooden shutters beside historic windows.
+## Visual-only thin planes (SHUTTER_T 0.025) pressed just outside the wall
+## flanking each window opening. Deterministic per (building, side, floor,
+## window) via WorldSeed "shutter", gated to historic + long facade (>=5.0).
+## Each qualifying window rolls SHUTTER_PROB 0.52 independently; on success
+## it grows a LEFT + RIGHT shutter leaf (SHUTTER_W 0.30 x SHUTTER_H 1.22)
+## with a SHUTTER_GAP 0.04 from the window edge, centered at the window's
+## sill mid-height. Faint Prague wood palette (desaturated browns/greens),
+## visual-only, no collision or parkour change. Mirrors the window layout
+## computed by _facade_with_openings so shutters sit exactly beside glass.
+static func _facade_shutters(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var shutter_colors: Array[Color] = [
+		Color("5a3a2a"), Color("4a5a3a"), Color("3a4a5a"),
+		Color("6e5a3a"), Color("6e4a3a"), Color("4a5a6e"),
+	]
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for f_idx in n:
+		var y0 := f_idx * fh
+		var cy := y0 + WIN_SILL + WIN_H * 0.5
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < SHUTTER_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(t)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("shutter", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= SHUTTER_PROB:
+					continue
+				var col: Color = shutter_colors[rng.randi_range(0, shutter_colors.size() - 1)]
+				col = col.lightened(rng.randf_range(-0.06, 0.06)).darkened(0.03)
+				col = col.lerp(Color(0.60, 0.58, 0.55), 0.12)
+				var left_t := t_center - (WIN_W * 0.5 + SHUTTER_W * 0.5 + SHUTTER_GAP)
+				var right_t := t_center + (WIN_W * 0.5 + SHUTTER_W * 0.5 + SHUTTER_GAP)
+				left_t = clampf(left_t, SHUTTER_W * 0.5 + 0.18, length - SHUTTER_W * 0.5 - 0.18)
+				right_t = clampf(right_t, SHUTTER_W * 0.5 + 0.18, length - SHUTTER_W * 0.5 - 0.18)
+				var eps := 0.045
+				for shutter_t in [left_t, right_t]:
+					var cx: float = 0.0
+					var cz: float = 0.0
+					var aw: float = 0.0
+					var ad: float = 0.0
+					match side:
+						0: cx = shutter_t; cz = -SHUTTER_T * 0.5 - eps; aw = SHUTTER_W; ad = SHUTTER_T
+						1: cx = w + SHUTTER_T * 0.5 + eps; cz = shutter_t; aw = SHUTTER_T; ad = SHUTTER_W
+						2: cx = shutter_t; cz = d + SHUTTER_T * 0.5 + eps; aw = SHUTTER_W; ad = SHUTTER_T
+						_: cx = -SHUTTER_T * 0.5 - eps; cz = shutter_t; aw = SHUTTER_T; ad = SHUTTER_W
+					b.push_layer(tag + ":f%d" % f_idx)
+					b.add_box_rotated(off + Vector3(cx, cy, cz),
+							Vector3(aw, SHUTTER_H, ad), Basis.IDENTITY, col, false, false, &"", "shutter", f_idx)
+					b.pop_layer()
 
 ## One facade: openings list -> pier / sill / lintel segments (+ panes).
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door

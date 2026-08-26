@@ -189,6 +189,8 @@ func _run_all() -> void:
 		_test_facade_signage())
 	_check("facade drainpipes: Prague zinc/copper downpipes + eave gutters on historic facades (deterministic)",
 		_test_facade_drainpipes())
+	_check("facade shutters: Prague wooden shutters flanking historic windows (deterministic)",
+		_test_facade_shutters())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -791,6 +793,15 @@ func _collect_drainpipe(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "drainpipe":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "shutter" (Phase Z Prague wooden window shutters).
+func _collect_shutter(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "shutter":
 			continue
 		out.append(s)
 	return out
@@ -1732,6 +1743,141 @@ func _test_facade_drainpipes() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] drainpipe: no historic chunk in ring had drainpipes")
+		return false
+	return true
+
+
+# --- 24k4: Facade shutters (Phase Z) — Prague wooden window shutters ----------
+func _test_facade_shutters() -> bool:
+	# Historic long facades should grow wooden shutters flanking windows:
+	# each qualifying window (per side/floor/window via WorldSeed "shutter"
+	# with SHUTTER_PROB 0.52) grows a LEFT+RIGHT leaf (SHUTTER_W 0.30 x
+	# SHUTTER_H 1.22, SHUTTER_T 0.025 thin) pressed 0.045 outside the wall at
+	# the window's sill-mid height. Visual-only, deterministic, gated to
+	# historic >=5.0, always in even leaf pairs per window.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "shuttertest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["shuttertest", "shuttertest2", "shuttertest3", "shuttertest4", "shuttertest5", "shuttertest6", "shuttertest7", "shuttertest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_shutter(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] shutter: historic building grew no shutters (tried 8 ids)")
+		return false
+	var total_h: float = float(found_spec["floors"]) * float(found_spec["floor_h"])
+	var fh: float = float(found_spec["floor_h"])
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] shutter: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] shutter: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "shutter":
+			print("[CityTest] shutter: building_id %s != shutter" % [s.get("building_id", "")])
+			return false
+		var thin_ok := absf(sz.x - BuildingBuilder.SHUTTER_T) < 0.015 or absf(sz.z - BuildingBuilder.SHUTTER_T) < 0.015
+		if not thin_ok:
+			print("[CityTest] shutter: thin dimension %s != %.3f" % [sz, BuildingBuilder.SHUTTER_T])
+			return false
+		var planar_w: float = sz.x if absf(sz.z - BuildingBuilder.SHUTTER_T) < 0.015 else sz.z
+		if absf(planar_w - BuildingBuilder.SHUTTER_W) > 0.015:
+			print("[CityTest] shutter: planar width %.3f != %.3f at %s" % [planar_w, BuildingBuilder.SHUTTER_W, pos])
+			return false
+		if absf(sz.y - BuildingBuilder.SHUTTER_H) > 0.015:
+			print("[CityTest] shutter: height %.3f != %.3f at %s" % [sz.y, BuildingBuilder.SHUTTER_H, pos])
+			return false
+		# Must sit just outside a wall face (pressed outward 0.045).
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+		if not near_wall:
+			print("[CityTest] shutter: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Y must be at a window's sill-mid height (WIN_SILL + WIN_H/2 above floor).
+		var floor_i := int(floor(pos.y / fh + 0.001))
+		var expected_y := float(floor_i) * fh + BuildingBuilder.WIN_SILL + BuildingBuilder.WIN_H * 0.5
+		if absf(pos.y - expected_y) > 0.02:
+			print("[CityTest] shutter: y %.3f not at window height %.3f (floor %d) at %s" % [pos.y, expected_y, floor_i, pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] shutter: unexpected alpha %f" % col.a)
+			return false
+	# Each qualifying window grows a LEFT+RIGHT pair; count must be even and >=2
+	if found.size() % 2 != 0:
+		print("[CityTest] shutter: count %d not even (pairs)" % found.size())
+		return false
+	if found.size() < 2:
+		print("[CityTest] shutter: count %d < 2" % found.size())
+		return false
+	# Determinism: rebuild identical.
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_shutter(b2)
+	if found.size() != got2.size():
+		print("[CityTest] shutter: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] shutter: nondeterministic box %d" % i)
+			return false
+	# Gating: non-historic building must grow none.
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "shutter-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_shutter(b3).is_empty():
+		print("[CityTest] shutter: non-historic building wrongly grew %d" % _collect_shutter(b3).size())
+		return false
+	# Gating: tiny facade (< MIN_SIDE) must grow none.
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "shutter-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_shutter(b4b).is_empty():
+		print("[CityTest] shutter: tiny-facade building wrongly grew shutters")
+		return false
+	# Spot check city chunks: historic ring should have shutters
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "shutter":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] shutter: no historic chunk in ring had shutters")
 		return false
 	return true
 
