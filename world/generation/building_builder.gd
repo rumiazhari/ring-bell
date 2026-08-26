@@ -182,10 +182,11 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		var y0 := f * fh
 		var col := PLINTH_COLOR if f == 0 else wall_c
 		_storey_walls(b, off, w, d, y0, fh, col, f,
-				door_edge if f == 0 else -1, tag)
+			door_edge if f == 0 else -1, tag)
 		if f == 0:
-			# Shopfront dressing on the street-facing ground wall (visual).
-			_shopfront(b, off, w, d, spec)
+			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
+			if str(style.get("room_type", "residential")) == "retail":
+				_shopfront(b, off, w, d, spec)
 		_furnish(b, off, w, d, fh, f, tag, zone,
 				door_edge if f == 0 else -1,
 				str(style.get("room_type", "residential")))
