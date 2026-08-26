@@ -166,6 +166,12 @@ const SILL_H := 0.09                   # sill ledge height (thinner than lintel)
 const SILL_MIN_SIDE := 5.0             # skip on facades shorter than this
 const SILL_PROB := 0.60                # chance a historic window grows a stone sill
 
+# --- Phase AD: Prague window stone jambs (vertical reveals flanking historic windows) --
+const JAMB_W := 0.11                   # stone jamb width along facade
+const JAMB_T := 0.04                   # thin stone jamb thickness protruding beyond wall
+const JAMB_MIN_SIDE := 5.0             # skip on facades shorter than this
+const JAMB_PROB := 0.56                # chance a historic window grows a pair of stone jambs
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -396,6 +402,15 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# facade. Gives every qualifying window a crisp stone sill without touching
 	# collision or the window glass itself.
 	_facade_sill_ledges(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AD: Prague window stone jambs — vertical stone reveals flanking
+	# historic windows, visual-only thin stone strips (JAMB_W 0.11 x WIN_H 1.35 x
+	# JAMB_T 0.04) pressed just outside the wall beside each window opening,
+	# left+right pair per window. Deterministic per (building, side, floor,
+	# window) via WorldSeed window_jamb, gated to historic + long facade.
+	# Together with Phase AB lintels + AC sills they complete the classical
+	# stone window surround without touching collision.
+	_facade_window_jambs(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1300,6 +1315,63 @@ static func _facade_sill_ledges(b: MeshBatcher, off: Vector3, w: float, d: float
 				b.add_box_rotated(off + Vector3(cx, cy, cz),
 						Vector3(aw, SILL_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "sill", f_idx)
 				b.pop_layer()
+
+## Phase AD: Prague window stone jambs — vertical stone reveals flanking historic windows.
+## Visual-only thin stone strips (JAMB_W 0.11 x WIN_H 1.35 x JAMB_T 0.04,
+## height WIN_H, width 0.11) pressed just outside the wall beside each
+## window opening, left+right pair per window at WINDOW sill mid-height.
+## Deterministic per (building, side, floor, window) via WorldSeed "window_jamb",
+## gated to historic + long facade (>=5.0). Each qualifying window rolls
+## JAMB_PROB 0.56 independently; on success it grows a left+right jamb pair
+## whose inner faces sit flush with the window edges (center = t_center ±
+## (WIN_W/2 + JAMB_W/2)), visual-only, no collision. Completes the classical
+## stone window surround when combined with Phase AB lintels + AC sills. Mirrors
+## the window layout computed by _facade_with_openings so jambs sit exactly
+## beside glass.
+static func _facade_window_jambs(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for f_idx in n:
+		var y0 := f_idx * fh
+		var cy := y0 + WIN_SILL + WIN_H * 0.5
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < JAMB_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(t)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("window_jamb", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= JAMB_PROB:
+					continue
+				var stone_c := Color("b0a898").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+				stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+				var eps := 0.045
+				var left_t := t_center - (WIN_W * 0.5 + JAMB_W * 0.5)
+				var right_t := t_center + (WIN_W * 0.5 + JAMB_W * 0.5)
+				for jamb_t in [left_t, right_t]:
+					var cx: float = 0.0
+					var cz: float = 0.0
+					var aw: float = 0.0
+					var ad: float = 0.0
+					match side:
+						0: cx = jamb_t; cz = -JAMB_T * 0.5 - eps; aw = JAMB_W; ad = JAMB_T
+						1: cx = w + JAMB_T * 0.5 + eps; cz = jamb_t; aw = JAMB_T; ad = JAMB_W
+						2: cx = jamb_t; cz = d + JAMB_T * 0.5 + eps; aw = JAMB_W; ad = JAMB_T
+						_: cx = -JAMB_T * 0.5 - eps; cz = jamb_t; aw = JAMB_T; ad = JAMB_W
+					b.push_layer(tag + ":f%d" % f_idx)
+					b.add_box_rotated(off + Vector3(cx, cy, cz),
+							Vector3(aw, WIN_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "jamb", f_idx)
+					b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
