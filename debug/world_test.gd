@@ -201,6 +201,8 @@ func _run_all() -> void:
 		_test_facade_jambs())
 	_check("facade window keystones: Prague stone keystones above historic windows (deterministic)",
 		_test_facade_keystones())
+	_check("facade window corbels: Prague stone sill corbels below historic sills (deterministic)",
+		_test_facade_corbels())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -857,6 +859,15 @@ func _collect_jamb(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "jamb":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "corbel" (Phase AF Prague window sill corbels).
+func _collect_corbel(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "corbel":
 			continue
 		out.append(s)
 	return out
@@ -2607,6 +2618,134 @@ func _test_facade_keystones() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] keystone: no historic chunk in ring had keystones")
+		return false
+	return true
+
+
+func _test_facade_corbels() -> bool:
+	# Historic long facades should grow stone corbels (support brackets)
+	# under the AC sill ledges:
+	# each qualifying window (per side/floor/window via WorldSeed "sill_corbel"
+	# with CORBEL_PROB 0.50) grows a LEFT+RIGHT pair (CORBEL_W 0.13 x
+	# CORBEL_H 0.16 x CORBEL_D 0.09, small blocks protruding beyond the wall)
+	# centered under the sill at y = floor*FH+WIN_SILL -SILL_H+0.015 -CORBEL_H/2
+	# (top flush with sill bottom) at t_center +/-0.35. Visual-only,
+	# deterministic, gated to historic >=5.0, even pair count.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "corbeltest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["corbeltest", "corbeltest2", "corbeltest3", "corbeltest4", "corbeltest5", "corbeltest6", "corbeltest7", "corbeltest8"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_corbel(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] corbel: historic building grew no sill corbels (tried 8 ids)")
+		return false
+	var fh: float = float(found_spec["floor_h"])
+	var corb_w := BuildingBuilder.CORBEL_W
+	var corb_h := BuildingBuilder.CORBEL_H
+	var corb_d := BuildingBuilder.CORBEL_D
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] corbel: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] corbel: material %s != empty (visual)" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "corbel":
+			print("[CityTest] corbel: building_id %s != corbel" % [s.get("building_id", "")])
+			return false
+		if absf(sz.y - corb_h) > 0.015:
+			print("[CityTest] corbel: height %.3f != %.3f at %s" % [sz.y, corb_h, pos])
+			return false
+		var w_ok := absf(sz.x - corb_w) < 0.015 or absf(sz.z - corb_w) < 0.015
+		var d_ok := absf(sz.x - corb_d) < 0.015 or absf(sz.z - corb_d) < 0.015
+		if not w_ok or not d_ok:
+			print("[CityTest] corbel: size %s not %.2f x %.2f x %.2f at %s" % [sz, corb_w, corb_h, corb_d, pos])
+			return false
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.12 and ox < 0.12) or (ox2 > 12.0 - 0.12 and ox < 12.0 + 0.12) or (oz2 > -0.12 and oz < 0.12) or (oz2 > 10.0 - 0.12 and oz < 10.0 + 0.12)
+		if not near_wall:
+			print("[CityTest] corbel: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		var floor_i := int(floor(pos.y / fh + 0.001))
+		var expected_y := float(floor_i) * fh + BuildingBuilder.WIN_SILL - BuildingBuilder.SILL_H + 0.015 - BuildingBuilder.CORBEL_H * 0.5
+		if absf(pos.y - expected_y) > 0.025:
+			print("[CityTest] corbel: y %.3f != expected %.3f (floor %d) at %s" % [pos.y, expected_y, floor_i, pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] corbel: unexpected alpha %f" % col.a)
+			return false
+	if found.size() % 2 != 0:
+		print("[CityTest] corbel: count %d not even (must be bracket pairs)" % found.size())
+		return false
+	if found.size() < 2:
+		print("[CityTest] corbel: count %d < 2" % found.size())
+		return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_corbel(b2)
+	if found.size() != got2.size():
+		print("[CityTest] corbel: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] corbel: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "corbel-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_corbel(b3).is_empty():
+		print("[CityTest] corbel: non-historic building wrongly grew %d" % _collect_corbel(b3).size())
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "corbel-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_corbel(b4b).is_empty():
+		print("[CityTest] corbel: tiny-facade building wrongly grew corbels")
+		return false
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "corbel":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] corbel: no historic chunk in ring had corbels")
 		return false
 	return true
 

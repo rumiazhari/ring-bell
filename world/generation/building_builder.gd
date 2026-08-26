@@ -179,6 +179,13 @@ const KEYSTONE_T := 0.055              # thin stone keystone thickness protrudin
 const KEYSTONE_MIN_SIDE := 5.0         # skip on facades shorter than this
 const KEYSTONE_PROB := 0.52            # chance a historic window grows a keystone
 
+# --- Phase AF: Prague window sill corbels (stone brackets under historic sills) --
+const CORBEL_W := 0.13                 # corbel width along facade (small bracket)
+const CORBEL_H := 0.16                 # corbel height (vertical support)
+const CORBEL_D := 0.09                 # corbel depth protruding beyond wall
+const CORBEL_MIN_SIDE := 5.0           # skip on facades shorter than this
+const CORBEL_PROB := 0.50              # chance a historic window sill grows a bracket pair
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -429,6 +436,16 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# collision or glass; together with sills/jambs/lintels the stone
 	# window surround is now 5-sided (4 surrounds + keystone crown).
 	_facade_window_keystones(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AF: Prague window sill corbels -- stone support brackets under
+	# historic sills, visual-only small stone blocks (CORBEL_W 0.13 x
+	# CORBEL_H 0.16 x CORBEL_D 0.09) pressed just outside the wall below
+	# each sill (pair per window at t_center ±0.35), deterministic per
+	# (building, side, floor, window) via WorldSeed sill_corbel, gated
+	# to historic + long facade. Gives every qualifying sill a classic
+	# Prague console without touching collision or glass; together with
+	# the AB/AC/AD/AE surround the window now has 7-piece stone dressing.
+	_facade_sill_corbels(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1443,6 +1460,61 @@ static func _facade_window_keystones(b: MeshBatcher, off: Vector3, w: float, d: 
 				b.add_box_rotated(off + Vector3(cx, cy, cz),
 						Vector3(aw, KEYSTONE_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "keystone", f_idx)
 				b.pop_layer()
+
+## Phase AF: Prague window sill corbels -- stone support brackets under historic sills.
+## Visual-only small stone blocks (CORBEL_W 0.13 x CORBEL_H 0.16 x CORBEL_D 0.09)
+## pressed just outside the wall UNDER the AC sill ledge, pair per window at
+## t_center +/-0.35 (inset ~0.15 from window edge, comfortably inside the
+## 1.39 sill span). y = y0+WIN_SILL - SILL_H +0.015 - CORBEL_H/2 (top flush
+## with sill bottom). Deterministic per (building, side, floor, window) via
+## WorldSeed "sill_corbel", gated to historic + long facade (>=5.0).
+## Mirrors the window layout so corbels sit exactly under glass.
+static func _facade_sill_corbels(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	var door_edge: int = int(spec.get("door_edge", 0))
+	for f_idx in n:
+		var y0 := f_idx * fh
+		var cy := y0 + WIN_SILL - SILL_H + 0.015 - CORBEL_H * 0.5
+		for side in 4:
+			var length := w if (side == 0 or side == 2) else d
+			if length < CORBEL_MIN_SIDE:
+				continue
+			var is_entrance_side := (side == door_edge) and f_idx == 0
+			var count := int(floor((length - 1.6) / WIN_SPACING))
+			var win_centers: Array[float] = []
+			for i in count:
+				var tr := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
+				if is_entrance_side and absf(tr - length * 0.5) < DOOR_W * 0.5 + 0.9:
+					continue
+				win_centers.append(tr)
+			for win_idx in win_centers.size():
+				var t_center: float = win_centers[win_idx]
+				var rng := WorldSeed.rng_for("sill_corbel", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				if rng.randf() >= CORBEL_PROB:
+					continue
+				var stone_c := Color("b8a898").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+				stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+				var eps := 0.045
+				var left_t := t_center - 0.35
+				var right_t := t_center + 0.35
+				left_t = clampf(left_t, CORBEL_W * 0.5 + 0.18, length - CORBEL_W * 0.5 - 0.18)
+				right_t = clampf(right_t, CORBEL_W * 0.5 + 0.18, length - CORBEL_W * 0.5 - 0.18)
+				for corbel_t in [left_t, right_t]:
+					var cx: float = 0.0
+					var cz: float = 0.0
+					var aw: float = 0.0
+					var ad: float = 0.0
+					match side:
+						0: cx = corbel_t; cz = -CORBEL_D * 0.5 - eps; aw = CORBEL_W; ad = CORBEL_D
+						1: cx = w + CORBEL_D * 0.5 + eps; cz = corbel_t; aw = CORBEL_D; ad = CORBEL_W
+						2: cx = corbel_t; cz = d + CORBEL_D * 0.5 + eps; aw = CORBEL_W; ad = CORBEL_D
+						_: cx = -CORBEL_D * 0.5 - eps; cz = corbel_t; aw = CORBEL_D; ad = CORBEL_W
+					b.push_layer(tag + ":f%d" % f_idx)
+					b.add_box_rotated(off + Vector3(cx, cy, cz),
+							Vector3(aw, CORBEL_H, ad), Basis.IDENTITY, stone_c, false, false, &"", "corbel", f_idx)
+					b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
