@@ -25,6 +25,15 @@ extends RefCounted
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
 var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
+
+# Phase W: flicker/dead-lamp variant — deterministic subset sputters or stays dark.
+const STREET_DEAD_PROB := 0.035        # 3.5% dead (within 2-4% spec)
+const STREET_FLICKER_PROB := 0.18      # 18% of live historic lamps sputter
+const STREET_FLICKER_AMPL := 0.18
+const STREET_FLICKER_FREQ := 3.0
+var _street_lamp_dead: Array[bool] = []     # parallel to _street_lights: true = dead (dark)
+var _street_lamp_flicker: Array[bool] = []  # parallel: true = sputtery
+var _street_lamp_phase: Array[float] = []   # parallel: 0-1 phase for flicker
 var _destroyed := {}                   # id -> true
 var _colliders: Array[Dictionary] = [] # {pos,size,basis,id,material}
 var _prop_defs: Array[Dictionary] = [] # dynamic DestructibleProp manifests
@@ -151,11 +160,59 @@ func props() -> Array[Dictionary]:
 
 
 ## Phase S: streamed-city streetlamp light positions (OmniLight3D per _lamp_post).
+## Phase W: deterministic dead/flicker variant (gated to historic district).
 func add_street_lamp(pos: Vector3) -> void:
 	_street_lights.append(pos)
+	var dead := false
+	var flicker := false
+	var phase := 0.0
+	var p2 := Vector2(pos.x, pos.z)
+	if _lamp_is_historic(p2):
+		var qx := int(round(pos.x * 10.0))
+		var qz := int(round(pos.z * 10.0))
+		var r_dead := WorldSeed.unit_float("lamp_dead", [qx, qz])
+		if r_dead < STREET_DEAD_PROB:
+			dead = true
+		elif WorldSeed.unit_float("lamp_flicker", [qx, qz]) < STREET_FLICKER_PROB:
+			flicker = true
+			phase = WorldSeed.unit_float("lamp_phase", [qx, qz])
+	_street_lamp_dead.append(dead)
+	_street_lamp_flicker.append(flicker)
+	_street_lamp_phase.append(phase)
 
 func street_lights() -> Array[Vector3]:
 	return _street_lights
+
+func street_light_dead(idx: int) -> bool:
+	return _street_lamp_dead[idx] if idx >= 0 and idx < _street_lamp_dead.size() else false
+
+func street_light_flicker(idx: int) -> bool:
+	return _street_lamp_flicker[idx] if idx >= 0 and idx < _street_lamp_flicker.size() else false
+
+func street_light_phase(idx: int) -> float:
+	return _street_lamp_phase[idx] if idx >= 0 and idx < _street_lamp_phase.size() else 0.0
+
+func street_dead_flags() -> Array[bool]:
+	return _street_lamp_dead
+
+func street_flicker_flags() -> Array[bool]:
+	return _street_lamp_flicker
+
+func street_flicker_phases() -> Array[float]:
+	return _street_lamp_phase
+
+## Historic gating helper — mirrors CityPlan.district_at_point without needing a plan.
+static func _lamp_is_historic(p: Vector2) -> bool:
+	var dist := p.length()
+	if dist < 190.0:
+		return true
+	var cell := Vector2i((p / 128.0).floor())
+	var dc := WorldSeed.combine([cell.x, cell.y])
+	var roll := WorldSeed.unit_float("district", [dc])
+	var inner_reach := 420.0 + 140.0 * WorldSeed.unit_float("dreach", [dc])
+	if dist < inner_reach:
+		return roll < 0.72
+	return false
 
 ## Phase U: interior window glow positions (warm OmniLight per intact window).
 func add_window_glow(pos: Vector3) -> void:
@@ -213,7 +270,10 @@ func manifest() -> Dictionary:
 	return {"boxes": _box_count, "colliders": _colliders.duplicate(true),
 			"group_keys": _group_keys(), "props": _prop_defs.duplicate(true),
 			"street_lights": _street_lights.duplicate(),
-			"window_glows": _window_glows.duplicate()}
+			"window_glows": _window_glows.duplicate(),
+			"street_lamp_dead": _street_lamp_dead.duplicate(),
+			"street_lamp_flicker": _street_lamp_flicker.duplicate(),
+			"street_lamp_phase": _street_lamp_phase.duplicate()}
 
 
 func _group_keys() -> Array:

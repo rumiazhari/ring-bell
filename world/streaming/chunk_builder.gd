@@ -115,8 +115,11 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		props += 1
 	stats["props"] = props
 	# Phase S: streamed-city streetlamp OmniLights (warm pool lights)
+	# Phase W: dead lamps stay dark at night; flicker lamps sputter via DayNightController.
 	var lamp_lights := 0
-	for pos: Vector3 in batcher.street_lights():
+	var positions: Array = batcher.street_lights()
+	for i in positions.size():
+		var pos: Vector3 = positions[i] as Vector3
 		var lamp := OmniLight3D.new()
 		lamp.name = "StreetLamp_%d" % lamp_lights
 		lamp.position = pos
@@ -125,7 +128,17 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		lamp.light_energy = 2.8
 		lamp.light_color = Color(1.0, 0.88, 0.62)
 		lamp.shadow_enabled = false
-		lamp.visible = GameClock.is_night()
+		var is_dead: bool = batcher.street_light_dead(i)
+		var is_flicker: bool = batcher.street_light_flicker(i)
+		var phase: float = batcher.street_light_phase(i)
+		if is_dead:
+			lamp.set_meta(&"dead_lamp", true)
+			lamp.visible = false
+		else:
+			lamp.visible = GameClock.is_night()
+			if is_flicker:
+				lamp.set_meta(&"lamp_flicker", true)
+				lamp.set_meta(&"flicker_phase", phase)
 		lamp.add_to_group(&"streetlamp")
 		chunk.add_child(lamp)
 		lamp_lights += 1

@@ -42,12 +42,20 @@ const VOL_FOG_EMISSION_DAY := 0.08
 const VOL_FOG_ALBEDO := Color(0.60, 0.63, 0.70)
 const VOL_FOG_EMISSION := Color(0.86, 0.68, 0.42)
 
+# Phase W: flicker/dead-lamp variant — sputtery lamps modulate at night.
+const FLICKER_AMPL := 0.18
+const FLICKER_FREQ := 3.0
+const BASE_LAMP_ENERGY := 2.8
+
 var _sun: DirectionalLight3D
 var _env: Environment
 var _world_env: WorldEnvironment
+var _flicker_time := 0.0   # accumulates _delta for Phase W sputter
 
 
 func _ready() -> void:
+	if _sun != null:
+		return
 	_sun = DirectionalLight3D.new()
 	_sun.name = "Sun"
 	_sun.rotation_degrees = Vector3(-55.0, -35.0, 0.0)
@@ -91,6 +99,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_flicker_time += _delta
 	var hour := float(GameClock.get_minute_of_day()) / 60.0
 	var day_factor := _day_factor(hour)
 
@@ -123,7 +132,20 @@ func _process(_delta: float) -> void:
 	if is_inside_tree():
 		for lamp in get_tree().get_nodes_in_group(&"streetlamp"):
 			if is_instance_valid(lamp):
+				# Phase W: dead lamps stay dark even at night.
+				if lamp.has_meta(&"dead_lamp") and bool(lamp.get_meta(&"dead_lamp")):
+					lamp.visible = false
+					continue
 				lamp.visible = night
+				if night and lamp.has_meta(&"lamp_flicker") and bool(lamp.get_meta(&"lamp_flicker")):
+					var phase: float = float(lamp.get_meta(&"flicker_phase", 0.0))
+					var noise := sin(_flicker_time * FLICKER_FREQ * TAU + phase * TAU) * 0.6 \
+							+ sin(_flicker_time * FLICKER_FREQ * 1.73 * TAU + phase * 2.11) * 0.4
+					var mod := BASE_LAMP_ENERGY * (1.0 + FLICKER_AMPL * noise)
+					if lamp is OmniLight3D:
+						(lamp as OmniLight3D).light_energy = clampf(mod, BASE_LAMP_ENERGY * 0.55, BASE_LAMP_ENERGY * 1.40)
+				elif lamp is OmniLight3D:
+					(lamp as OmniLight3D).light_energy = BASE_LAMP_ENERGY
 		for glow in get_tree().get_nodes_in_group(&"window_glow"):
 			if is_instance_valid(glow):
 				glow.visible = night

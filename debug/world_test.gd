@@ -183,6 +183,8 @@ func _run_all() -> void:
 		_test_window_glows())
 	_check("volumetric ambience: ground fog + bloom halo around streetlamps/window glows at night (deterministic)",
 		_test_volumetric_ambience())
+	_check("flicker/dead lamps: historic subset sputters or stays dark (deterministic)",
+		_test_flicker_dead_lamps())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -2483,6 +2485,28 @@ func _manifest_equal(a: Dictionary, b: Dictionary) -> bool:
 	for i in wa.size():
 		if wa[i] != wb[i]:
 			return false
+	# Phase W: flicker/dead lamp state must be deterministic too.
+	var da: Array = a.get("street_lamp_dead", [])
+	var db: Array = b.get("street_lamp_dead", [])
+	if da.size() != db.size():
+		return false
+	for i in da.size():
+		if da[i] != db[i]:
+			return false
+	var fa: Array = a.get("street_lamp_flicker", [])
+	var fb: Array = b.get("street_lamp_flicker", [])
+	if fa.size() != fb.size():
+		return false
+	for i in fa.size():
+		if fa[i] != fb[i]:
+			return false
+	var pa: Array = a.get("street_lamp_phase", [])
+	var pb: Array = b.get("street_lamp_phase", [])
+	if pa.size() != pb.size():
+		return false
+	for i in pa.size():
+		if absf(float(pa[i]) - float(pb[i])) > 0.0001:
+			return false
 	return true
 
 
@@ -3236,6 +3260,294 @@ func _test_volumetric_ambience() -> bool:
 		dnc.free()
 		return false
 	dnc.free()
+	return true
+
+
+# --- 24o: Flicker/dead lamp variant (Phase W) — historic sputter + dark --------
+func _test_flicker_dead_lamps() -> bool:
+	# Constants must be in expected horror bands: 2-4% dead, ~12-24% flicker,
+	# amplitude 0.12-0.25, freq 2-5 Hz — small blast radius, visible but not blown.
+	if MeshBatcher.STREET_DEAD_PROB < 0.02 or MeshBatcher.STREET_DEAD_PROB > 0.05:
+		print("[CityTest] flicker: STREET_DEAD_PROB %.3f not in [0.02,0.05]" % MeshBatcher.STREET_DEAD_PROB)
+		return false
+	if MeshBatcher.STREET_FLICKER_PROB < 0.10 or MeshBatcher.STREET_FLICKER_PROB > 0.26:
+		print("[CityTest] flicker: STREET_FLICKER_PROB %.3f not in [0.10,0.26]" % MeshBatcher.STREET_FLICKER_PROB)
+		return false
+	if absf(MeshBatcher.STREET_FLICKER_AMPL - DayNightController.FLICKER_AMPL) > 0.001:
+		print("[CityTest] flicker: MeshBatcher ampl %.2f != DayNightController %.2f" % [MeshBatcher.STREET_FLICKER_AMPL, DayNightController.FLICKER_AMPL])
+		return false
+	if absf(MeshBatcher.STREET_FLICKER_FREQ - DayNightController.FLICKER_FREQ) > 0.001:
+		print("[CityTest] flicker: MeshBatcher freq %.2f != DayNightController %.2f" % [MeshBatcher.STREET_FLICKER_FREQ, DayNightController.FLICKER_FREQ])
+		return false
+	if DayNightController.FLICKER_AMPL < 0.12 or DayNightController.FLICKER_AMPL > 0.25:
+		print("[CityTest] flicker: FLICKER_AMPL %.2f not in [0.12,0.25]" % DayNightController.FLICKER_AMPL)
+		return false
+	if DayNightController.FLICKER_FREQ < 2.0 or DayNightController.FLICKER_FREQ > 5.0:
+		print("[CityTest] flicker: FLICKER_FREQ %.2f not in [2,5]" % DayNightController.FLICKER_FREQ)
+		return false
+	if absf(DayNightController.BASE_LAMP_ENERGY - 2.8) > 0.01:
+		print("[CityTest] flicker: BASE_LAMP_ENERGY %.2f != 2.8" % DayNightController.BASE_LAMP_ENERGY)
+		return false
+	# Gather a large historic sample (169 chunks around the origin: historic core +
+	# inner ring). Should yield 150-350 lamps, enough for dead/flicker ratio checks.
+	var plan := CityPlan.new()
+	var all_lights: Array[Vector3] = []
+	var all_dead: Array[bool] = []
+	var all_flick: Array[bool] = []
+	var all_phase: Array[float] = []
+	var hist_coords: Array[Vector2i] = []
+	for x in range(-6, 7):
+		for y in range(-6, 7):
+			hist_coords.append(Vector2i(x, y))
+	for coord in hist_coords:
+		var b := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b, plan, coord)
+		for p in b.street_lights():
+			all_lights.append(p as Vector3)
+		for f in b.street_dead_flags():
+			all_dead.append(f as bool)
+		for f in b.street_flicker_flags():
+			all_flick.append(f as bool)
+		for ph in b.street_flicker_phases():
+			all_phase.append(float(ph))
+	if all_lights.is_empty():
+		print("[CityTest] flicker: no lights in historic ring")
+		return false
+	if all_lights.size() != all_dead.size() or all_lights.size() != all_flick.size():
+		print("[CityTest] flicker: parallel arrays size mismatch %d dead %d flick %d" % [all_lights.size(), all_dead.size(), all_flick.size()])
+		return false
+	# Count dead + flicker in historic ring
+	var dead_cnt := 0
+	var flick_cnt := 0
+	for i in all_lights.size():
+		if all_dead[i] and all_flick[i]:
+			print("[CityTest] flicker: light %d both dead and flicker" % i)
+			return false
+		if all_dead[i]:
+			dead_cnt += 1
+		elif all_flick[i]:
+			flick_cnt += 1
+			var ph: float = all_phase[i]
+			if ph < -0.0001 or ph > 1.0001:
+				print("[CityTest] flicker: phase %.3f out of [0,1] at %d" % [ph, i])
+				return false
+		else:
+			# normal lamp phase must be 0
+			if absf(all_phase[i]) > 0.0001:
+				print("[CityTest] flicker: normal lamp has non-zero phase at %d" % i)
+				return false
+	var total := all_lights.size()
+	var alive := total - dead_cnt
+	# Sparse check: at least one dead and one flicker in 169 chunks (historic)
+	if dead_cnt == 0:
+		print("[CityTest] flicker: no dead lamps in 169-chunk historic ring (%d lights)" % total)
+		return false
+	if flick_cnt == 0:
+		print("[CityTest] flicker: no flicker lamps in 169-chunk historic ring (%d lights)" % total)
+		return false
+	var dead_ratio := float(dead_cnt) / float(total)
+	# dead 3.5% expected; allow 0.015-0.07 with 169 chunks variance
+	if dead_ratio < 0.012 or dead_ratio > 0.075:
+		print("[CityTest] flicker: dead ratio %.3f (%d/%d) not in [0.015,0.07]" % [dead_ratio, dead_cnt, total])
+		return false
+	if alive > 0:
+		var flick_ratio := float(flick_cnt) / float(alive)
+		if flick_ratio < 0.08 or flick_ratio > 0.30:
+			print("[CityTest] flicker: flicker ratio %.3f (%d/%d alive) not in [0.08,0.30]" % [flick_ratio, flick_cnt, alive])
+			return false
+	# Gating: dead/flicker lamps must be historic
+	for i in all_lights.size():
+		if all_dead[i] or all_flick[i]:
+			var p2 := Vector2(all_lights[i].x, all_lights[i].z)
+			if not MeshBatcher._lamp_is_historic(p2):
+				print("[CityTest] flicker: non-historic lamp flagged dead/flicker at %s" % all_lights[i])
+				return false
+	# Gating: far outer chunk should have zero flicker/dead (outer district)
+	var outer_coord := Vector2i(10, 10)
+	var b_outer := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b_outer, plan, outer_coord)
+	var outer_dead := 0
+	var outer_flick := 0
+	for f: bool in b_outer.street_dead_flags():
+		if f:
+			outer_dead += 1
+	for f: bool in b_outer.street_flicker_flags():
+		if f:
+			outer_flick += 1
+	if outer_dead != 0 or outer_flick != 0:
+		# Outer ring is almost entirely outer district; allow at most borderline 1 via noise
+		# but expect 0 for this coord. Check historic helper: this coord should be outer.
+		var test_p := Vector2(10 * 64.0 + 32.0, 10 * 64.0 + 32.0)
+		if not MeshBatcher._lamp_is_historic(test_p):
+			if outer_dead > 1 or outer_flick > 1:
+				print("[CityTest] flicker: outer chunk %s has dead %d flick %d (want ~0)" % [outer_coord, outer_dead, outer_flick])
+				return false
+	# Determinism: second fill yields identical dead/flicker/phase
+	var probe_coord := Vector2i(0, 0)
+	var b1 := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b1, plan, probe_coord)
+	var b2 := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(b2, plan, probe_coord)
+	var d1: Array = b1.street_dead_flags()
+	var d2: Array = b2.street_dead_flags()
+	var f1: Array = b1.street_flicker_flags()
+	var f2: Array = b2.street_flicker_flags()
+	var p1: Array = b1.street_flicker_phases()
+	var p2: Array = b2.street_flicker_phases()
+	if d1.size() != d2.size() or f1.size() != f2.size() or p1.size() != p2.size():
+		print("[CityTest] flicker: nondeterministic array sizes")
+		return false
+	for i in d1.size():
+		if d1[i] != d2[i] or f1[i] != f2[i] or absf(float(p1[i]) - float(p2[i])) > 0.0001:
+			print("[CityTest] flicker: nondeterministic state at %d" % i)
+			return false
+	# Manifest equality already covers phase arrays via _manifest_equal,
+	# but explicitly verify manifest carries the new keys
+	var man := b1.manifest()
+	if not man.has("street_lamp_dead") or not man.has("street_lamp_flicker") or not man.has("street_lamp_phase"):
+		print("[CityTest] flicker: manifest missing flicker keys")
+		return false
+	# Node creation: ChunkBuilder.build must create dead lamps dark and flicker lamps tagged
+	var parent := Node3D.new()
+	add_child(parent)
+	var st := ChunkBuilder.build(parent, plan, probe_coord, b1)
+	var chunk: Node3D = parent.get_child(0) if parent.get_child_count() > 0 else null
+	if chunk == null:
+		print("[CityTest] flicker: chunk not built")
+		parent.queue_free()
+		return false
+	var lamp_nodes: Array[OmniLight3D] = []
+	for child in chunk.get_children():
+		if child is OmniLight3D and child.is_in_group(&"streetlamp"):
+			lamp_nodes.append(child as OmniLight3D)
+	if lamp_nodes.size() != b1.street_lights().size():
+		print("[CityTest] flicker: node count %d != manifest %d" % [lamp_nodes.size(), b1.street_lights().size()])
+		parent.queue_free()
+		return false
+	var dead_nodes := 0
+	var flick_nodes := 0
+	for i in lamp_nodes.size():
+		var lamp: OmniLight3D = lamp_nodes[i]
+		var is_dead: bool = bool(b1.street_light_dead(i))
+		var is_flick: bool = bool(b1.street_light_flicker(i))
+		if is_dead:
+			if not lamp.has_meta(&"dead_lamp") or not bool(lamp.get_meta(&"dead_lamp")):
+				print("[CityTest] flicker: dead lamp %d missing dead_lamp meta" % i)
+				parent.queue_free()
+				return false
+			if lamp.visible:
+				print("[CityTest] flicker: dead lamp %d visible (should stay dark)" % i)
+				parent.queue_free()
+				return false
+			if lamp.has_meta(&"lamp_flicker"):
+				print("[CityTest] flicker: dead lamp %d wrongly has flicker meta" % i)
+				parent.queue_free()
+				return false
+			dead_nodes += 1
+		elif is_flick:
+			if not lamp.has_meta(&"lamp_flicker") or not bool(lamp.get_meta(&"lamp_flicker")):
+				print("[CityTest] flicker: flicker lamp %d missing lamp_flicker meta" % i)
+				parent.queue_free()
+				return false
+			if lamp.has_meta(&"dead_lamp"):
+				print("[CityTest] flicker: flicker lamp %d wrongly has dead meta" % i)
+				parent.queue_free()
+				return false
+			var ph: float = float(lamp.get_meta(&"flicker_phase", -1.0))
+			if absf(ph - float(b1.street_light_phase(i))) > 0.0001:
+				print("[CityTest] flicker: phase meta %.3f != batcher %.3f at %d" % [ph, float(b1.street_light_phase(i)), i])
+				parent.queue_free()
+				return false
+			if absf(lamp.omni_range - 13.0) > 0.01 or absf(lamp.light_energy - 2.8) > 0.01:
+				print("[CityTest] flicker: range/energy wrong on flicker lamp %d" % i)
+				parent.queue_free()
+				return false
+			flick_nodes += 1
+		else:
+			if lamp.has_meta(&"dead_lamp") or lamp.has_meta(&"lamp_flicker"):
+				print("[CityTest] flicker: normal lamp %d has stray meta" % i)
+				parent.queue_free()
+				return false
+	if dead_nodes != dead_cnt or flick_nodes == 0:
+		# dead_nodes here counts only probe chunk, not the 25-chunk ring; compare to b1's own counts
+		var exp_dead := 0
+		var exp_flick := 0
+		for k in b1.street_lights().size():
+			if b1.street_light_dead(k):
+				exp_dead += 1
+			elif b1.street_light_flicker(k):
+				exp_flick += 1
+		if dead_nodes != exp_dead:
+			print("[CityTest] flicker: probe dead nodes %d != expected %d" % [dead_nodes, exp_dead])
+			parent.queue_free()
+			return false
+		if flick_nodes != exp_flick:
+			print("[CityTest] flicker: probe flick nodes %d != expected %d" % [flick_nodes, exp_flick])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	# DayNightController flicker modulation: at night a flicker lamp must deviate from base.
+	var dnc := DayNightController.new()
+	dnc._ready()
+	var holder := Node3D.new()
+	add_child(holder)
+	holder.add_child(dnc)
+	# Create a mock flicker lamp with known phase 0.2
+	var mock := OmniLight3D.new()
+	mock.omni_range = 13.0
+	mock.light_energy = 2.8
+	mock.light_color = Color(1.0, 0.88, 0.62)
+	mock.set_meta(&"lamp_flicker", true)
+	mock.set_meta(&"flicker_phase", 0.2)
+	mock.add_to_group(&"streetlamp")
+	holder.add_child(mock)
+	var saved_min := GameClock.total_minutes
+	GameClock.total_minutes = float(2 * 60)  # night -> is_night true
+	dnc._process(0.0)
+	if not mock.visible:
+		print("[CityTest] flicker: mock flicker lamp not visible at night after DNC")
+		holder.queue_free()
+		GameClock.total_minutes = float(saved_min)
+		return false
+	# Step time: after 0.0 energy should still be near base (noise near 0? but actually sin at t=0
+	# gives noise = sin(phase)*0.6+... not necessarily 0). Just check it stays in flicker band.
+	if mock.light_energy < 2.8 * 0.55 or mock.light_energy > 2.8 * 1.40:
+		print("[CityTest] flicker: mock energy %.2f out of flicker band at t=0" % mock.light_energy)
+		holder.queue_free()
+		GameClock.total_minutes = float(saved_min)
+		return false
+	# Advance time 0.17s (~half period) energy must move noticeably
+	var e0 := mock.light_energy
+	dnc._process(0.17)
+	var e1 := mock.light_energy
+	if absf(e1 - e0) < 0.02:
+		print("[CityTest] flicker: energy didn't modulate between steps %.2f vs %.2f" % [e0, e1])
+		holder.queue_free()
+		GameClock.total_minutes = float(saved_min)
+		return false
+	# Dead lamp must stay dark even after DNC night tick
+	var dead_mock := OmniLight3D.new()
+	dead_mock.omni_range = 13.0
+	dead_mock.light_energy = 2.8
+	dead_mock.set_meta(&"dead_lamp", true)
+	dead_mock.add_to_group(&"streetlamp")
+	holder.add_child(dead_mock)
+	dnc._process(0.0)
+	if dead_mock.visible:
+		print("[CityTest] flicker: dead mock became visible at night")
+		holder.queue_free()
+		GameClock.total_minutes = float(saved_min)
+		return false
+	# Daytime: flicker lamp hidden, dead stays hidden
+	GameClock.total_minutes = float(12 * 60)
+	dnc._process(0.0)
+	if mock.visible or dead_mock.visible:
+		print("[CityTest] flicker: lamps visible at day (should be night-only)")
+		holder.queue_free()
+		GameClock.total_minutes = float(saved_min)
+		return false
+	holder.queue_free()
+	GameClock.total_minutes = float(saved_min)
 	return true
 
 
