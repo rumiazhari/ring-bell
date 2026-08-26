@@ -1,24 +1,25 @@
 # AUTOPILOT STATE — ring-bell
 
 STATUS: ACTIVE
-LAST_ITER: 25
+LAST_ITER: 26
 UPDATED: 2026-08-27 (JST, cron run)
 
 ## Current goal
-Iter 25: Phase K facade balconies — AC-style cantilevered concrete decks
-protruding from upper-storey facades (f>=1, non-entrance, long facades only),
-each capped by a steel railing lip (BAL_RAIL_H = 0.5 m) that doubles as a
-grabbable parkour ledge. Deterministic per (floor, side, building) via
-WorldSeed; boxes tagged "balcony" (standable concrete deck + steel lip).
-Added `--citytest` assertion `_test_balconies` (>=1 "balcony" box on a
-multi-storey building, above ground/inside footprint band, gated to
-multi-storey, byte-identical rebuild, single-storey grows none).
+Iter 26: Phase L street awnings — AC-style sloped canopy decks projecting from
+the GROUND-floor (shopfront) street facade, capped by a steel front lip
+(AWN_RAIL_H = 0.45 m) that doubles as a grabbable parkour ledge whose TOP sits
+above the standable canopy deck (AWN_DECK_Y = 2.3 m). Deterministic per
+(side, building) via WorldSeed; boxes tagged "awning" (wood canopy + steel
+lip), gated to the entrance street wall and facades >= AWN_MIN_SIDE, never on
+upper storeys. Added `--citytest` assertion `_test_awnings` (>=1 "awning"
+deck box at ground level on the street wall, protruding past the wall face,
+wood deck + steel lip present, byte-identical rebuild, tiny-facade grows none).
 
 ## This iteration
-[autopilot] iter 25: Phase K facade balconies — cantilevered concrete decks
-+ steel railing lip (grabbable parkour ledge) on upper-storey facades,
-deterministic, gated to multi-storey, tagged "balcony". citytest + smoke +
-cityruntime green (0 failures); new `_test_balconies` assertion passes.
+[autopilot] iter 26: Phase L street awnings — sloped canopy deck from the
+ground-floor street facade + steel front lip (grabbable parkour ledge);
+deterministic, gated to street wall + AWN_MIN_SIDE, tagged "awning".
+citytest + smoke green (0 failures); new `_test_awnings` assertion passes.
 
 [autopilot] iter 24: Phase J bulkhead roof-access ladder — a vertical run of destructible
 steel rungs on the hut's +Z face climbing from just above the deck up to the
@@ -89,6 +90,10 @@ at dense roof packing. citytest + smoke green (0 failures).
    deterministic, gated to multi-storey, tagged "balcony". Directly serves
    the Prague directive's named "balconies" parkour feature. Gate: --citytest.
    [COMPLETE in iter 25]
+10. Phase M idea: awning-led low-mantle traversal — the street canopy
+   deck (AWN_DECK_Y) becomes a grabbable entry perch feeding ledge/awning
+   chaining on the ground floor; wire the Phase-E parkour controller to treat
+   "awning" boxes as ledge-grabable. Gate: --smoke.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — PRAGUE ASSASSIN-CITY PIVOT
 Supersedes current goal priorities after the in-flight Phase E slice lands:
