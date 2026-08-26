@@ -30,6 +30,16 @@ const EXHAUSTED_RECOVER_AT := 25.0     # stamina needed to clear exhaustion
 const GRAVITY := 18.0                  # airborne arcs from knockback
 const KNOCKBACK_MAX := 9.0             # clamp so blasts shove, not launch
 
+# Phase T: player handheld lantern — warm point light that makes genuine
+# darkness survivable. Follows the player like a carried torch/lantern,
+# visible only at night (GameClock.is_night()), with a subtle bob.
+const LANTERN_RANGE := 10.0
+const LANTERN_ENERGY := 2.2
+const LANTERN_COLOR := Color(1.0, 0.85, 0.58)
+const LANTERN_OFFSET := Vector3(0.35, 1.10, 0.25)
+const LANTERN_BOB_AMPL := 0.045
+const LANTERN_BOB_FREQ := 4.2
+
 # Preload (not global class_name lookup): keeps headless suites green even
 # before the editor rescans the global script-class cache.
 const PARKOUR_SCRIPT := preload("res://actors/traversal/parkour_controller.gd")
@@ -57,6 +67,8 @@ var _death_impulse := Vector3.ZERO     # snapshot of the killing blow's push
 var _visual_root: Node3D
 var _model_root: Node3D
 var _animator: HumanoidAnimator
+var _lantern: OmniLight3D
+var _lantern_t := 0.0
 
 
 ## Store spawn configuration; consumed in _ready(). Keys:
@@ -97,6 +109,23 @@ func _ready() -> void:
 	parkour = PARKOUR_SCRIPT.new()
 	add_child(parkour)
 	parkour.setup(self)
+
+	# Phase T: handheld lantern — only the player carries it. OmniLight
+	# follows the body (child) so it survives streaming/teleports
+	# automatically; DayNightController darkness makes it the readable
+	# pool at night while day keeps it off.
+	if is_player():
+		_lantern = OmniLight3D.new()
+		_lantern.name = "Lantern"
+		_lantern.position = LANTERN_OFFSET
+		_lantern.omni_range = LANTERN_RANGE
+		_lantern.omni_attenuation = 1.4
+		_lantern.light_energy = LANTERN_ENERGY
+		_lantern.light_color = LANTERN_COLOR
+		_lantern.shadow_enabled = false
+		_lantern.visible = GameClock.is_night()
+		_lantern.add_to_group(&"player_lantern")
+		add_child(_lantern)
 
 
 func _setup_components_from_config() -> void:
@@ -226,9 +255,29 @@ func _physics_process(delta: float) -> void:
 		facing = _move_dir.normalized()
 	_visual_root.rotation.y = atan2(facing.x, facing.z)
 
+	_update_lantern(delta)
+
 	parkour.tick(delta)
 
 	tick_survival(delta)
+
+
+## Phase T: bob + night visibility for the handheld lantern.
+func _update_lantern(delta: float) -> void:
+	if _lantern == null or not is_instance_valid(_lantern):
+		return
+	_lantern.visible = GameClock.is_night()
+	_lantern_t += delta
+	# Subtle bob so the carried light reads as handheld, not a drone halo.
+	var moving := _move_dir.length_squared() > 0.01
+	var idle_bob := sin(_lantern_t * LANTERN_BOB_FREQ) * LANTERN_BOB_AMPL
+	var walk_bob := sin(_lantern_t * 7.0) * 0.018 if moving else 0.0
+	_lantern.position = LANTERN_OFFSET + Vector3(0.0, idle_bob + walk_bob, 0.0)
+
+## Exposed for headless tests to force a visibility refresh without waiting
+## a physics frame (GameClock was just rewound to night/day).
+func refresh_lantern() -> void:
+	_update_lantern(0.0)
 
 
 ## Coordinates the two simulation tickers that need each other's context.

@@ -177,6 +177,8 @@ func _run_all() -> void:
 		_test_broken_and_litter())
 	_check("streetlamp night lights: genuine darkness + avenue-aligned warm pools (deterministic)",
 		_test_streetlamps_and_darkness())
+	_check("player lantern: warm handheld light at night with bob (deterministic)",
+		_test_player_lantern())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -2773,6 +2775,135 @@ func _test_streetlamps_and_darkness() -> bool:
 	if int(st.get("street_lights", -1)) != lights1.size():
 		print("[CityTest] streetlamp: stats street_lights %s != %d" % [st.get("street_lights", -1), lights1.size()])
 		return false
+	return true
+
+
+# --- 24l: Player handheld lantern (Phase T) — light-as-gameplay at night --------
+func _test_player_lantern() -> bool:
+	# Constants must be in the right band: big enough to be useful in genuine
+	# darkness, small enough that streetlamps still matter. Warm color for torch mood.
+	if Survivor.LANTERN_RANGE < 8.0 or Survivor.LANTERN_RANGE > 14.0:
+		print("[CityTest] lantern: range %.1f not in [8,14]" % Survivor.LANTERN_RANGE)
+		return false
+	if Survivor.LANTERN_ENERGY < 1.5 or Survivor.LANTERN_ENERGY > 3.5:
+		print("[CityTest] lantern: energy %.2f not in [1.5,3.5]" % Survivor.LANTERN_ENERGY)
+		return false
+	if Survivor.LANTERN_COLOR.get_luminance() < 0.6:
+		print("[CityTest] lantern: color too dim / not warm enough %s" % Survivor.LANTERN_COLOR)
+		return false
+	# Warm check: red channel dominates.
+	if Survivor.LANTERN_COLOR.r < 0.9 or Survivor.LANTERN_COLOR.g < 0.6:
+		print("[CityTest] lantern: color not warm enough %s" % Survivor.LANTERN_COLOR)
+		return false
+	if Survivor.LANTERN_BOB_AMPL < 0.02 or Survivor.LANTERN_BOB_AMPL > 0.08:
+		print("[CityTest] lantern: bob ampl %.3f not in [0.02,0.08]" % Survivor.LANTERN_BOB_AMPL)
+		return false
+
+	var saved_clock := GameClock.total_minutes
+	# Start from a known DAY state — matches new-game 07:00.
+	GameClock.total_minutes = 7.0 * 60.0
+	var holder := Node3D.new()
+	add_child(holder)
+	var player := Survivor.new()
+	player.configure({"id": &"test_player_lantern", "name": "LanternTest", "is_player": true})
+	holder.add_child(player)
+	# _ready creates the lantern synchronously; no await needed.
+	var lantern := player.get_node_or_null("Lantern") as OmniLight3D
+	if lantern == null:
+		print("[CityTest] lantern: player has no Lantern child")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if not lantern.is_in_group(&"player_lantern"):
+		print("[CityTest] lantern: not in group player_lantern")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if not (lantern is OmniLight3D):
+		print("[CityTest] lantern: not an OmniLight3D")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if absf(lantern.omni_range - Survivor.LANTERN_RANGE) > 0.01:
+		print("[CityTest] lantern: range %.2f != const %.2f" % [lantern.omni_range, Survivor.LANTERN_RANGE])
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if absf(lantern.light_energy - Survivor.LANTERN_ENERGY) > 0.01:
+		print("[CityTest] lantern: energy %.2f != const %.2f" % [lantern.light_energy, Survivor.LANTERN_ENERGY])
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if lantern.shadow_enabled:
+		print("[CityTest] lantern: shadow_enabled should be false (perf)")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# At DAY start, lantern must be OFF — darkness is day-readable.
+	if lantern.visible:
+		print("[CityTest] lantern: visible at day (should be night-only)")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# Offset sanity: lantern rides at shoulder-ish height around LANTERN_OFFSET.
+	if (lantern.position - Survivor.LANTERN_OFFSET).length() > 0.06:
+		print("[CityTest] lantern: initial pos %s != offset %s" % [lantern.position, Survivor.LANTERN_OFFSET])
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# Flip to NIGHT and force a refresh — lantern must turn on.
+	GameClock.total_minutes = 22.0 * 60.0
+	player.refresh_lantern()
+	if not lantern.visible:
+		print("[CityTest] lantern: not visible at night after refresh")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# Flip back to DAY — must go dark again.
+	GameClock.total_minutes = 12.0 * 60.0
+	player.refresh_lantern()
+	if lantern.visible:
+		print("[CityTest] lantern: still visible at noon")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# Bob: night + a delta should displace y within amplitude.
+	GameClock.total_minutes = 22.0 * 60.0
+	player.refresh_lantern()
+	var base_y := lantern.position.y
+	player._update_lantern(0.37)
+	var dy := lantern.position.y - Survivor.LANTERN_OFFSET.y
+	if absf(dy) < 0.005:
+		print("[CityTest] lantern: bob didn't displace y (dy=%.4f)" % dy)
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	if absf(dy) > Survivor.LANTERN_BOB_AMPL + 0.025:
+		print("[CityTest] lantern: bob dy %.4f exceeds ampl %.3f" % [dy, Survivor.LANTERN_BOB_AMPL])
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# NPC must NOT get a lantern.
+	var npc := Survivor.new()
+	npc.configure({"id": &"test_npc_lantern", "name": "NpcTest", "is_player": false})
+	holder.add_child(npc)
+	if npc.get_node_or_null("Lantern") != null:
+		print("[CityTest] lantern: NPC wrongly has a Lantern child")
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+	# Lantern follows the player (child transform): after moving player, lantern
+	# global x/z must track.
+	player.global_position = Vector3(42.0, 0.0, -17.0)
+	var lp := lantern.global_position
+	if absf(lp.x - (42.0 + lantern.position.x)) > 0.01 or absf(lp.z - (-17.0 + lantern.position.z)) > 0.01:
+		print("[CityTest] lantern: not following player global %s vs player %s" % [lp, player.global_position])
+		holder.queue_free()
+		GameClock.total_minutes = saved_clock
+		return false
+
+	holder.queue_free()
+	GameClock.total_minutes = saved_clock
 	return true
 
 
