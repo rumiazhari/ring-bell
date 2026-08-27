@@ -471,6 +471,7 @@ func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 	var floors := rng.randi_range(floors_min, floors_max)
 	if corner and rng.randf() < 0.35:
 		floors = mini(floors + 1, 7)
+	var use := "residential" if cell.x % 2 == 0 else "retail"
 	var spec := {
 		"id": "b_%d_%d_%s%02d" % [cell.x, cell.y, char(78 + edge), k],  # b_x_y_N03
 		"rect": lot,
@@ -479,12 +480,13 @@ func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 		"door_edge": edge,
 		"district": district,
 		"plaza_adjacent": _is_plaza_adjacent(cell),
+		"use": use,
 		"style": {
 			"wall": rng.randi_range(0, WALL_PALETTES - 1),
 			"roof": rng.randi_range(0, ROOF_PALETTES - 1),
 			"balcony": rng.randf() < 0.45,
 			"attic": rng.randf() < 0.7,
-			"room_type": "residential" if cell.x % 2 == 0 else "retail",
+			"room_type": use,
 		},
 		"doors": [_door_manifest(spec_id(cell, edge, k), lot, edge)],
 	}
