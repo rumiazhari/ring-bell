@@ -101,6 +101,24 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 			door.setup(dm)
 			chunk.add_child(door)
 			doors += 1
+		# interior doors + stations
+		var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
+		var InteriorStationScript = load("res://world/buildings/interior_station.gd")
+		var imanifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+		for fl in imanifest.get("floors", []):
+			for dm2 in fl.get("doors", []):
+				if dead_doors.has(String(dm2["id"])):
+					continue
+				var door2 := Door.new()
+				door2.name = String(dm2["id"])
+				door2.setup(dm2)
+				chunk.add_child(door2)
+				doors += 1
+			for sm in fl.get("stations", []):
+				var st = InteriorStationScript.new()
+				st.name = String(sm["id"])
+				st.setup(sm)
+				chunk.add_child(st)
 
 	stats["doors"] = doors
 	stats["buildings"] = buildings

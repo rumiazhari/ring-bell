@@ -492,6 +492,9 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# without touching collision or doorway clearance.
 	_facade_plinth(b, off, w, d, fh, n, tag, spec)
 
+	# --- interior partitions (P1) -------------------------------------------------
+	_emit_interior_partitions(b, off, w, d, fh, n, tag, spec, zone, has_stairs)
+
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
 	if has_stairs:
@@ -3155,6 +3158,62 @@ static func _rp_satellite_dish(b: MeshBatcher, off: Vector3, r: Rect2,
 	b.add_destructible_box(off + Vector3(c.x, y + 1.18, c.y - 0.26),
 			Vector3(0.05, 0.05, 0.34), Color("565d63"), &"steel")
 
+
+static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d: float, fh: float, n: int, tag: String, spec: Dictionary, zone: Rect2, has_stairs: bool) -> void:
+	var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
+	var manifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+	for fl in manifest.get("floors", []):
+		var fi: int = int(fl.get("floor_i", 0))
+		if fi >= n:
+			continue
+		b.push_layer(tag + ":f%d" % fi)
+		for p in fl.get("partitions", []):
+			var pr: Rect2 = p.get("rect", Rect2())
+			var op: Rect2 = p.get("opening", Rect2())
+			# Partitions are along shared room edges: pr is 0.18 thick wall, op is 1x1 doorway hole.
+			# Emit as two wall segments split by opening.
+			var y0 := float(fi) * fh
+			var wall_h := fh
+			# Determine orientation: if pr width is thin (0.18) it's vertical wall
+			var is_vertical := pr.size.x < pr.size.y + 0.01
+			if is_vertical:
+				var pw := pr.size.x
+				var ph := pr.size.y
+				var px := pr.position.x
+				var py0 := pr.position.y
+				var py1 := pr.end.y
+				var ox0 := op.position.y
+				var ox1 := op.end.y
+				var top_h := maxf(0.0, ox0 - py0)
+				var bot_h := maxf(0.0, py1 - ox1)
+				var cx := px + pw * 0.5
+				if top_h > 0.05:
+					b.add_structural_box(off + Vector3(cx, y0 + wall_h*0.5, py0 + top_h*0.5), Vector3(pw, wall_h, top_h), Color("b5aca0"))
+				if bot_h > 0.05:
+					b.add_structural_box(off + Vector3(cx, y0 + wall_h*0.5, ox1 + bot_h*0.5), Vector3(pw, wall_h, bot_h), Color("b5aca0"))
+				# lintel above opening
+				var lintel_h := wall_h - 2.05
+				if lintel_h > 0.05:
+					b.add_structural_box(off + Vector3(cx, y0 + 2.05 + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), Color("b5aca0"))
+			else:
+				var ph2 := pr.size.y
+				var pw2 := pr.size.x
+				var py := pr.position.y
+				var px0 := pr.position.x
+				var px1 := pr.end.x
+				var ox0b := op.position.x
+				var ox1b := op.end.x
+				var left_w := maxf(0.0, ox0b - px0)
+				var right_w := maxf(0.0, px1 - ox1b)
+				var cy := py + ph2 * 0.5
+				if left_w > 0.05:
+					b.add_structural_box(off + Vector3(px0 + left_w*0.5, y0 + wall_h*0.5, cy), Vector3(left_w, wall_h, ph2), Color("b5aca0"))
+				if right_w > 0.05:
+					b.add_structural_box(off + Vector3(ox1b + right_w*0.5, y0 + wall_h*0.5, cy), Vector3(right_w, wall_h, ph2), Color("b5aca0"))
+				var lintel_h2 := wall_h - 2.05
+				if lintel_h2 > 0.05:
+					b.add_structural_box(off + Vector3(op.get_center().x, y0 + 2.05 + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), Color("b5aca0"))
+		b.pop_layer()
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
 		total_h: float, roof_c: Color, style: Dictionary) -> void:
