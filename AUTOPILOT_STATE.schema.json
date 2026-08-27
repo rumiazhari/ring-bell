@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "project_id", "repo_path", "phase", "revision", "milestone", "spec", "acceptance_criteria", "completed_items", "remaining_items", "known_bugs", "architectural_decisions", "current_builder_task", "last_successful_test", "last_luna_review", "escalation", "lease"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "project_id": {"const": "ring-bell"},
+    "repo_path": {"type": "string"},
+    "phase": {"enum": ["needs_architect", "authorized_build", "building", "review", "blocked", "paused", "accepted"]},
+    "revision": {"type": "integer", "minimum": 0},
+    "milestone": {"type": "object", "required": ["id", "title", "status"]},
+    "spec": {"type": "object", "required": ["path", "sha256", "approved", "approved_by"]},
+    "acceptance_criteria": {"type": "array"},
+    "completed_items": {"type": "array", "items": {"type": "string"}},
+    "remaining_items": {"type": "array", "items": {"type": "string"}},
+    "known_bugs": {"type": "array", "items": {"type": "string"}},
+    "architectural_decisions": {"type": "array", "items": {"type": "string"}},
+    "current_builder_task": {"type": ["string", "null"]},
+    "last_successful_test": {"type": "object"},
+    "last_luna_review": {"type": "object"},
+    "escalation": {"type": "object", "required": ["required", "reason", "same_failure_count", "failure_signatures"]},
+    "lease": {"type": "object", "required": ["owner", "task_id", "lock_path", "expires_at"]}
+  },
+  "additionalProperties": false
+}

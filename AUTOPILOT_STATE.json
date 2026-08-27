@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "project_id": "ring-bell",
+  "repo_path": "C:/Vibe Code project/Godot Project/ring-bell",
+  "phase": "needs_architect",
+  "revision": 0,
+  "baseline": {
+    "legacy_state": "AUTOPILOT_STATE.md",
+    "legacy_last_iteration": 49,
+    "commit": "5202744",
+    "branch": "master",
+    "origin_aligned": true
+  },
+  "milestone": {
+    "id": null,
+    "title": null,
+    "status": "awaiting_luna_specification"
+  },
+  "spec": {
+    "path": null,
+    "sha256": null,
+    "approved": false,
+    "approved_by": null
+  },
+  "acceptance_criteria": [],
+  "completed_items": [
+    "P0 prototype survivor, zombie, quest, dialogue, save/load, and HUD systems",
+    "P0.5 deterministic streamed city foundation",
+    "P0.5 generated buildings, roofs, stairs, parkour ledges, lighting, and Prague facade detail phases through AI",
+    "Baseline citytest and smoke suites pass with zero reported failures"
+  ],
+  "remaining_items": [
+    "Semantic building use and functional residential/retail interiors",
+    "Real interior traversal and player-facing gameplay value",
+    "Parkour controller split and traversal proof across generated architecture",
+    "Move the P0 narrative cast into the generated city",
+    "Navigation/pathfinding and zombie active-chunk integration",
+    "Persistence delta application on chunk rebuild",
+    "Measured performance and LOD/occlusion tuning"
+  ],
+  "known_bugs": [
+    "Zombie sight ignores walls",
+    "No NavigationServer pathfinding yet; zombies steer and sidestep",
+    "Legacy narrative cast remains outside the generated city",
+    "Placeholder geometry and limited player-facing interior readability remain"
+  ],
+  "architectural_decisions": [
+    "WorldState owns persistent simulation facts",
+    "CityPlan is pure and immutable; chunks materialize deterministic geometry",
+    "Buildings have stable global IDs and belong to their footprint-center chunk",
+    "Visual facade details must not become a substitute for gameplay milestones",
+    "AUTOPILOT_STATE.json is canonical project-control state; Kanban is execution state; Git is implementation state"
+  ],
+  "current_builder_task": null,
+  "last_successful_test": {
+    "commands": [
+      "python tools/run_suite.py --citytest 120",
+      "python tools/run_suite.py --smoke 120"
+    ],
+    "result": "finished with 0 failure(s)",
+    "notes": "citytest returned Windows shutdown code 3221225477 after the zero-failure summary; project rules classify that code as cosmetic"
+  },
+  "last_luna_review": {
+    "revision": null,
+    "result": null,
+    "notes": []
+  },
+  "escalation": {
+    "required": true,
+    "reason": "Pilot start: Luna must select the highest-value milestone instead of continuing facade cosmetics",
+    "same_failure_count": 0,
+    "failure_signatures": []
+  },
+  "lease": {
+    "owner": null,
+    "task_id": null,
+    "lock_path": ".hermes/autopilot/locks/pilot.lock",
+    "expires_at": null
+  }
+}

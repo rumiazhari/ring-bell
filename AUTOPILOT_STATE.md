@@ -1,8 +1,10 @@
 # AUTOPILOT STATE — ring-bell
 
-STATUS: ACTIVE
-LAST_ITER: 49
-UPDATED: 2026-08-27 (JST, cron run) — iter 49
+STATUS: PILOT_CONTROLLED
+CONTROL: AUTOPILOT_STATE.json is the canonical machine-readable state for the Luna → Muse pilot.
+LEGACY: This file preserves historical iteration notes only; agents must not use it to invent new work.
+LAST_LEGACY_ITER: 49
+UPDATED: 2026-08-27 (JST, before pilot handoff)
 
 ## Current goal
 Iter 49: Phase AI Prague facade limestone plinth socle — stone base band (PLINTH_H 0.38 x PLINTH_T 0.06, 4 per building: N/S w x 0.38 x 0.06 + E/W 0.06 x 0.38 x d at y 0.19 pressed 0.05 outside historic walls >=5.0 both axes) wrapping historic buildings at grade, deterministic per WorldSeed plinth per building (PLINTH_PROB 0.62, 4 boxes one per side), visual-only thin stone bands, stone aca090 lerp 0.11, layer f0 tagged plinth; BuildingBuilder._facade_plinth via WorldSeed, visual-only, no collision; citytest + smoke green (1 new assertion).
