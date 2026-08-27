@@ -103,10 +103,14 @@ func _ready() -> void:
 		var tester5: Node = load("res://debug/havoc_test.gd").new()
 		tester5.name = "HavocTest"
 		add_child(tester5)
-	elif user_args.has("--doortest"):
-		var tester6: Node = load("res://debug/temp_door_probe.gd").new()
-		tester6.name = "TempDoorProbe"
+	elif user_args.has("--terraintest"):
+		var tester6: Node = load("res://debug/terrain_test.gd").new()
+		tester6.name = "TerrainTest"
 		add_child(tester6)
+	elif user_args.has("--doortest"):
+		var tester7: Node = load("res://debug/temp_door_probe.gd").new()
+		tester7.name = "TempDoorProbe"
+		add_child(tester7)
 	elif user_args.has("--shot"):
 		var probe: Node = load("res://debug/shot_probe.gd").new()
 		probe.name = "ShotProbe"

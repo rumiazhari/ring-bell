@@ -89,3 +89,42 @@ static func rng_for(purpose: String, parts: Array = []) -> RandomNumberGenerator
 static func unit_float(purpose: String, parts: Array) -> float:
 	return float(combine([get_world_seed(), str_hash(purpose)] + parts) % 1000003) \
 			/ 1000003.0
+
+# --- Stateless coordinate sampling (P2 terrain) -------------------------------
+
+const TERRAIN_DOMAINS: Array[StringName] = [&"terrain", &"ridge", &"valley", &"soil", &"moisture", &"temperature", &"geology", &"settlement"]
+
+## Stateless coherent noise in [0,1] for world position p.
+## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation
+## so the field is C0 continuous at every lattice and chunk boundary, including
+## negative coordinates. No RNG stream is shared between queries.
+static func sample_coherent(p: Vector2, domain: StringName, cell_size: float, seed: int = -1) -> float:
+	var s: int = seed if seed != -1 else get_world_seed()
+	var fx := p.x / cell_size
+	var fy := p.y / cell_size
+	var ix0 := floori(fx)
+	var iy0 := floori(fy)
+	var ix1 := ix0 + 1
+	var iy1 := iy0 + 1
+	var tx := fx - float(ix0)
+	var ty := fy - float(iy0)
+	var sx := tx * tx * (3.0 - 2.0 * tx)
+	var sy := ty * ty * (3.0 - 2.0 * ty)
+	var h00 := _lattice_unit(s, domain, ix0, iy0)
+	var h10 := _lattice_unit(s, domain, ix1, iy0)
+	var h01 := _lattice_unit(s, domain, ix0, iy1)
+	var h11 := _lattice_unit(s, domain, ix1, iy1)
+	var lx0 := lerpf(h00, h10, sx)
+	var lx1 := lerpf(h01, h11, sx)
+	return lerpf(lx0, lx1, sy)
+
+## Same as sample_coherent but mapped to [-1,1].
+static func sample_coherent_signed(p: Vector2, domain: StringName, cell_size: float, seed: int = -1) -> float:
+	return sample_coherent(p, domain, cell_size, seed) * 2.0 - 1.0
+
+## Explicit-seed helper for tests: does not mutate global seed state.
+static func sample_coherent_with_seed(p: Vector2, domain: StringName, cell_size: float, explicit_seed: int) -> float:
+	return sample_coherent(p, domain, cell_size, explicit_seed)
+
+static func _lattice_unit(seed_val: int, domain: StringName, ix: int, iy: int) -> float:
+	return float(combine([seed_val, str_hash(String(domain)), ix, iy]) % 1000003) / 1000003.0
