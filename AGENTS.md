@@ -22,6 +22,20 @@ Read these files before any work:
 - Hermes Kanban is the durable handoff and execution state. Use its structured
   task/review transitions, not Bot Chat prose, for authority.
 
+## Kanban lifecycle safety
+
+- A Muse implementation card stays in `review` after `kanban_request_review`.
+  It must never be reassigned or reused as a Luna card.
+- The supervisor creates a separate idempotent Luna review card linked to the
+  Muse card. `kanban.review_dispatch` is disabled for this pilot so a review
+  status can never accidentally respawn the builder.
+- Every card explicitly pins its model/provider: Luna is
+  `gpt-5.6-luna`/`openai-codex`; Muse is
+  `muse-spark-1.2-contributor`/`opencode-go`.
+- Only one Ring Bell task may be `ready` or `running` for this checkout at a
+  time. If an active task already owns the checkout, the supervisor must not
+  create another one.
+
 ## Scope guard
 
 Before editing, confirm that the requested change is in the current approved

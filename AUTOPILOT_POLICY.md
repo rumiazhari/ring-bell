@@ -32,6 +32,18 @@ agents.
   Luna may edit only `AUTOPILOT_STATE.json`, files below
   `.hermes/autopilot/`, and review/specification documentation.
 - Only one actor may hold the Ring Bell pilot lease at a time.
+- Only one Kanban task may be `ready` or `running` for this checkout at a time;
+  review cards are separate tasks and never share a live write window with a
+  builder.
+- A Muse build card remains in `review` after its handoff. Never reassign or
+  reuse that card as a Luna card. The supervisor creates one separate,
+  idempotent Luna review card linked to the Muse source card.
+- Every created card must explicitly pin its role model/provider: Luna uses
+  `gpt-5.6-luna` via `openai-codex`; Muse uses
+  `muse-spark-1.2-contributor` via `opencode-go`.
+- `kanban.review_dispatch` is disabled for this pilot. Review cards are
+  created and dispatched only by the deterministic supervisor, never by
+  treating a builder's `review` state as another builder run.
 - Never delete files. Quarantine unwanted artifacts under a project `junk/`
   directory instead.
 - Never use historical OneDrive paths. The canonical repository is

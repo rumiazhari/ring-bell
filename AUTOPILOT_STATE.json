@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project_id": "ring-bell",
   "repo_path": "C:/Vibe Code project/Godot Project/ring-bell",
-  "phase": "authorized_build",
+  "phase": "paused",
   "revision": 1,
   "baseline": {
     "legacy_state": "AUTOPILOT_STATE.md",
@@ -14,7 +14,7 @@
   "milestone": {
     "id": "P1-INTERIORS-TRAVERSAL",
     "title": "Playable semantic interiors and reliable traversal loop",
-    "status": "authorized_for_build"
+    "status": "paused_for_workflow_repair"
   },
   "spec": {
     "path": ".hermes/autopilot/specs/SPEC-001.md",
@@ -91,6 +91,16 @@
     "reason": "",
     "same_failure_count": 0,
     "failure_signatures": []
+  },
+  "orchestration": {
+    "paused": true,
+    "pause_reason": "User requested stop and workflow repair after duplicate worker redispatch.",
+    "build_task_id": "t_123c4a78",
+    "review_task_id": null,
+    "last_muse_handoff_run": 16,
+    "build_attempt": 1,
+    "active_actor": null,
+    "resume_requires": "Review and explicitly resume the repaired Luna/Muse lifecycle; do not dispatch the archived or legacy cards."
   },
   "lease": {
     "owner": null,
