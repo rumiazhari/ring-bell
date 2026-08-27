@@ -3170,6 +3170,9 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		for p in fl.get("partitions", []):
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
+			# Skip any partition that would intersect stair zone (keep stair route clear)
+			if has_stairs and pr.intersects(zone):
+				continue
 			# Partitions are along shared room edges: pr is 0.18 thick wall, op is 1x1 doorway hole.
 			# Emit as two wall segments split by opening.
 			var y0 := float(fi) * fh
