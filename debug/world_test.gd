@@ -205,6 +205,8 @@ func _run_all() -> void:
 		_test_facade_corbels())
 	_check("facade doorway portal: Prague stone jambs + lintel framing historic entrance (deterministic)",
 		_test_facade_portal())
+	_check("facade quoins: Prague rusticated corner stones on historic facades (deterministic)",
+		_test_facade_quoins())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -879,6 +881,15 @@ func _collect_portal(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "portal":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "quoin" (Phase AH Prague rusticated corners).
+func _collect_quoin(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "quoin":
 			continue
 		out.append(s)
 	return out
@@ -2924,6 +2935,166 @@ func _test_facade_portal() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] portal: no historic chunk in ring had portal")
+		return false
+	return true
+
+
+func _test_facade_quoins() -> bool:
+	# Historic building should grow rusticated corner quoins: exactly 8 * n
+	# visual-only thin boxes (QUOIN_W 0.44 x (fh-0.02) x QUOIN_T 0.06) at the
+	# four corners, 2 per side per floor, pressed 0.05 outside the wall at
+	# y = f*fh + fh*0.5, deterministic per building via WorldSeed "quoin" with
+	# QUOIN_PROB 0.60, gated to historic >=5.0, layer f* tagged quoin.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "quointest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["quointest", "quointest2", "quointest3", "quointest4", "quointest5", "quointest6", "quointest7", "quointest8", "quointest9", "quointest10", "quointest11", "quointest12"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_quoin(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] quoin: historic building grew no quoins (tried 12 ids)")
+		return false
+	var n: int = int(found_spec["floors"])
+	var fh: float = float(found_spec["floor_h"])
+	var w: float = (found_spec["rect"] as Rect2).size.x
+	var d: float = (found_spec["rect"] as Rect2).size.y
+	var qw := BuildingBuilder.QUOIN_W
+	var qt := BuildingBuilder.QUOIN_T
+	# Expect exactly 8 * n blocks (2 per side per floor) when both axes >=5.0
+	var expected := 8 * n
+	if found.size() != expected:
+		print("[CityTest] quoin: count %d != %d (8*n, n=%d)" % [found.size(), expected, n])
+		return false
+	# Count per floor and per orientation
+	var per_floor: Dictionary = {}
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] quoin: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] quoin: material %s != empty" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "quoin":
+			print("[CityTest] quoin: building_id %s != quoin" % [s.get("building_id", "")])
+			return false
+		var lay: String = String(s.get("layer", ""))
+		if lay.find(":f") == -1:
+			print("[CityTest] quoin: layer %s missing f*" % lay)
+			return false
+		# Extract floor index from layer suffix ":fX"
+		var f_idx := -1
+		for f in n:
+			if lay.ends_with(":f%d" % f):
+				f_idx = f
+				break
+		if f_idx == -1:
+			print("[CityTest] quoin: layer %s not in 0..%d" % [lay, n-1])
+			return false
+		per_floor[f_idx] = int(per_floor.get(f_idx, 0)) + 1
+		# Size check: must be QUOIN_W x (fh-0.02) x QUOIN_T or swapped
+		var is_horiz := absf(sz.x - qw) < 0.015 and absf(sz.z - qt) < 0.015
+		var is_vert := absf(sz.x - qt) < 0.015 and absf(sz.z - qw) < 0.015
+		if not is_horiz and not is_vert:
+			print("[CityTest] quoin: size %s not %.2f x fh-0.02 x %.2f at %s" % [sz, qw, qt, pos])
+			return false
+		if absf(sz.y - (fh - 0.02)) > 0.015:
+			print("[CityTest] quoin: height %.3f != fh-0.02 %.3f at %s" % [sz.y, fh-0.02, pos])
+			return false
+		# y center must be f*fh + fh*0.5
+		var exp_y := float(f_idx) * fh + fh * 0.5
+		if absf(pos.y - exp_y) > 0.025:
+			print("[CityTest] quoin: y %.3f != %.3f floor %d at %s" % [pos.y, exp_y, f_idx, pos])
+			return false
+		# Must be near wall face (pressed 0.05 outside)
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.15 and ox < 0.15) or (ox2 > w - 0.15 and ox < w + 0.15) or (oz2 > -0.15 and oz < 0.15) or (oz2 > d - 0.15 and oz < d + 0.15)
+		if not near_wall:
+			print("[CityTest] quoin: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Must be at corner (within QUOIN_W*0.5+0.15 of an edge along wall)
+		var is_corner := false
+		if is_horiz:
+			# N/S wall block oriented along X, so check x near 0 or w
+			if (pos.x < qw * 0.5 + 0.15) or (pos.x > w - qw * 0.5 - 0.15):
+				is_corner = true
+		else:
+			if (pos.z < qw * 0.5 + 0.15) or (pos.z > d - qw * 0.5 - 0.15):
+				is_corner = true
+		if not is_corner:
+			print("[CityTest] quoin: not at corner at %s" % [pos])
+			return false
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] quoin: unexpected alpha %f" % col.a)
+			return false
+	for f in n:
+		if int(per_floor.get(f, 0)) != 8:
+			print("[CityTest] quoin: floor %d has %d not 8" % [f, int(per_floor.get(f, 0))])
+			return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_quoin(b2)
+	if found.size() != got2.size():
+		print("[CityTest] quoin: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] quoin: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "quoin-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_quoin(b3).is_empty():
+		print("[CityTest] quoin: non-historic building wrongly grew %d" % _collect_quoin(b3).size())
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "quoin-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_quoin(b4b).is_empty():
+		print("[CityTest] quoin: tiny-facade building wrongly grew quoin")
+		return false
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "quoin":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] quoin: no historic chunk in ring had quoin")
 		return false
 	return true
 

@@ -196,6 +196,12 @@ const PORTAL_LINTEL_EXTRA := 0.40         # extra width beyond DOOR_W+2*JAMB_W (
 const PORTAL_MIN_SIDE := 5.0              # skip on facades shorter than this
 const PORTAL_PROB := 0.65                 # chance a historic entrance grows a stone portal
 
+# --- Phase AH: Prague facade quoins — rusticated corner stones ----------
+const QUOIN_W := 0.44               # stone block width along facade (rusticated corner)
+const QUOIN_T := 0.06               # thin stone block thickness protruding beyond wall
+const QUOIN_MIN_SIDE := 5.0         # skip on facades shorter than this
+const QUOIN_PROB := 0.60            # chance a historic building grows quoins (per building roll)
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -464,6 +470,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# Gives every qualifying entrance a classic Prague portal without touching
 	# collision or the door leaf itself.
 	_facade_door_portals(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AH: Prague facade quoins — rusticated corner stones on historic
+	# buildings, visual-only thin stone blocks pressed just outside the four
+	# corners at each storey, deterministic per building via WorldSeed quoin,
+	# gated to historic + long facades (>=5.0). Gives the Prague core its
+	# classic rusticated corners without touching collision.
+	_facade_quoins(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1590,6 +1603,64 @@ static func _facade_door_portals(b: MeshBatcher, off: Vector3, w: float, d: floa
 	b.add_box_rotated(off + Vector3(lcx, lintel_cy, lcz),
 			Vector3(law, PORTAL_LINTEL_H, lad), Basis.IDENTITY, stone_c, false, false, &"", "portal", 0)
 	b.pop_layer()
+
+## Phase AH: Prague facade quoins — rusticated corner stones.
+## Visual-only thin stone blocks (QUOIN_W 0.44 x fh-0.02 x QUOIN_T 0.06)
+## pressed just outside the four building corners at each storey, giving the
+## historic core its classic rusticated-corner read. Deterministic per building
+## via WorldSeed "quoin" (one roll per building, QUOIN_PROB 0.60), gated to
+## historic + both footprint axes >= QUOIN_MIN_SIDE 5.0. Each qualifying
+## building grows exactly 8 * n visual-only boxes (2 per side per floor: west+east
+## on N/S walls, north+south on E/W walls) at y = f*fh + fh*0.5, thin 0.06
+## protruding beyond the wall face (eps 0.05), stone aba090 desaturated 0.11,
+## layered f* tagged quoin. No collision or parkour change.
+static func _facade_quoins(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	if w < QUOIN_MIN_SIDE or d < QUOIN_MIN_SIDE:
+		return
+	var rng := WorldSeed.rng_for("quoin", [WorldSeed.str_hash(tag)])
+	if rng.randf() >= QUOIN_PROB:
+		return
+	var stone_c := Color("aba090").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+	stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+	var eps := 0.05
+	for f_idx in n:
+		var cy := f_idx * fh + fh * 0.5
+		var h := fh - 0.02
+		# N wall (side 0) — west + east corners
+		for corner_x: float in [QUOIN_W * 0.5, w - QUOIN_W * 0.5]:
+			var cx: float = corner_x
+			var cz := -QUOIN_T * 0.5 - eps
+			b.push_layer(tag + ":f%d" % f_idx)
+			b.add_box_rotated(off + Vector3(cx, cy, cz),
+					Vector3(QUOIN_W, h, QUOIN_T), Basis.IDENTITY, stone_c, false, false, &"", "quoin", f_idx)
+			b.pop_layer()
+		# S wall (side 2)
+		for corner_x2: float in [QUOIN_W * 0.5, w - QUOIN_W * 0.5]:
+			var cx2: float = corner_x2
+			var cz2 := d + QUOIN_T * 0.5 + eps
+			b.push_layer(tag + ":f%d" % f_idx)
+			b.add_box_rotated(off + Vector3(cx2, cy, cz2),
+					Vector3(QUOIN_W, h, QUOIN_T), Basis.IDENTITY, stone_c, false, false, &"", "quoin", f_idx)
+			b.pop_layer()
+		# E wall (side 1)
+		for corner_z: float in [QUOIN_W * 0.5, d - QUOIN_W * 0.5]:
+			var cx3 := w + QUOIN_T * 0.5 + eps
+			var cz3: float = corner_z
+			b.push_layer(tag + ":f%d" % f_idx)
+			b.add_box_rotated(off + Vector3(cx3, cy, cz3),
+					Vector3(QUOIN_T, h, QUOIN_W), Basis.IDENTITY, stone_c, false, false, &"", "quoin", f_idx)
+			b.pop_layer()
+		# W wall (side 3)
+		for corner_z2: float in [QUOIN_W * 0.5, d - QUOIN_W * 0.5]:
+			var cx4 := -QUOIN_T * 0.5 - eps
+			var cz4: float = corner_z2
+			b.push_layer(tag + ":f%d" % f_idx)
+			b.add_box_rotated(off + Vector3(cx4, cy, cz4),
+					Vector3(QUOIN_T, h, QUOIN_W), Basis.IDENTITY, stone_c, false, false, &"", "quoin", f_idx)
+			b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door
