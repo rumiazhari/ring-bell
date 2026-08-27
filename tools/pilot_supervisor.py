@@ -138,8 +138,10 @@ def create_review(state: dict) -> None:
         return
     revision = state["revision"]
     milestone = state["milestone"].get("id") or "unknown-milestone"
-    key = f"ring-bell:review:{milestone}:revision-{revision}"
-    body = f"""Ring Bell Luna review for state revision {revision}.
+    reports_dir = ROOT / ".hermes" / "autopilot" / "reports"
+    review_number = len(list(reports_dir.glob("REVIEW-*.md"))) + 1
+    key = f"ring-bell:review:{milestone}:revision-{revision}:review-{review_number}"
+    body = f"""Ring Bell Luna review for state revision {revision} (review {review_number}).
 
 Inspect the actual repository at {REPO}, including the current Git diff and
 commits, AUTOPILOT_STATE.json, the approved specification, and the real test
