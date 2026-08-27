@@ -365,11 +365,27 @@ def audit(state: dict[str, Any]) -> int:
     return 1 if problems else 0
 
 
+def tick(state: dict[str, Any]) -> None:
+    """Perform one deterministic routing tick; paused state is a hard stop."""
+    if state.get("phase") == "paused" or state.get("orchestration", {}).get("paused"):
+        print("paused: no Luna/Muse task created")
+        return
+    phase = state.get("phase")
+    if phase in {"needs_architect", "blocked"}:
+        create_luna(state)
+    elif phase == "authorized_build":
+        create_muse(state)
+    elif phase == "review":
+        create_review(state, None)
+    else:
+        print(f"no routing action: phase={phase}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["validate", "status", "audit", "create-luna", "create-muse", "create-review"],
+        choices=["validate", "status", "audit", "tick", "create-luna", "create-muse", "create-review"],
     )
     parser.add_argument("task_id", nargs="?", help="Muse source task for create-review")
     args = parser.parse_args()
@@ -381,6 +397,8 @@ def main() -> int:
         status(state)
     elif args.command == "audit":
         return audit(state)
+    elif args.command == "tick":
+        tick(state)
     elif args.command == "create-luna":
         create_luna(state)
     elif args.command == "create-muse":
