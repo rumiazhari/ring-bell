@@ -105,7 +105,10 @@ def create_muse(state: dict) -> None:
     if not spec or not state["spec"].get("approved"):
         raise RuntimeError("authorized_build requires an approved specification path")
     revision = state["revision"]
-    key = f"ring-bell:build:{state['milestone']['id']}:revision-{revision}"
+    review_result = state.get("last_luna_review", {}).get("result", "")
+    phase_suffix = "continuation-after-review" if review_result.startswith("continuation_") else "initial"
+    key = f"ring-bell:build:{state['milestone']['id']}:revision-{revision}:{phase_suffix}"
+    title_suffix = " continuation" if phase_suffix != "initial" else ""
     body = f"""Ring Bell implementation task for state revision {revision}.
 
 Approved Luna specification: {spec}
@@ -120,11 +123,49 @@ Luna review through Kanban when complete. Escalate architecture ambiguity
 instead of inventing a redesign.
 """
     output = run_kanban([
-        "create", f"Ring Bell build {state['milestone']['id']} revision {revision}",
+        "create", f"Ring Bell build {state['milestone']['id']} revision {revision}{title_suffix}",
         "--body", body, "--assignee", MUSE,
         "--workspace", f"dir:{REPO}",
         "--max-runtime", "2h", "--max-retries", "3",
-        "--model", "muse-spark-1.2-contributor", "--provider", "opencode-go",
+        "--created-by", "pilot-supervisor", "--idempotency-key", key, "--json",
+    ])
+    print(output)
+
+
+def create_review(state: dict) -> None:
+    if state["phase"] not in {"authorized_build", "review", "blocked"}:
+        print(f"no Luna review task: phase={state['phase']}")
+        return
+    revision = state["revision"]
+    milestone = state["milestone"].get("id") or "unknown-milestone"
+    key = f"ring-bell:review:{milestone}:revision-{revision}"
+    body = f"""Ring Bell Luna review for state revision {revision}.
+
+Inspect the actual repository at {REPO}, including the current Git diff and
+commits, AUTOPILOT_STATE.json, the approved specification, and the real test
+outputs. This review was requested after Muse reported a bounded partial
+implementation of {milestone}. Do not trust the builder summary alone.
+
+Evaluate desired architecture vs implemented architecture vs player-facing
+behavior. Check scope drift, acceptance evidence, regressions, maintainability,
+and whether the work is worth continuing. Review commits 6c36a6c and 14f05bc
+and all subsequent changes in the Ring Bell repository.
+
+Do not edit production code, tests, scenes, assets, or project settings. Update
+only AUTOPILOT_STATE.json and review/report files under .hermes/autopilot.
+If continuation is correct, keep or set phase authorized_build and record the
+next bounded builder task and exact remaining acceptance criteria. If the
+implementation is accepted, set phase accepted and record final evidence. If
+architecture or product direction is ambiguous, set phase needs_architect or
+blocked with a precise reason. Finish through the Kanban completion protocol;
+do not create roadmap tasks.
+"""
+    output = run_kanban([
+        "create", f"Ring Bell Luna review {milestone} revision {revision}",
+        "--body", body, "--assignee", LUNA,
+        "--workspace", f"dir:{REPO}",
+        "--max-runtime", "30m", "--max-retries", "2",
+        "--model", "gpt-5.6-luna", "--provider", "openai-codex",
         "--created-by", "pilot-supervisor", "--idempotency-key", key, "--json",
     ])
     print(output)
@@ -138,7 +179,7 @@ def status(state: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["validate", "status", "create-luna", "create-muse"])
+    parser.add_argument("command", choices=["validate", "status", "create-luna", "create-muse", "create-review"])
     args = parser.parse_args()
     state = load_state()
     validate_state(state)
@@ -148,8 +189,10 @@ def main() -> int:
         status(state)
     elif args.command == "create-luna":
         create_luna(state)
-    else:
+    elif args.command == "create-muse":
         create_muse(state)
+    else:
+        create_review(state)
     return 0
 
 
