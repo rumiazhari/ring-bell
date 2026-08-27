@@ -202,6 +202,12 @@ const QUOIN_T := 0.06               # thin stone block thickness protruding beyo
 const QUOIN_MIN_SIDE := 5.0         # skip on facades shorter than this
 const QUOIN_PROB := 0.60            # chance a historic building grows quoins (per building roll)
 
+# --- Phase AI: Prague facade plinth course — stone base socle ------------
+const PLINTH_H := 0.38              # plinth band height at grade (stone socle)
+const PLINTH_T := 0.06              # thin stone band thickness protruding beyond wall
+const PLINTH_MIN_SIDE := 5.0        # skip on facades shorter than this
+const PLINTH_PROB := 0.62           # chance a historic building grows a plinth course (per building roll)
+
 # Prague-flavored placeholder palettes.
 const WALL_COLORS := [
 	Color("d8cfc0"), Color("c9a86b"), Color("c4938a"), Color("a9b6bb"),
@@ -477,6 +483,14 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# gated to historic + long facades (>=5.0). Gives the Prague core its
 	# classic rusticated corners without touching collision.
 	_facade_quoins(b, off, w, d, fh, n, tag, spec)
+
+	# Phase AI: Prague facade plinth course — stone base socle wrapping
+	# historic buildings at grade, visual-only thin stone bands pressed just
+	# outside all four walls at y=PLINTH_H*0.5 (0..0.38), deterministic per
+	# building via WorldSeed plinth, gated to historic + long facades
+	# (>=5.0 both axes). Gives the Prague core its classic limestone base
+	# without touching collision or doorway clearance.
+	_facade_plinth(b, off, w, d, fh, n, tag, spec)
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -1661,6 +1675,52 @@ static func _facade_quoins(b: MeshBatcher, off: Vector3, w: float, d: float,
 			b.add_box_rotated(off + Vector3(cx4, cy, cz4),
 					Vector3(QUOIN_T, h, QUOIN_W), Basis.IDENTITY, stone_c, false, false, &"", "quoin", f_idx)
 			b.pop_layer()
+
+## Phase AI: Prague facade plinth course — stone base socle at grade.
+## Visual-only thin stone bands (w x PLINTH_H 0.38 x PLINTH_T 0.06 on N/S,
+## PLINTH_T x PLINTH_H x d on E/W) wrapping all four walls at grade,
+## pressed just outside the wall face (eps 0.05) at y=PLINTH_H*0.5. The
+## plinth sits from y 0 to 0.38 — a classic limestone base that anchors
+## the historic building without ever blocking the doorway (door aperture
+## from y 0..2.25 still fully open; plinth is thin visual band outside
+## the wall plane). Deterministic per building via WorldSeed "plinth"
+## (one roll per building, PLINTH_PROB 0.62), gated to historic + both
+## axes >= PLINTH_MIN_SIDE 5.0. Exactly 4 visual-only boxes per
+## qualifying building (one per side), stone aca090 desaturated 0.11,
+## layer f0 tagged plinth. No collision or parkour change.
+static func _facade_plinth(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if str(spec.get("district", "")) != "historic":
+		return
+	if w < PLINTH_MIN_SIDE or d < PLINTH_MIN_SIDE:
+		return
+	var rng := WorldSeed.rng_for("plinth", [WorldSeed.str_hash(tag)])
+	if rng.randf() >= PLINTH_PROB:
+		return
+	var stone_c := Color("aca090").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
+	stone_c = stone_c.lerp(Color(0.64, 0.63, 0.60), 0.11)
+	var eps := 0.05
+	var cy := PLINTH_H * 0.5
+	# N wall
+	b.push_layer(tag + ":f0")
+	b.add_box_rotated(off + Vector3(w * 0.5, cy, -PLINTH_T * 0.5 - eps),
+			Vector3(w, PLINTH_H, PLINTH_T), Basis.IDENTITY, stone_c, false, false, &"", "plinth", 0)
+	b.pop_layer()
+	# S wall
+	b.push_layer(tag + ":f0")
+	b.add_box_rotated(off + Vector3(w * 0.5, cy, d + PLINTH_T * 0.5 + eps),
+			Vector3(w, PLINTH_H, PLINTH_T), Basis.IDENTITY, stone_c, false, false, &"", "plinth", 0)
+	b.pop_layer()
+	# E wall
+	b.push_layer(tag + ":f0")
+	b.add_box_rotated(off + Vector3(w + PLINTH_T * 0.5 + eps, cy, d * 0.5),
+			Vector3(PLINTH_T, PLINTH_H, d), Basis.IDENTITY, stone_c, false, false, &"", "plinth", 0)
+	b.pop_layer()
+	# W wall
+	b.push_layer(tag + ":f0")
+	b.add_box_rotated(off + Vector3(-PLINTH_T * 0.5 - eps, cy, d * 0.5),
+			Vector3(PLINTH_T, PLINTH_H, d), Basis.IDENTITY, stone_c, false, false, &"", "plinth", 0)
+	b.pop_layer()
 
 ## One facade:
 ## `is_entrance` turns the mid-facade door into a real aperture; the Door

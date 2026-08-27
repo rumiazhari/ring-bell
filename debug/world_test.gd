@@ -207,6 +207,8 @@ func _run_all() -> void:
 		_test_facade_portal())
 	_check("facade quoins: Prague rusticated corner stones on historic facades (deterministic)",
 		_test_facade_quoins())
+	_check("facade plinth: Prague limestone base socle on historic facades (deterministic)",
+		_test_facade_plinth())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -890,6 +892,15 @@ func _collect_quoin(b: MeshBatcher) -> Array:
 	var out: Array = []
 	for s: Dictionary in b.specs():
 		if String(s.get("building_id", "")) != "quoin":
+			continue
+		out.append(s)
+	return out
+
+## Visual-only boxes tagged "plinth" (Phase AI Prague stone socle).
+func _collect_plinth(b: MeshBatcher) -> Array:
+	var out: Array = []
+	for s: Dictionary in b.specs():
+		if String(s.get("building_id", "")) != "plinth":
 			continue
 		out.append(s)
 	return out
@@ -3095,6 +3106,150 @@ func _test_facade_quoins() -> bool:
 			break
 	if not hist_hit:
 		print("[CityTest] quoin: no historic chunk in ring had quoin")
+		return false
+	return true
+
+
+func _test_facade_plinth() -> bool:
+	# Historic building should grow a stone plinth socle wrapping at grade:
+	# exactly 4 visual-only thin bands (PLINTH_H 0.38 x PLINTH_T 0.06) — one
+	# per side — at y = PLINTH_H*0.5 pressed 0.05 outside the wall at grade
+	# (thin stone base from y 0 to 0.38), deterministic per building via
+	# WorldSeed "plinth" with PLINTH_PROB 0.62, gated to historic >=5.0 both
+	# axes, layer f0 tagged plinth, stone aca090 lerp 0.11.
+	var base := {
+		"rect": Rect2(0, 0, 12, 10),
+		"floor_h": 3.0,
+		"floors": 3,
+		"id": "plinttest",
+		"door_edge": 0,
+		"district": "historic",
+		"plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var found_spec: Dictionary = {}
+	var found: Array = []
+	for try_id in ["plinttest", "plinttest2", "plinttest3", "plinttest4", "plinttest5", "plinttest6", "plinttest7", "plinttest8", "plinttest9", "plinttest10", "plinttest11", "plinttest12"]:
+		var s := base.duplicate(true)
+		s["id"] = try_id
+		var b_try := MeshBatcher.new()
+		BuildingBuilder.build(b_try, s)
+		var got := _collect_plinth(b_try)
+		if not got.is_empty():
+			found_spec = s
+			found = got
+			break
+	if found.is_empty():
+		print("[CityTest] plinth: historic building grew no plinth (tried 12 ids)")
+		return false
+	var w: float = (found_spec["rect"] as Rect2).size.x
+	var d: float = (found_spec["rect"] as Rect2).size.y
+	var ph := BuildingBuilder.PLINTH_H
+	var pt := BuildingBuilder.PLINTH_T
+	if found.size() != 4:
+		print("[CityTest] plinth: count %d != 4 (one per side)" % found.size())
+		return false
+	var saw_n := 0
+	var saw_s := 0
+	var saw_e := 0
+	var saw_w := 0
+	for s: Dictionary in found:
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if bool(s["collide"]):
+			print("[CityTest] plinth: must be visual-only at %s" % [pos])
+			return false
+		if StringName(s["material"]) != &"":
+			print("[CityTest] plinth: material %s != empty" % [s["material"]])
+			return false
+		if String(s.get("building_id", "")) != "plinth":
+			print("[CityTest] plinth: building_id %s != plinth" % [s.get("building_id", "")])
+			return false
+		var lay: String = String(s.get("layer", ""))
+		if lay.find(":f0") == -1:
+			print("[CityTest] plinth: layer %s not f0" % lay)
+			return false
+		var is_horiz := absf(sz.x - w) < 0.015 and absf(sz.z - pt) < 0.015
+		var is_vert := absf(sz.x - pt) < 0.015 and absf(sz.z - d) < 0.015
+		if not is_horiz and not is_vert:
+			print("[CityTest] plinth: size %s not w %.2f x %.2f nor t %.2f x d %.2f at %s" % [sz, w, pt, pt, d, pos])
+			return false
+		if absf(sz.y - ph) > 0.015:
+			print("[CityTest] plinth: height %.3f != %.3f at %s" % [sz.y, ph, pos])
+			return false
+		if absf(pos.y - ph * 0.5) > 0.025:
+			print("[CityTest] plinth: y %.3f != %.3f at %s" % [pos.y, ph*0.5, pos])
+			return false
+		# Must be pressed 0.05 outside wall (thin band)
+		var ox := pos.x - sz.x * 0.5
+		var ox2 := pos.x + sz.x * 0.5
+		var oz := pos.z - sz.z * 0.5
+		var oz2 := pos.z + sz.z * 0.5
+		var near_wall := (ox2 > -0.15 and ox < 0.15) or (ox2 > w - 0.15 and ox < w + 0.15) or (oz2 > -0.15 and oz < 0.15) or (oz2 > d - 0.15 and oz < d + 0.15)
+		if not near_wall:
+			print("[CityTest] plinth: not on wall face at %s sz %s" % [pos, sz])
+			return false
+		# Classify side by position
+		if is_horiz:
+			if pos.z < 0:
+				saw_n += 1
+			elif pos.z > d:
+				saw_s += 1
+		else:
+			if pos.x > w:
+				saw_e += 1
+			elif pos.x < 0:
+				saw_w += 1
+		var col: Color = s["color"]
+		if col.a < 0.9:
+			print("[CityTest] plinth: unexpected alpha %f" % col.a)
+			return false
+	if saw_n != 1 or saw_s != 1 or saw_e != 1 or saw_w != 1:
+		print("[CityTest] plinth: expected 1 per side N/S/E/W got %d/%d/%d/%d" % [saw_n, saw_s, saw_e, saw_w])
+		return false
+	var b2 := MeshBatcher.new()
+	BuildingBuilder.build(b2, found_spec)
+	var got2 := _collect_plinth(b2)
+	if found.size() != got2.size():
+		print("[CityTest] plinth: nondeterministic count %d vs %d" % [found.size(), got2.size()])
+		return false
+	for i in found.size():
+		if found[i]["pos"] != got2[i]["pos"] or found[i]["size"] != got2[i]["size"] or found[i]["color"] != got2[i]["color"]:
+			print("[CityTest] plinth: nondeterministic box %d" % i)
+			return false
+	var nonhist := base.duplicate(true)
+	nonhist["id"] = "plinth-nonhist"
+	nonhist["district"] = "outer"
+	var b3 := MeshBatcher.new()
+	BuildingBuilder.build(b3, nonhist)
+	if not _collect_plinth(b3).is_empty():
+		print("[CityTest] plinth: non-historic building wrongly grew %d" % _collect_plinth(b3).size())
+		return false
+	var tiny := {
+		"rect": Rect2(0, 0, 4, 4),
+		"floor_h": 3.0, "floors": 3, "id": "plinth-tiny",
+		"door_edge": 0, "district": "historic", "plaza_adjacent": true,
+		"style": {"wall": 1, "roof": 2, "attic": false},
+	}
+	var b4b := MeshBatcher.new()
+	BuildingBuilder.build(b4b, tiny)
+	if not _collect_plinth(b4b).is_empty():
+		print("[CityTest] plinth: tiny-facade building wrongly grew plinth")
+		return false
+	var plan := CityPlan.new()
+	var hist_hit := false
+	for coord in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var b_hist := MeshBatcher.new()
+		ChunkBuilder.fill_batcher(b_hist, plan, coord)
+		var sg := 0
+		for sp: Dictionary in b_hist.specs():
+			if String(sp.get("building_id", "")) == "plinth":
+				sg += 1
+		if sg > 0:
+			hist_hit = true
+			break
+	if not hist_hit:
+		print("[CityTest] plinth: no historic chunk in ring had plinth")
 		return false
 	return true
 
