@@ -642,8 +642,8 @@ func debug_lines() -> Array[String]:
 			doors_total(), buildings_total(), _records.size()])
 	lines.append("gen %.1f ms | materialize %.1f ms | resident chunks %d (cold %d)"
 			% [avg_gen_ms(), avg_mat_ms(), _chunks.size(), cold_count()])
-	lines.append("terrain verts %d | tris %d | colliders %d | t_gen %.1f ms | t_mat %.1f ms | active terrain %d"
-			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count()])
+	lines.append("terrain verts %d | tris %d | colliders %d | t_gen %.1f ms | t_mat_total %.1f ms | active terrain %d (warm %d)"
+			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count(), terrain_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
