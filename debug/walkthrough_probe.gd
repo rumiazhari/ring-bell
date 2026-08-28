@@ -146,7 +146,7 @@ func _run() -> void:
 	# the last point.
 	var climb: Array[Vector3] = _stair_path(zone, fh, n)
 	var roof_y := float(n) * fh
-	var climb_radius := func(_i: int) -> float: return 1.1
+	var climb_radius := func(_i: int) -> float: return 0.55
 	_check("climbed all %d storeys to deck" % n,
 			await _follow_waypoints_r(player, climb, 140.0, climb_radius,
 					zone.grow(0.1), Vector2(-1.0, roof_y + 1.5)),
@@ -162,7 +162,7 @@ func _run() -> void:
 	var downs: Array[Vector3] = []
 	for idx in range(climb.size() - 1, -1, -1):
 		downs.append(climb[idx])
-	var down_radius := func(_i: int) -> float: return 1.1
+	var down_radius := func(_i: int) -> float: return 0.55
 	_check("descended to ground floor",
 			await _follow_waypoints_r(player, downs, 140.0, down_radius,
 					zone.grow(0.1), Vector2(-1.0, roof_y + 1.5)),
@@ -320,7 +320,9 @@ func _wp(x: float, z: float, y: float) -> Vector3:
 ## BuildingBuilder._staircase uses (LANE_W, LAND, flight z-span, lane parity),
 ## so the route is valid for ANY qualifying building - no per-building tuning.
 ## Ascends even flights in the WEST lane (south) and odd flights in the EAST
-## lane (north), crossing each top landing full-width to the next lane.
+## lane (north). Cross-waypoints sit at the CENTER of each landing, away from
+## the flight lips and fall-protection rails, and cross the lane gap in two
+## ordinary-movement legs.
 func _stair_path(zone: Rect2, fh: float, n: int) -> Array[Vector3]:
 	var z_n := zone.position.y
 	var z_s := zone.end.y
@@ -337,30 +339,19 @@ func _stair_path(zone: Rect2, fh: float, n: int) -> Array[Vector3]:
 	for k in n:
 		var y0 := float(k) * fh
 		var y1 := float(k + 1) * fh
-		if k % 2 == 0:
-			# Even flight: WEST lane, ascends SOUTH. Bottom at z0 (y0),
-			# top at z1 (y1). Cross onto the SOUTH landing, centered on
-			# z1 - the ~1 m band clear of BOTH flights' handrail tips
-			# (flight 0's rail stops 0.5 m north of z1, flight 1's starts
-			# 0.5 m south of z1). Crossing at z1 avoids clipping a rail.
-			path.append(_wp(lane_w, zm, y0 + fh * 0.5))
-			path.append(_wp(lane_w, z1 - 0.3, y1))
-			path.append(_wp(lane_e, z1, y1))
-		else:
-			# Odd flight: EAST lane, ascends NORTH. Bottom at z1 (y0),
-			# top at z0 (y1). Cross onto the NORTH landing, centered on
-			# z0 (clear band between the flights' rail tips there).
-			path.append(_wp(lane_e, zm, y0 + fh * 0.5))
-			path.append(_wp(lane_e, z0 + 0.3, y1))
-			path.append(_wp(lane_w, z0, y1))
-	# Final deck waypoint must sit on the CONNECTED half (the fall-protection
-	# void logic rails off the half the top flight does NOT arrive at).
-	if n % 2 == 0:
-		# Top flight (n-1, odd) arrives the NORTH deck EAST half.
-		path[path.size() - 1] = _wp(lane_e, z_n + L * 0.5, n * fh)
-	else:
-		# Top flight (n-1, even) arrives the SOUTH deck WEST half.
-		path[path.size() - 1] = _wp(lane_w, z_s - L * 0.5, n * fh)
+		var lane := lane_w if k % 2 == 0 else lane_e
+		var landing_z := z_s - L * 0.5 if k % 2 == 0 else z_n + L * 0.5
+		# Follow the middle of the actual ramp, then arrive on the CENTER
+		# of its upper landing. The landing center is deliberately not the
+		# ramp lip: it leaves the capsule clear of seam rails before the
+		# lateral crossing.
+		path.append(_wp(lane, zm, y0 + fh * 0.5))
+		path.append(_wp(lane, landing_z, y1))
+		if k < n - 1:
+			var other_lane := lane_e if k % 2 == 0 else lane_w
+			var cross_x := (lane + other_lane) * 0.5
+			path.append(_wp(cross_x, landing_z, y1))
+			path.append(_wp(other_lane, landing_z, y1))
 	return path
 
 
@@ -397,7 +388,6 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 		y_range := Vector2(-INF, INF)) -> bool:
 	var i := 0
 	var t := 0.0
-	var skips := 0
 	# Per-segment anti-stall state. Bodies pressed against geometry keep
 	# MICRO-SLIDING, so "did we move this frame" never trips; watch whether
 	# DISTANCE TO THE TARGET shrinks over 2 s windows instead.
@@ -409,9 +399,15 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 		var target := wps[i]
 		var flat := target - player.global_position
 		flat.y = 0.0
-		var band_ok := absf(player.global_position.y - wps[i].y) < 0.75 \
-				or flat.length() < 0.45
-		if flat.length() < 0.45 and band_ok:
+		var arrival_radius: float = maxf(0.25, float(radius_for.call(i)))
+		# Horizontal proximity never substitutes for the requested floor band;
+		# otherwise a player can be accepted on an upper landing above a ground
+		# waypoint and the later route starts from the wrong storey.
+		var band_ok := absf(player.global_position.y - wps[i].y) < 0.75
+		if flat.length() < arrival_radius and band_ok:
+			print("[Walkthrough] reached waypoint %d/%d pos=%s target=%s floor=%s vel=%s"
+					% [i + 1, wps.size(), player.global_position, target,
+						str(player.is_on_floor()), player.velocity])
 			i += 1
 			win_t = 0.0
 			ref_dist = INF
@@ -453,19 +449,12 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 		win_t += get_physics_process_delta_time()
 		if win_t >= 2.0:
 			if flat.length() > ref_dist - 0.06:
-				# No steady approach over 2 s even though _clear_dir is
-				# sliding along obstacles - the waypoint is genuinely
-				# unreachable (e.g. boxed into a void). Skip it; the
-				# suite's TERMINAL assertions (final ground Y, room exit,
-				# closed door) still gate real success. Bounded to 2 skips.
-				skips += 1
-				print("[Walkthrough] skipping waypoint %d/%d pos=%s tgt=%s"
-						% [i + 1, wps.size(), player.global_position, wps[i]])
-				if skips > 2:
-					return false
-				i += 1
-				win_t = 0.0
-				ref_dist = INF
+				# No steady approach over 2 s is a real route failure. Never
+				# skip an unreached waypoint: the generator must be repaired.
+				_route_diagnostics(player, wps[i])
+				print("[Walkthrough] STALL waypoint %d/%d pos=%s tgt=%s"
+					% [i + 1, wps.size(), player.global_position, wps[i]])
+				return false
 			ref_dist = flat.length()
 			win_t = 0.0
 	return i >= wps.size()
@@ -553,6 +542,68 @@ func _clear_depth(player: Node3D, h: Vector3) -> float:
 		if space.intersect_ray(dq).is_empty():
 			return reach - 0.3   # void opens before the wall
 	return 2.0
+
+
+## Dump the actual body/shape blocking a stalled route segment. This is
+## evidence only: the follower still fails rather than bypassing collision.
+## `intersect_shape()` reports bodies, so the ray ladder resolves each hit's
+## shape owner to identify the exact generated fixture.
+func _route_diagnostics(player: Node3D, target: Vector3) -> void:
+	var space := player.get_world_3d().direct_space_state
+	var flat := target - player.global_position
+	flat.y = 0.0
+	if flat.length_squared() < 0.0001:
+		return
+	var dir := flat.normalized()
+	var rays: Array[String] = []
+	for h: float in [0.2, 0.5, 0.9]:
+		var from := player.global_position + Vector3.UP * h
+		var q := PhysicsRayQueryParameters3D.create(
+				from, from + dir * 2.4, Survivor.LAYER_ENVIRONMENT)
+		q.exclude = [player.get_rid()]
+		var hit := space.intersect_ray(q)
+		if hit.is_empty():
+			rays.append("%.1f:none" % h)
+		else:
+			var collider: Object = hit.get("collider")
+			rays.append("%.1f:%s/%s" % [h, str(collider),
+				_shape_owner_description(collider, int(hit.get("shape", -1)))])
+	var cap := CapsuleShape3D.new()
+	cap.radius = 0.37
+	cap.height = 1.72
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = cap
+	params.transform = Transform3D(Basis.IDENTITY,
+				player.global_position + Vector3.UP * 0.85 + dir * 0.8)
+	params.collision_mask = Survivor.LAYER_ENVIRONMENT
+	params.exclude = [player.get_rid()]
+	var bodies := space.intersect_shape(params, 16)
+	var sweep: Array[String] = []
+	for body_hit: Dictionary in bodies:
+		var collider: Object = body_hit.get("collider")
+		sweep.append(str(collider))
+	print("[Walkthrough][DIAG] pos=%s target=%s floor=%s floor_normal=%s vel=%s rays=%s capsule=%s"
+			% [player.global_position, target, str(player.is_on_floor()),
+				player.get_floor_normal(), player.velocity, ";".join(rays),
+				";".join(sweep)])
+
+
+func _shape_owner_description(collider: Object, shape_idx: int) -> String:
+	if collider == null or not collider is CollisionObject3D or shape_idx < 0:
+		return "shape=%d" % shape_idx
+	var body := collider as CollisionObject3D
+	var owner_id := body.shape_find_owner(shape_idx)
+	if owner_id < 0:
+		return "shape=%d" % shape_idx
+	var owner := body.shape_owner_get_owner(owner_id)
+	if owner == null:
+		return "shape=%d" % shape_idx
+	var tags: Array[String] = []
+	for key: StringName in [&"vox_id", &"vox_material", &"vox_tag"]:
+		if owner.has_meta(key):
+			tags.append("%s=%s" % [key, str(owner.get_meta(key))])
+	return "owner=%s@%s%s" % [str(owner.name), str(owner.global_position),
+			"[" + ",".join(tags) + "]" if not tags.is_empty() else ""]
 
 func _snap(file_name: String) -> void:
 	if DisplayServer.get_name() == "headless":

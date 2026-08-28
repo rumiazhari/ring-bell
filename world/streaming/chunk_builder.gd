@@ -77,7 +77,8 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 ## dead_doors: {door manifest id: true} - doors recorded destroyed in the
 ## persistence delta are NOT respawned when their chunk streams back in.
 static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
-		batcher: MeshBatcher = null, dead_doors := {}) -> Dictionary:
+		batcher: MeshBatcher = null, dead_doors := {},
+		include_collision := true) -> Dictionary:
 	if batcher == null:
 		batcher = MeshBatcher.new()
 		fill_batcher(batcher, plan, coord)
@@ -86,7 +87,7 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	var chunk := Node3D.new()
 	chunk.name = "Chunk_%d_%d" % [coord.x, coord.y]
 	parent.add_child(chunk)
-	var stats := batcher.flush_into(chunk)
+	var stats := batcher.flush_into(chunk, 1, include_collision)
 	# Dynamic door entities from the deterministic manifests.
 	var rect := WorldSeed.chunk_rect(coord)
 	var doors := 0

@@ -737,7 +737,13 @@ static func _scaffolds(b: MeshBatcher, off: Vector3, w: float, d: float,
 		sides[j] = tmp
 	var chosen_side := -1
 	var chosen_len := 0.0
+	var entrance_side := int(spec.get("door_edge", -1))
 	for side in sides:
+		# The street entrance must remain a clear physical approach. A
+		# colliding scaffold on that facade can seal the aperture even when
+		# the real Door leaf is open, so choose another facade deterministically.
+		if side == entrance_side:
+			continue
 		var length := w if (side == 0 or side == 2) else d
 		if length < SCAFF_MIN_SIDE:
 			continue
@@ -3167,11 +3173,29 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		if fi >= n:
 			continue
 		b.push_layer(tag + ":f%d" % fi)
+		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
+		var corridor := Rect2()
+		if fi == 0:
+			var door_edge2 := int(spec.get("door_edge", 0))
+			var mid := Vector2.ZERO
+			var dm0: Dictionary = spec.get("doors", [])[0] if spec.get("doors", []).size() > 0 else {}
+			if dm0.has("position"):
+				var dp: Vector3 = dm0["position"]
+				mid = Vector2(dp.x, dp.z)
+			else:
+				mid = (spec["rect"] as Rect2).get_center()
+			match door_edge2:
+				0: corridor = Rect2(mid.x - 1.1, mid.y, 2.2, 3.0)
+				1: corridor = Rect2(mid.x - 3.0, mid.y - 1.1, 3.0, 2.2)
+				2: corridor = Rect2(mid.x - 1.1, mid.y - 3.0, 2.2, 3.0)
+				_: corridor = Rect2(mid.x, mid.y - 1.1, 3.0, 2.2)
 		for p in fl.get("partitions", []):
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
 			# Skip any partition that would intersect stair zone (keep stair route clear)
 			if has_stairs and pr.intersects(zone):
+				continue
+			if fi == 0 and corridor.size != Vector2.ZERO and pr.intersects(corridor):
 				continue
 			# Partitions are along shared room edges: pr is 0.18 thick wall, op is 1x1 doorway hole.
 			# Emit as two wall segments split by opening.

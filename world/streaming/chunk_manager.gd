@@ -253,7 +253,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		if bool(dstates[did].get("destroyed", false)):
 			dead_doors[did] = true
 	# Exactly ONE materialization: flush meshes/static body + doors + props.
-	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors)
+	var include_collision := chebyshev_distance(coord, pc) <= ACTIVE_RADIUS
+	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors,
+			include_collision)
 	# Materialize terrain under same chunk if manifest present
 	var tstats := {}
 	if not terrain_manifest.is_empty():
@@ -276,7 +278,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
-		"colliders": int(stats["colliders"]),
+		"colliders": int(stats["colliders"]) if include_collision else 0,
+		"planned_colliders": int(stats["colliders"]),
 		"doors": int(stats["doors"]),
 		"buildings": int(stats["buildings"]),
 		"props": int(stats.get("props", 0)),
@@ -317,10 +320,13 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 				and chebyshev_distance(c, pc) > UNLOAD_RADIUS:
 			doomed.append(c)
 	for c in doomed:
+		var rec: Dictionary = _chunks[c]
+		var batcher: MeshBatcher = rec.get("batcher")
+		if batcher != null:
+			batcher.disable_collision()
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
 			node.queue_free()
-		var rec: Dictionary = _chunks[c]
 		_terrain_vertices_total -= int(rec.get("terrain_vertices", 0))
 		_terrain_triangles_total -= int(rec.get("terrain_triangles", 0))
 		_terrain_colliders_total -= int(rec.get("terrain_colliders", 0))
@@ -345,7 +351,20 @@ func _update_chunk_states(pc: Vector2i) -> void:
 			desired_state = &"cold"
 
 		if _chunks[coord]["state"] != desired_state:
-			_chunks[coord]["state"] = desired_state
+			var previous_state: StringName = _chunks[coord]["state"]
+			var rec: Dictionary = _chunks[coord]
+			var batcher: MeshBatcher = rec.get("batcher")
+			if batcher != null and desired_state == &"active":
+				batcher.enable_collision()
+				rec["static"] = get_node_or_null(
+						NodePath("Chunk_%d_%d/Static" % [coord.x, coord.y]))
+				rec["colliders"] = int(rec.get("planned_colliders", 0)) \
+						if rec["static"] != null else 0
+			elif batcher != null and previous_state == &"active":
+				batcher.disable_collision()
+				rec["static"] = null
+				rec["colliders"] = 0
+			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
 

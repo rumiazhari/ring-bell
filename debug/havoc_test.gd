@@ -212,22 +212,35 @@ func _run() -> void:
 	if weapons2 != null:
 		weapons2.select_slot(3)
 		var before := _piece_count()
-		# Aim at PLAN-GUARANTEED geometry: the nearest building center is
-		# always a solid wall mass. A blind fixed-direction shot can fly
-		# down an empty street and expire at max range without ever
-		# detonating (real flake seen in CI), and even ray-picked walls can
-		# be thin glass that shatters without spawning enough debris.
+		# Aim at a PRESENT, resident concrete wall shape rather than an
+		# abstract building center. The rocket's own swept ray then has a
+		# guaranteed real environment fixture to hit; a blind street shot can
+		# otherwise survive its full lifetime without detonating.
 		var aim_point: Vector3 = player.global_position + Vector3(8, 0, 0)
+		var target_shape: CollisionShape3D = null
 		var best_d := INF
-		for bspec in mgr.plan.buildings_in_rect(Rect2(
-				player.global_position.x - 80.0,
-				player.global_position.z - 80.0, 160.0, 160.0)):
-			var bc: Vector2 = (bspec["rect"] as Rect2).get_center()
-			var d := Vector2(player.global_position.x,
-					player.global_position.z).distance_to(bc)
-			if d < best_d:
+		for c: Vector2i in mgr._chunks:
+			var rec: Dictionary = mgr._chunks[c]
+			var st: Node = rec.get("static")
+			if st == null or not is_instance_valid(st):
+				continue
+			for child in st.get_children():
+				var shape := child as CollisionShape3D
+				if shape == null or shape.disabled \
+						or not shape.has_meta("vox_id") \
+						or StringName(shape.get_meta("vox_material", &"")) != &"concrete":
+					continue
+				var box := shape.shape as BoxShape3D
+				if box == null or box.size.y < 1.0:
+					continue
+				var d := shape.global_position.distance_squared_to(
+						player.global_position)
+				if d < 9.0 or d >= best_d:
+					continue
 				best_d = d
-				aim_point = Vector3(bc.x, 1.5, bc.y)
+				target_shape = shape
+		if target_shape != null:
+			aim_point = target_shape.global_position
 		weapons2.call("_launch_rocket", weapons2.current_def(), aim_point)
 		var rocket_ref: RocketProjectile = null
 		for node in get_tree().current_scene.get_children():

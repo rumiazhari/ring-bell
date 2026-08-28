@@ -35,6 +35,7 @@ var _faded := []                      # currently faded facade letters
 var city_plan: CityPlan
 var chunk_manager: ChunkManager
 var city_spawner: CitySpawner
+var _city_spawn_gate_active := false
 
 
 func _ready() -> void:
@@ -122,6 +123,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _city_spawn_gate_active:
+		_release_city_spawn_gate_when_ready()
 	match _mode:
 		WorldMode.LEGACY_BLOCK:
 			_update_roof_visibility()
@@ -196,6 +199,12 @@ func _spawn_city_population() -> void:
 	if player != null:
 		chunk_manager.set_player(player)
 		_wire_player(player)
+		# Chunk streaming starts after this scene's ready pass. Hold the
+		# player (and its controllers) until the exact spawn chunk has a
+		# terrain body, otherwise the first physics frames apply gravity in
+		# an empty world and the player falls below the eventual floor.
+		_city_spawn_gate_active = true
+		player.process_mode = Node.PROCESS_MODE_DISABLED
 	else:
 		chunk_manager.set_player(null)
 
@@ -206,6 +215,27 @@ func _spawn_city_population() -> void:
 	city_spawner.name = "CitySpawner"
 	city_spawner.setup(city_plan, chunk_manager)
 	add_child(city_spawner)
+
+
+## Keep the initial CITY survivor stationary until its spawn chunk's
+## asynchronous materialization has installed the real terrain collision.
+## This is a startup synchronization gate, not a movement/teleport fallback.
+func _release_city_spawn_gate_when_ready() -> void:
+	if not _city_spawn_gate_active or player == null \
+			or not is_instance_valid(player) or chunk_manager == null:
+		return
+	var coord := WorldSeed.chunk_coord(player.global_position.x,
+			player.global_position.z)
+	var chunk := chunk_manager.get_node_or_null(
+			NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+	if chunk == null:
+		return
+	var terrain_body := chunk.get_node_or_null(
+			NodePath("Terrain_%d_%d/TerrainBody" % [coord.x, coord.y]))
+	if terrain_body == null:
+		return
+	_city_spawn_gate_active = false
+	player.process_mode = Node.PROCESS_MODE_INHERIT
 
 
 func _wire_player(p: Survivor) -> void:

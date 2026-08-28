@@ -286,7 +286,8 @@ func _group_keys() -> Array:
 ## PERSISTENCE CONTRACT: cells already marked destroyed NEVER regain a
 ## CollisionShape3D here, so mesh and collision state always agree on
 ## first materialization (restored deltas are applied BEFORE this flush).
-func flush_into(parent: Node3D, body_layer := 1) -> Dictionary:
+func flush_into(parent: Node3D, body_layer := 1,
+		include_collision := true) -> Dictionary:
 	_parent = parent
 	var stats := {"mesh_nodes": 0, "colliders": _colliders.size()}
 
@@ -300,40 +301,79 @@ func flush_into(parent: Node3D, body_layer := 1) -> Dictionary:
 		layer_nodes[key] = mi
 		stats["mesh_nodes"] += 1
 
-	if not _colliders.is_empty():
-		var body := StaticBody3D.new()
-		body.name = "Static"
-		body.collision_layer = body_layer
-		body.collision_mask = 0
-		parent.add_child(body)
-		for col in _colliders:
-			if _destroyed.has(int(col["id"])):
-				continue   # destroyed cell: no collider resurrection
-			var shape_node := CollisionShape3D.new()
-			var shape := BoxShape3D.new()
-			shape.size = col["size"]
-			shape_node.shape = shape
-			shape_node.position = col["pos"]
-			shape_node.basis = col["basis"]
-			# Only EXPLICITLY destructible materials carry a vox id:
-			# plain structural boxes (ground plane, floor slabs, stair
-			# ramps/landings) stay indestructible so nobody falls into
-			# an abyss through a blasted-out floor.
-			if StringName(col["material"]) != &"":
-				shape_node.set_meta("vox_id", int(col["id"]))
-				shape_node.set_meta("vox_material",
-						StringName(col["material"]))
-			# Phase M: known feature tags ride along as vox_tag so the
-			# parkour controller can classify WHAT it grabbed, not just
-			# whether the wall is batched structure. Building-id owner
-			# tags are deliberately not stamped.
-			var feat_tag := String(col["tag"])
-			if feat_tag in ["awning", "balcony", "tower", "bhplant",
-					"bhladder", "bhexit", "scaffold", "cornice", "pilaster"]:
-				shape_node.set_meta("vox_tag", StringName(feat_tag))
-			_shape_nodes[int(col["id"])] = shape_node
-			body.add_child(shape_node)
+	if include_collision:
+		_flush_collision_into(parent, body_layer)
 	return stats
+
+
+## Add the batched city collision for a chunk that has entered the ACTIVE ring.
+## Warm chunks keep their visual mesh and batcher data but do not spend one
+## physics shape per generated cell while they are outside direct play.
+func enable_collision(body_layer := 1) -> void:
+	if _parent == null or not is_instance_valid(_parent):
+		return
+	var existing := _parent.get_node_or_null(NodePath("Static"))
+	if existing != null:
+		if existing.is_queued_for_deletion():
+			existing.free()
+		else:
+			return
+	_flush_collision_into(_parent, body_layer)
+
+
+## Release the heavy batched city collision when a chunk leaves ACTIVE.
+## Destructible metadata stays in the RefCounted batcher for persistence and
+## is rebuilt if the chunk becomes active again.
+func disable_collision() -> void:
+	_shape_nodes.clear()
+	if _parent == null or not is_instance_valid(_parent):
+		return
+	var body := _parent.get_node_or_null(NodePath("Static"))
+	if body != null:
+		if body.get_parent() != null:
+			body.get_parent().remove_child(body)
+		body.free()
+
+
+func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
+	_parent = parent
+	if _colliders.is_empty():
+		return
+	var existing := parent.get_node_or_null(NodePath("Static"))
+	if existing != null:
+		return
+	var body := StaticBody3D.new()
+	body.name = "Static"
+	body.collision_layer = body_layer
+	body.collision_mask = 0
+	parent.add_child(body)
+	for col in _colliders:
+		if _destroyed.has(int(col["id"])):
+			continue   # destroyed cell: no collider resurrection
+		var shape_node := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = col["size"]
+		shape_node.shape = shape
+		shape_node.position = col["pos"]
+		shape_node.basis = col["basis"]
+		# Only EXPLICITLY destructible materials carry a vox id:
+		# plain structural boxes (ground plane, floor slabs, stair
+		# ramps/landings) stay indestructible so nobody falls into
+		# an abyss through a blasted-out floor.
+		if StringName(col["material"]) != &"":
+			shape_node.set_meta("vox_id", int(col["id"]))
+			shape_node.set_meta("vox_material",
+					StringName(col["material"]))
+		# Phase M: known feature tags ride along as vox_tag so the
+		# parkour controller can classify WHAT it grabbed, not just
+		# whether the wall is batched structure. Building-id owner
+		# tags are deliberately not stamped.
+		var feat_tag := String(col["tag"])
+		if feat_tag in ["awning", "balcony", "tower", "bhplant",
+				"bhladder", "bhexit", "scaffold", "cornice", "pilaster"]:
+			shape_node.set_meta("vox_tag", StringName(feat_tag))
+		_shape_nodes[int(col["id"])] = shape_node
+		body.add_child(shape_node)
 
 
 # --- Destruction -------------------------------------------------------------

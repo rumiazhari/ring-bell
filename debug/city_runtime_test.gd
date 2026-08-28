@@ -68,7 +68,21 @@ func _run() -> void:
 	var doors := get_tree().get_nodes_in_group(&"doors")
 	_check("door entities exist", doors.size() > 0, str(doors.size()))
 	if doors.size() > 0:
-		var door: Node = doors[0]
+		# Prefer exterior door (edge != -1 / interior == false) for doorway ray
+		var door: Node = null
+		for cand in doors:
+			var m: Dictionary = cand.manifest if cand.get("manifest") != null else {}
+			if not bool(m.get("interior", false)):
+				door = cand
+				break
+		if door == null:
+			door = doors[0]
+		# Let the closed leaf's existing physics pose settle before ray check.
+		# The closed pose must remain physically anchored; do not unfreeze it
+		# merely to make this query pass.
+		await _wait(0.6)
+		await get_tree().physics_frame
+		await get_tree().physics_frame
 		var dm: Dictionary = door.manifest
 		# 4a. CLOSED: a ray through the doorway center hits the leaf.
 		var dpos: Vector3 = dm.get("position")
@@ -80,6 +94,7 @@ func _run() -> void:
 				dpos + inw * 1.4 + Vector3(0, 1.1, 0), 1)
 		q_closed.exclude = [player.get_rid()]
 		var hit_closed := space.intersect_ray(q_closed)
+		print("[CityRuntime][DBG] door=%s pos=%s yaw=%.1f leaf=%s hit_empty=%s collider=%s pos_hit=%s" % [str(dm.get("id")), str(dpos), rad_to_deg(yaw), str(door.call("_pivot_ref")), str(hit_closed.is_empty()), str(hit_closed.get("collider")), str(hit_closed.get("position"))])
 		var blocked_by_leaf: bool = not hit_closed.is_empty() \
 				and hit_closed.get("collider") == door.call("_pivot_ref")
 		_check("closed leaf blocks doorway ray", blocked_by_leaf,

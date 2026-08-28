@@ -79,6 +79,11 @@ func _ready() -> void:
 	_leaf.collision_mask = 1 | 16
 	_leaf.linear_damp = 6.0
 	_leaf.angular_damp = 4.5
+	# A closed door starts as a settled, physical leaf. Without an anchored
+	# initial pose, gravity can move the rigid body before the first interaction
+	# and leave the manifest aperture unblocked even though the door is CLOSED.
+	_leaf.rotation.y = 0.0
+	_leaf.freeze = true
 	add_child(_leaf)
 
 	var leaf_size := Vector3(w - 0.08, h - 0.04, 0.09)
