@@ -79,17 +79,28 @@ func _run_all() -> void:
 		_check("shuffled height %s" % p, is_equal_approx(tp.height_at(p), tp2.height_at(p)), str(p))
 
 	# 2. Alternate seeds produce material heightfield difference, same vocab & boundary rules
-	var diff_count := 0
+	var diff_count_a := 0
+	var diff_count_b := 0
 	for p in pts:
 		if not is_equal_approx(tp.height_at(p), tp_alt_a.height_at(p)):
-			diff_count += 1
-		# vocab check
+			diff_count_a += 1
+		if not is_equal_approx(tp.height_at(p), tp_alt_b.height_at(p)):
+			diff_count_b += 1
+		# vocab check for alt_a
 		_check("alt-a class vocab %s" % p, WorldConstants.TERRAIN_CLASSES.has(tp_alt_a.terrain_class_at(p)), str(tp_alt_a.terrain_class_at(p)))
 		_check("alt-a material vocab %s" % p, WorldConstants.SURFACE_MATERIALS.has(tp_alt_a.surface_material_at(p)), str(tp_alt_a.surface_material_at(p)))
-	_check("alternate seed height variation", diff_count >= 3, "diff %d/%d" % [diff_count, pts.size()])
-	# boundary rules same for alt seed (outside rejected)
-	_check("alt seed outside not buildable", not tp_alt_a.is_buildable(boundary_outside, Vector2(10, 10)), str(boundary_outside))
-	_check("alt seed inside buildable check finite", tp_alt_a.height_at(boundary_inside) == tp_alt_a.height_at(boundary_inside), "NaN")
+		# vocab check for alt_b
+		_check("alt-b class vocab %s" % p, WorldConstants.TERRAIN_CLASSES.has(tp_alt_b.terrain_class_at(p)), str(tp_alt_b.terrain_class_at(p)))
+		_check("alt-b material vocab %s" % p, WorldConstants.SURFACE_MATERIALS.has(tp_alt_b.surface_material_at(p)), str(tp_alt_b.surface_material_at(p)))
+	_check("alternate seed A height variation", diff_count_a >= 3, "diff %d/%d" % [diff_count_a, pts.size()])
+	_check("alternate seed B height variation", diff_count_b >= 3, "diff %d/%d" % [diff_count_b, pts.size()])
+	# boundary rules same for both alt seeds
+	_check("alt-a outside not buildable", not tp_alt_a.is_buildable(boundary_outside, Vector2(10, 10)), str(boundary_outside))
+	_check("alt-b outside not buildable", not tp_alt_b.is_buildable(boundary_outside, Vector2(10, 10)), str(boundary_outside))
+	_check("alt-a boundary inside finite", is_finite(tp_alt_a.height_at(boundary_inside)), str(tp_alt_a.height_at(boundary_inside)))
+	_check("alt-b boundary inside finite", is_finite(tp_alt_b.height_at(boundary_inside)), str(tp_alt_b.height_at(boundary_inside)))
+	# alt_b also has valid origin basin buildable (or at least finite)
+	_check("alt-b origin finite", is_finite(tp_alt_b.height_at(origin)), str(tp_alt_b.height_at(origin)))
 
 	# 3. Finite, normalized, slope limits, continuity
 	for p in pts + chunk_seams + landscape_seams:
@@ -106,11 +117,11 @@ func _run_all() -> void:
 	for base in chunk_seams:
 		var a := tp.height_at(base - Vector2(0.01, 0))
 		var b := tp.height_at(base + Vector2(0.01, 0))
-		_check("64m seam continuity near %s" % base, absf(a - b) < 0.5, "%f vs %f diff %f" % [a, b, absf(a-b)])
+		_check("64m seam continuity near %s" % base, absf(a - b) < 0.5, "%f vs %f diff %f" % [a, b, absf(a - b)])
 	for base in landscape_seams:
 		var a := tp.height_at(base - Vector2(0.01, 0))
 		var b := tp.height_at(base + Vector2(0.01, 0))
-		_check("256m seam continuity near %s" % base, absf(a - b) < 0.5, "%f vs %f" % [a, b, absf(a-b)])
+		_check("256m seam continuity near %s" % base, absf(a - b) < 0.5, "%f vs %f diff %f" % [a, b, absf(a - b)])
 	# exact lattice sample continuity: p exactly on cell boundary
 	var cell_p := Vector2(64, 0)
 	_check("exact chunk boundary finite", is_finite(tp.height_at(cell_p)), str(tp.height_at(cell_p)))
@@ -120,24 +131,49 @@ func _run_all() -> void:
 	_check("origin basin buildable 10x10", tp.is_buildable(origin, Vector2(10, 10)), "origin %s class %s slope %f" % [origin, tp.terrain_class_at(origin), tp.slope_at(origin)])
 	_check("outside boundary not buildable", not tp.is_buildable(boundary_outside, Vector2(10, 10)), str(boundary_outside))
 	_check("footprint crossing boundary not buildable", not tp.is_buildable(boundary_margin, Vector2(20, 20)), str(boundary_margin))
-	# find a steep point for rejection (search outward)
+	# deterministic cliff search: dense scan to guarantee cliff found
 	var steep_point := Vector2.INF
-	for x in range(-4000, 4000, 800):
-		for y in range(-4000, 4000, 800):
+	var cliff_point := Vector2.INF
+	# coarse grid plus refined search around high-slope areas
+	for x in range(-4000, 4001, 400):
+		for y in range(-4000, 4001, 400):
 			var q := Vector2(x, y)
-			if tp.slope_at(q) > WorldConstants.BUILDABLE_MAX_SLOPE_DEG + 5.0:
+			var s := tp.slope_at(q)
+			if s > WorldConstants.BUILDABLE_MAX_SLOPE_DEG + 5.0 and steep_point == Vector2.INF:
 				steep_point = q
+			if tp.terrain_class_at(q) == &"cliff" and cliff_point == Vector2.INF:
+				cliff_point = q
+			if steep_point != Vector2.INF and cliff_point != Vector2.INF:
 				break
-		if steep_point != Vector2.INF:
+		if steep_point != Vector2.INF and cliff_point != Vector2.INF:
 			break
+	# if not found, denser 100m grid
+	if steep_point == Vector2.INF or cliff_point == Vector2.INF:
+		for x in range(-3000, 3001, 200):
+			for y in range(-3000, 3001, 200):
+				var q := Vector2(x + 37.0, y - 19.0)
+				if steep_point == Vector2.INF and tp.slope_at(q) > WorldConstants.BUILDABLE_MAX_SLOPE_DEG + 2.0:
+					steep_point = q
+				if cliff_point == Vector2.INF and tp.terrain_class_at(q) == &"cliff":
+					cliff_point = q
+				if steep_point != Vector2.INF and cliff_point != Vector2.INF:
+					break
+			if steep_point != Vector2.INF and cliff_point != Vector2.INF:
+				break
+	# assertions: must have found both
+	_check("deterministic steep point found", steep_point != Vector2.INF, "no steep point in dense scan")
+	_check("deterministic cliff point found", cliff_point != Vector2.INF, "no cliff in dense scan")
 	if steep_point != Vector2.INF:
 		_check("steep point not buildable %s" % steep_point, not tp.is_buildable(steep_point, Vector2(10, 10)), "slope %f" % tp.slope_at(steep_point))
-		_check("steep allows with allow_cliff or high max_slope", tp.is_buildable(steep_point, Vector2(10, 10), {"max_slope_deg": 90.0, "allow_cliff": true}) or tp.terrain_class_at(steep_point) != &"cliff", str(steep_point))
-	else:
-		print("[TerrainTest] WARN: no steep point found for buildability negative test")
+		_check("steep allows with allow_cliff/high max_slope %s" % steep_point, tp.is_buildable(steep_point, Vector2(10, 10), {"max_slope_deg": 90.0, "allow_cliff": true}), str(steep_point))
+	if cliff_point != Vector2.INF:
+		_check("cliff class slope >= threshold %s" % cliff_point, tp.slope_at(cliff_point) >= WorldConstants.CLIFF_SLOPE_DEG - 0.01, "slope %f" % tp.slope_at(cliff_point))
+		_check("cliff material is rock %s" % cliff_point, tp.surface_material_at(cliff_point) == &"rock", str(tp.surface_material_at(cliff_point)))
+		_check("cliff not buildable by default %s" % cliff_point, not tp.is_buildable(cliff_point, Vector2(10, 10)), "slope %f" % tp.slope_at(cliff_point))
+		_check("cliff buildable with allow_cliff %s" % cliff_point, tp.is_buildable(cliff_point, Vector2(10, 10), {"allow_cliff": true, "max_slope_deg": 90.0}), str(cliff_point))
 	# constraints override
 	_check("max_slope override respected", not tp.is_buildable(origin, Vector2(10, 10), {"max_slope_deg": -1.0}), "should reject with -1 deg")
-	# class/material vocab
+	# class/material vocab for canonical
 	for p in pts:
 		_check("class vocab %s" % p, WorldConstants.TERRAIN_CLASSES.has(tp.terrain_class_at(p)), str(tp.terrain_class_at(p)))
 		_check("material vocab %s" % p, WorldConstants.SURFACE_MATERIALS.has(tp.surface_material_at(p)), str(tp.surface_material_at(p)))
@@ -150,15 +186,19 @@ func _run_all() -> void:
 		_check("WorldPlan material matches %s" % p, wp.surface_material_at(p) == tp.surface_material_at(p), str(p))
 		_check("WorldPlan buildable matches %s" % p, wp.is_buildable(p, Vector2(10,10)) == tp.is_buildable(p, Vector2(10,10)), str(p))
 
-	# 6. No mutation of CityPlan manifests
-	var plan_before := CityPlan.new()
-	var digest_before := _city_digest(plan_before)
+	# 6. No mutation of CityPlan manifests — same instance before/after + fresh canonical
+	var plan_same := CityPlan.new()
+	var digest_same_before := _city_digest(plan_same)
 	# exercise terrain heavily
 	for p in pts + chunk_seams:
 		_tp_exercise(tp, p)
-	var plan_after := CityPlan.new()
-	var digest_after := _city_digest(plan_after)
-	_check("CityPlan unchanged after terrain queries", digest_before == digest_after, "%d vs %d" % [digest_before, digest_after])
+		_tp_exercise(tp_alt_a, p)
+		_tp_exercise(tp_alt_b, p)
+	var digest_same_after := _city_digest(plan_same)
+	_check("CityPlan same-instance unchanged after terrain queries", digest_same_before == digest_same_after, "%d vs %d" % [digest_same_before, digest_same_after])
+	var plan_fresh := CityPlan.new()
+	var digest_fresh := _city_digest(plan_fresh)
+	_check("CityPlan fresh canonical matches", digest_same_before == digest_fresh, "%d vs %d" % [digest_same_before, digest_fresh])
 
 	# 7. terrain_profile edge cases
 	_check("profile empty on bad step", tp.terrain_profile(Rect2(0,0,10,10), 0).is_empty(), "")

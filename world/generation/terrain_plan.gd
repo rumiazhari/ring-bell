@@ -23,11 +23,14 @@ func _raw_height(p: Vector2) -> float:
 	var valley := -maxf(0.0, (1.0 - valley_dist / 800.0)) * 10.0
 	# add secondary valley noise to meander
 	valley += WorldSeed.sample_coherent_signed(p, &"valley", 600.0, seed_used) * 3.0 * maxf(0.0, 1.0 - valley_dist / 1200.0)
-	# 3. Medium rolling hills (320m cell, amp 15)
-	var f3 := WorldSeed.sample_coherent_signed(p, &"ridge", 320.0, seed_used) * 14.0
+	# 3. Medium rolling hills (280m cell, amp 18) — steeper than before to reach cliff slopes
+	var f3 := WorldSeed.sample_coherent_signed(p, &"ridge", 280.0, seed_used) * 18.0
 	# 4. Small surface variation (60m cell, within documented 2.5m amp)
 	var f4 := WorldSeed.sample_coherent_signed(p, &"soil", 60.0, seed_used) * 1.8
-	return f1 + basin_bias + valley + f3 + f4
+	# 5. Cliff/rough detail: high-frequency geology (48m cell, amp 9) — adds steep gradients outside basin
+	var cliff_factor := clampf((dist - 1200.0) / 1800.0, 0.0, 1.0)
+	var f5 := WorldSeed.sample_coherent_signed(p, &"geology", 48.0, seed_used) * 9.0 * cliff_factor
+	return f1 + basin_bias + valley + f3 + f4 + f5
 
 func _smoothed_height(p: Vector2) -> float:
 	var h := _raw_height(p)
@@ -79,9 +82,9 @@ func terrain_class_at(p: Vector2) -> StringName:
 	if slope >= WorldConstants.CLIFF_SLOPE_DEG:
 		return &"cliff"
 	var h := height_at(p)
-	if h >= 38.0:
+	if h >= WorldConstants.TERRAIN_UPLAND_HEIGHT_M:
 		return &"upland"
-	elif h >= 10.0:
+	elif h >= WorldConstants.TERRAIN_ROLLING_HEIGHT_M:
 		return &"rolling_hill"
 	else:
 		return &"basin"

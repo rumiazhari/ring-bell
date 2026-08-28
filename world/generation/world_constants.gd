@@ -36,6 +36,9 @@ const TERRAIN_MIN_HEIGHT_M := -12.0
 const TERRAIN_MAX_HEIGHT_M := 120.0
 # Small-frequency surface variation documented amplitude
 const TERRAIN_DETAIL_AMPLITUDE_M := 2.5
+# Terrain class height thresholds (authoritative; TerrainPlan must use these)
+const TERRAIN_UPLAND_HEIGHT_M := 38.0
+const TERRAIN_ROLLING_HEIGHT_M := 10.0
 # Buildability slope threshold (degrees)
 const BUILDABLE_MAX_SLOPE_DEG := 22.0
 # Cliff classification slope threshold
