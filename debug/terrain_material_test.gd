@@ -259,21 +259,39 @@ func _run_all() -> void:
 		if String(ch.name).begins_with("Terrain_"):
 			count_before += 1
 	var _s2 := TerrainChunkBuilder.materialize(parent, m)
-	# queue_free is deferred, so flush two frames before counting and fetch fresh node
+	# queue_free is deferred, so flush frames before counting. Find node via prefix (suffix may appear).
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var terrain_exists := parent.get_node_or_null(NodePath("Terrain_0_0")) != null
-	# count non-queued Terrain_* nodes (Godot may suffix duplicate names)
+	await get_tree().process_frame
+	var terrain_exists := false
+	var terrain_node_found: Node3D = null
+	for ch in parent.get_children():
+		if String(ch.name).begins_with("Terrain_") and not ch.is_queued_for_deletion():
+			terrain_exists = true
+			terrain_node_found = ch as Node3D
+			break
+	# count non-queued Terrain_* nodes
 	var count_after := 0
 	for ch in parent.get_children():
 		if String(ch.name).begins_with("Terrain_") and not ch.is_queued_for_deletion():
 			count_after += 1
 	# If deferred duplication edge causes 0 count but stats indicate success, accept.
-	var idempotent_ok := count_after == 1 or (count_after == 0 and int(_s2.get("terrain_colliders",0))==1)
+	var idempotent_ok := count_after == 1
 	_check("idempotent materialize exactly one after flush", idempotent_ok, "%d -> %d exists %s" % [count_before, count_after, terrain_exists])
-	# also verify exactly one TerrainMesh and one TerrainBody per terrain node
-	var terrain_children_ok := int(_s2.get("terrain_colliders",0))==1
-	_check("terrain children exactly one mesh one body", terrain_children_ok, "")
+	# also verify exactly one TerrainMesh and one TerrainBody and one shape per terrain node
+	var terrain_children_ok := false
+	if terrain_node_found != null:
+		var mcnt := 0
+		var bcnt := 0
+		var scnt := 0
+		for c in terrain_node_found.get_children():
+			if String(c.name) == "TerrainMesh": mcnt += 1
+			if String(c.name) == "TerrainBody":
+					bcnt += 1
+					for ss in c.get_children():
+						if ss is CollisionShape3D: scnt += 1
+			terrain_children_ok = (mcnt == 1 and bcnt == 1 and scnt == 1)
+	_check("terrain children exactly one mesh one body one shape", terrain_children_ok, "")
 	# seam on materialized adjacent chunks (mesh continuity)
 	var parent2 := Node3D.new()
 	add_child(parent2)
@@ -621,6 +639,26 @@ func _run_all() -> void:
 		if is_equal_approx(pos.y, -0.25) and is_equal_approx(size.y, 0.5) and is_equal_approx(size.x, 64.0):
 			has_ground_outer = true
 	_check("outer chunk beyond inner has no city ground box", not has_ground_outer, "")
+	# crossing chunk (5,0): rect 320-384 straddles 350 -> must have NO city ground (terrain owns)
+	var crossing_batcher := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(crossing_batcher, CityPlan.new(), Vector2i(5, 0))
+	var has_ground_crossing := false
+	for spec in crossing_batcher.specs():
+		var pos: Vector3 = spec["pos"]
+		var size: Vector3 = spec["size"]
+		if is_equal_approx(pos.y, -0.25) and is_equal_approx(size.y, 0.5) and is_equal_approx(size.x, 64.0):
+			has_ground_crossing = true
+	_check("crossing chunk 5,0 straddles inner has no ground", not has_ground_crossing, "")
+	# also negative crossing
+	var crossing_neg := MeshBatcher.new()
+	ChunkBuilder.fill_batcher(crossing_neg, CityPlan.new(), Vector2i(-6, 0))
+	var has_ground_neg := false
+	for spec in crossing_neg.specs():
+		var pos: Vector3 = spec["pos"]
+		var size: Vector3 = spec["size"]
+		if is_equal_approx(pos.y, -0.25) and is_equal_approx(size.y, 0.5) and is_equal_approx(size.x, 64.0):
+			has_ground_neg = true
+	_check("crossing chunk -6,0 beyond inner has no ground", not has_ground_neg, "")
 	# transition chunk (5,0): rect 320-384 closest =320 <350 should have ground? Actually 5*64=320, so 320 <350 true -> has ground. (6,0): 384 >=350 -> no ground. Check boundary exactly
 	var trans_batcher := MeshBatcher.new()
 	ChunkBuilder.fill_batcher(trans_batcher, CityPlan.new(), Vector2i(6, 0))
@@ -640,12 +678,12 @@ func _run_all() -> void:
 	var save := cm2.save_state()
 	_check("save no terrain field (fresh)", not save.has("terrain"), str(save.keys()))
 	cm2.queue_free()
-	# active ring budget: measured
-	var verts_active := 9 * 289
-	var tris_active := 9 * 512
+	# active ring budget: measured from actual ACTIVE chunks (cm still at origin last)
+	var verts_active := sum_active_verts
+	var tris_active := sum_active_tris
 	_check("active ring verts budget <10000", verts_active < 10000, str(verts_active))
 	_check("active ring tris budget <10000", tris_active < 10000, str(tris_active))
-	print("[TerrainMaterialTest] SUMMARY verts_active=%d tris_active=%d" % [verts_active, tris_active])
+	print("[TerrainMaterialTest] SUMMARY verts_active=%d tris_active=%d measured" % [verts_active, tris_active])
 
 func _city_digest(plan: CityPlan) -> int:
 	var h := 0

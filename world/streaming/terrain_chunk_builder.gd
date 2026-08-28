@@ -140,7 +140,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var indices: PackedInt32Array = manifest.get("indices", PackedInt32Array())
 	var existing := parent.get_node_or_null(NodePath("Terrain_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
-		existing.queue_free()
+		parent.remove_child(existing)
+		existing.free()
 	var terrain_node := Node3D.new()
 	terrain_node.name = "Terrain_%d_%d" % [coord.x, coord.y]
 	parent.add_child(terrain_node)

@@ -197,14 +197,23 @@ static func _owned_buildings(plan: CityPlan, rect: Rect2,
 # --- Ground ------------------------------------------------------------------
 
 static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
-	# Urban compatibility: outside the transition ring the terrain mesh is
-	# the sole ground surface. Flat city ground is emitted only for chunks
-	# whose closest point to origin is within URBAN_OUTER_M; beyond that the
-	# terrain covers the X/Z extent without a competing collider/mesh.
+	# Urban compatibility: flat city ground is ONLY the protected basin
+	# interior (< URBAN_INNER_M). Any chunk that straddles or lies beyond
+	# the inner radius has NO city flat box; terrain (height 0 inside inner
+	# via smoothstep) provides the ground there so no flat/terrain overlap
+	# competes across the transition band.
 	var s := float(WorldSeed.CHUNK_SIZE)
 	var rect := WorldSeed.chunk_rect(coord)
 	var closest := Vector2(clampf(0.0, rect.position.x, rect.end.x), clampf(0.0, rect.position.y, rect.end.y))
-	if closest.length() >= TerrainChunkBuilder.URBAN_OUTER_M:
+	if closest.length() >= TerrainChunkBuilder.URBAN_INNER_M:
+		return
+	# If any corner is outside inner radius, this chunk straddles the
+	# boundary — omit city ground and let terrain sole-own it.
+	var corners := [rect.position, Vector2(rect.end.x, rect.position.y), Vector2(rect.position.x, rect.end.y), rect.end]
+	var farthest := 0.0
+	for p in corners:
+		farthest = maxf(farthest, p.length())
+	if farthest >= TerrainChunkBuilder.URBAN_INNER_M:
 		return
 	# Subtle per-chunk tone variation keeps large surfaces from reading flat.
 	var tint := 0.94 + 0.06 * WorldSeed.unit_float("ground", [coord.x, coord.y])
