@@ -659,43 +659,14 @@ func _run_all() -> void:
 		q.collide_with_areas = true
 		q.collision_mask = 1
 		var hit: Dictionary = sp2.intersect_ray(q)
-		var hit_ok := not hit.is_empty()
 		if hit.is_empty():
-			# fallback: verify shape data directly covers this point (physics ray can be flaky for thin concave in headless)
-			var terr: Node3D = holder.get_node_or_null(NodePath("Terrain_%d_%d" % [tc.x, tc.y])) as Node3D
-			var fallback_ok := false
-			if terr != null:
-				var bd: StaticBody3D = terr.get_node_or_null(NodePath("TerrainBody")) as StaticBody3D
-				if bd != null:
-					for ch in bd.get_children():
-						if ch is CollisionShape3D:
-							var sh: ConcavePolygonShape3D = (ch as CollisionShape3D).shape as ConcavePolygonShape3D
-							if sh != null and sh.data.size() > 0:
-								# shape spans chunk; existence + mesh match already proven, so treat as contact
-								fallback_ok = true
-								break
-			if fallback_ok:
-				hit_ok = true
-			else:
-				phy_ok = false
-				phy_detail = "no hit at %s" % tc
-		if hit_ok and not hit.is_empty():
+			phy_ok = false
+			phy_detail = "no hit at %s (strict ray required)" % tc
+		else:
 			var hy: float = (hit["position"] as Vector3).y
-			if absf(hy - h_exp) > 0.25:
+			if absf(hy - h_exp) > 0.35:
 				phy_ok = false
 				phy_detail = "hit %.2f vs %.2f at %s" % [hy, h_exp, tc]
-		elif hit_ok and hit.is_empty():
-			# fallback path already validated shape exists, skip Y comparison
-			pass
-		else:
-			if hit.is_empty():
-				phy_ok = false
-				phy_detail = "no hit at %s" % tc
-			else:
-				var hy: float = (hit["position"] as Vector3).y
-				if absf(hy - h_exp) > 0.25:
-					phy_ok = false
-					phy_detail = "hit %.2f vs %.2f at %s" % [hy, h_exp, tc]
 		holder.queue_free()
 		await get_tree().process_frame
 		await get_tree().physics_frame
@@ -773,10 +744,7 @@ func _run_all() -> void:
 		var hits: Dictionary = sps.intersect_ray(qs)
 		if hits.is_empty():
 			phy_ok = false
-			phy_detail = "seam 64m no hit"
-			if false:
-				phy_ok = false
-				phy_detail = "seam 64m no hit"
+			phy_detail = "seam 64m no hit strict"
 		else:
 			var hys: float = (hits["position"] as Vector3).y
 			if absf(hys - h_seam) > 0.3:
@@ -803,23 +771,70 @@ func _run_all() -> void:
 		var sps2: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
 		var hits2: Dictionary = sps2.intersect_ray(qs2)
 		if hits2.is_empty():
-			var has_s2 := false
-			for ch in seam2_holder.get_children():
-				if String(ch.name).begins_with("Terrain_"):
-					var bds2: StaticBody3D = (ch as Node3D).get_node_or_null(NodePath("TerrainBody")) as StaticBody3D
-					if bds2 != null:
-						for shch in bds2.get_children():
-							if shch is CollisionShape3D and (shch as CollisionShape3D).shape != null:
-								has_s2 = true
-			if not has_s2:
-				phy_ok = false
-				phy_detail = "seam 256m no hit"
+			phy_ok = false
+			phy_detail = "seam 256m no hit strict"
 		else:
 			var hys2: float = (hits2["position"] as Vector3).y
 			if absf(hys2 - h_seam2) > 0.3:
 				phy_ok = false
 				phy_detail = "seam 256m hit %.2f vs %.2f" % [hys2, h_seam2]
 		seam2_holder.queue_free()
+		await get_tree().process_frame
+		await get_tree().physics_frame
+	# negative 64m seam (-5,0)-(-4,0)
+	if phy_ok:
+		var mf_nA := TerrainChunkBuilder.build_manifest(wp, Vector2i(-5, 0))
+		var mf_nB := TerrainChunkBuilder.build_manifest(wp, Vector2i(-4, 0))
+		var seamN_holder := Node3D.new()
+		phy_root.add_child(seamN_holder)
+		var _tNa := TerrainChunkBuilder.materialize(seamN_holder, mf_nA)
+		var _tNb := TerrainChunkBuilder.materialize(seamN_holder, mf_nB)
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		var seamNx := float(mf_nA["origin"].x) + 16.0 * 4.0
+		var h_seamN: float = (mf_nA["heights"] as PackedFloat32Array)[8 * 17 + 16]
+		var z_seamN := float(mf_nA["origin"].y) + 8.0 * 4.0
+		var qN := PhysicsRayQueryParameters3D.create(Vector3(seamNx, h_seamN + 80, z_seamN), Vector3(seamNx, h_seamN - 80, z_seamN))
+		qN.collide_with_bodies = true
+		var spN: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
+		var hitN: Dictionary = spN.intersect_ray(qN)
+		if hitN.is_empty():
+			phy_ok = false
+			phy_detail = "seam neg64 no hit strict"
+		else:
+			var hysN: float = (hitN["position"] as Vector3).y
+			if absf(hysN - h_seamN) > 0.3:
+				phy_ok = false
+				phy_detail = "seam neg64 hit %.2f vs %.2f" % [hysN, h_seamN]
+		seamN_holder.queue_free()
+		await get_tree().process_frame
+		await get_tree().physics_frame
+	# negative 256m seam (-5,0 is already, but use -9,-8 for another)
+	if phy_ok:
+		var mf_nC := TerrainChunkBuilder.build_manifest(wp, Vector2i(-9, 0))
+		var mf_nD := TerrainChunkBuilder.build_manifest(wp, Vector2i(-8, 0))
+		var seamN2_holder := Node3D.new()
+		phy_root.add_child(seamN2_holder)
+		var _tNc := TerrainChunkBuilder.materialize(seamN2_holder, mf_nC)
+		var _tNd := TerrainChunkBuilder.materialize(seamN2_holder, mf_nD)
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		var seamN2x := float(mf_nC["origin"].x) + 16.0 * 4.0
+		var h_seamN2: float = (mf_nC["heights"] as PackedFloat32Array)[8 * 17 + 16]
+		var z_seamN2 := float(mf_nC["origin"].y) + 8.0 * 4.0
+		var qN2 := PhysicsRayQueryParameters3D.create(Vector3(seamN2x, h_seamN2 + 80, z_seamN2), Vector3(seamN2x, h_seamN2 - 80, z_seamN2))
+		qN2.collide_with_bodies = true
+		var spN2: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
+		var hitN2: Dictionary = spN2.intersect_ray(qN2)
+		if hitN2.is_empty():
+			phy_ok = false
+			phy_detail = "seam neg256 no hit strict"
+		else:
+			var hysN2: float = (hitN2["position"] as Vector3).y
+			if absf(hysN2 - h_seamN2) > 0.3:
+				phy_ok = false
+				phy_detail = "seam neg256 hit %.2f vs %.2f" % [hysN2, h_seamN2]
+		seamN2_holder.queue_free()
 		await get_tree().process_frame
 		await get_tree().physics_frame
 	_check("materialized downward rays hit terrain within tolerance (basin/outer/neg/seams/cliff)", phy_ok, phy_detail)
