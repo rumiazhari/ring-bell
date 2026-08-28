@@ -1,7 +1,7 @@
 """Run one ring-bell headless suite via subprocess with file-redirected output.
 
 Usage: python tools/run_suite.py --<flag> [timeout_s]
-  flag: --import | --terraintest | --citytest | --cityruntime | --havoctest | --walkthrough | --smoke
+  flag: --import | --terrainmaterialtest | --terraintest | --citytest | --cityruntime | --havoctest | --walkthrough | --smoke
 Logs are written to out_<flag>.txt next to this script.
 Prints failure/pass summary lines plus the tail of the log and the exit code.
 

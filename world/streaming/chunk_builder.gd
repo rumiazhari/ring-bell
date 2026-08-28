@@ -197,7 +197,15 @@ static func _owned_buildings(plan: CityPlan, rect: Rect2,
 # --- Ground ------------------------------------------------------------------
 
 static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
+	# Urban compatibility: outside the transition ring the terrain mesh is
+	# the sole ground surface. Flat city ground is emitted only for chunks
+	# whose closest point to origin is within URBAN_OUTER_M; beyond that the
+	# terrain covers the X/Z extent without a competing collider/mesh.
 	var s := float(WorldSeed.CHUNK_SIZE)
+	var rect := WorldSeed.chunk_rect(coord)
+	var closest := Vector2(clampf(0.0, rect.position.x, rect.end.x), clampf(0.0, rect.position.y, rect.end.y))
+	if closest.length() >= TerrainChunkBuilder.URBAN_OUTER_M:
+		return
 	# Subtle per-chunk tone variation keeps large surfaces from reading flat.
 	var tint := 0.94 + 0.06 * WorldSeed.unit_float("ground", [coord.x, coord.y])
 	b.add_structural_box(Vector3((coord.x + 0.5) * s, -0.25, (coord.y + 0.5) * s),

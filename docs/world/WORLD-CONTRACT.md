@@ -72,4 +72,6 @@ This slice defines datums without materializing water, underground, or upper-cit
 - Materialization (`materialize(parent, manifest)`) creates one `TerrainMesh` + one `TerrainBody/ConcavePolygonShape` per chunk under `Terrain_X_Y`; mesh and collision share same X/Z extent.
 - Collision budget: at most 1 collider per chunk; active 3x3 ring = 9 terrain colliders max. Vertices 289 / chunk, triangles 512 / chunk.
 - Urban compatibility rule: deterministic radial mask centered at world origin — `URBAN_INNER_M=350` flat (height 0), transition `URBAN_OUTER_M=600` smoothstep to real terrain; owned by `TerrainChunkBuilder`; does not mutate `CityPlan`.
+- Ground ownership: flat city ground (`ChunkBuilder._ground`) is emitted only where chunk's closest point to origin < `URBAN_OUTER_M`; beyond that the terrain mesh/collider is the sole ground surface, preventing overlap/occlusion.
+- Terrain generation runs in the worker-safe data phase (`ChunkManager._thread_build`) with private `WorldPlan`; `terrain_gen_ms` measured inside worker, `terrain_mat_ms` on main thread; stats exposed via `ChunkManager` debug lines (`t_gen`, `t_mat`, `active terrain` filtered to ACTIVE state).
 - Generator version remains 2; terrain is additive, not serialized in saves.

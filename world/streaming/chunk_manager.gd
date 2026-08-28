@@ -49,6 +49,7 @@ var _total_loads := 0
 var _total_unloads := 0
 var _total_gen_ms := 0.0               # plan/batch data time (threaded)
 var _total_mat_ms := 0.0               # materialization time (main thread)
+var _total_terrain_gen_ms := 0.0        # terrain manifest generation (measured inside worker)
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
 
@@ -82,6 +83,7 @@ func reset_stream() -> void:
 	_terrain_triangles_total = 0
 	_terrain_colliders_total = 0
 	_terrain_mat_ms_total = 0.0
+	_total_terrain_gen_ms = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -156,33 +158,44 @@ func _launch_batch_jobs() -> void:
 		if _chunks.has(c) or _inflight.has(c):
 			continue
 		var batcher := MeshBatcher.new()
-		var terrain_manifest: Dictionary = {}
+		var holder: Dictionary = {}
 		if world_plan != null:
-			# Terrain manifest is pure and worker-safe (private WorldPlan)
-			var local_world := WorldPlan.new(world_plan.seed_used)
-			terrain_manifest = TerrainChunkBuilder.build_manifest(local_world, c)
+			holder["terrain"] = {}
+			holder["terrain_gen_ms"] = 0.0
+		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
 			var t0 := Time.get_ticks_usec()
-			_fill_job(batcher, c)
-			_inflight[c] = {"batcher": batcher, "terrain": terrain_manifest, "task_id": -1,
-					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0}
+			_thread_build(batcher, c, holder, seed_used)
+			var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+			var t_gen: float = holder.get("terrain_gen_ms", 0.0)
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen}
 		else:
 			var t0 := Time.get_ticks_usec()
 			var task_id := WorkerThreadPool.add_task(
-					_fill_job.bind(batcher, c), false,
+					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
-			_inflight[c] = {"batcher": batcher, "terrain": terrain_manifest, "task_id": task_id,
-					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0}
+			# gen_ms approximated by launch overhead; actual build time measured inside holder via _thread_build if needed
+			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
+					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0, "terrain_gen_ms": 0.0}
 
 
-## Pure plan->batcher data generation for ONE chunk.
-##
-## THREAD SAFETY: this job builds its own PRIVATE CityPlan copy instead of
-## sharing `plan`. Every CityPlan query is a pure function of the world seed,
-## so results are identical - but the lazy caches are plain Dictionaries, and
-## sharing them between a worker and main-thread queries (zombie road
-## sampling, spawn lookups) corrupted them under load. Private copies cost a
-## few ms of recompute and remove the entire locking problem.
+## Pure plan->batcher data generation for ONE chunk (worker-safe).
+## Builds city batcher + terrain manifest (if holder has terrain key) using private plans.
+func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, seed_used: int) -> void:
+	var local_plan := CityPlan.new()
+	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
+	if holder.has("terrain"):
+		var local_world := WorldPlan.new(seed_used)
+		var t0 := Time.get_ticks_usec()
+		var m := TerrainChunkBuilder.build_manifest(local_world, coord)
+		holder["terrain"] = m
+		holder["terrain_gen_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0
+	else:
+		holder["terrain"] = {}
+		holder["terrain_gen_ms"] = 0.0
+
+## Legacy helper kept for direct sync tests
 func _fill_job(batcher: MeshBatcher, coord: Vector2i) -> void:
 	var local_plan := CityPlan.new()
 	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
@@ -204,11 +217,19 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		# Stale job? Player moved on while the data was cooking.
 		if chebyshev_distance(c, pc) > UNLOAD_RADIUS or _chunks.has(c):
 			continue
-		_materialize(c, job["batcher"], job["terrain"], job["gen_ms"], pc)
+		var terrain_manifest: Dictionary = {}
+		var terrain_gen_ms: float = float(job.get("terrain_gen_ms", 0.0))
+		if job.has("terrain"):
+			terrain_manifest = job["terrain"]
+		elif job.has("terrain_holder"):
+			var holder: Dictionary = job["terrain_holder"]
+			terrain_manifest = holder.get("terrain", {})
+			terrain_gen_ms = float(holder.get("terrain_gen_ms", 0.0))
+		_materialize(c, job["batcher"], terrain_manifest, job["gen_ms"], pc, terrain_gen_ms)
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -268,6 +289,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rebuild_queued": false,
 		"gen_ms": gen_ms,
 		"mat_ms": float(stats["mat_ms"]),
+		"terrain_gen_ms": terrain_gen_ms,
 		"terrain_mat_ms": float(tstats.get("terrain_mat_ms", 0.0)),
 	}
 	_terrain_vertices_total += terrain_verts
@@ -277,6 +299,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
+	_total_terrain_gen_ms += terrain_gen_ms
 	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
@@ -300,6 +323,7 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_terrain_triangles_total -= int(rec.get("terrain_triangles", 0))
 		_terrain_colliders_total -= int(rec.get("terrain_colliders", 0))
 		_terrain_mat_ms_total -= float(rec.get("terrain_mat_ms", 0.0))
+		_total_terrain_gen_ms -= float(rec.get("terrain_gen_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -590,6 +614,9 @@ func avg_gen_ms() -> float:
 func avg_mat_ms() -> float:
 	return _total_mat_ms / maxf(1.0, float(_total_loads))
 
+func avg_terrain_gen_ms() -> float:
+	return _total_terrain_gen_ms / maxf(1.0, float(_total_loads))
+
 
 func is_resident(coord: Vector2i) -> bool:
 	return _chunks.has(coord)
@@ -613,14 +640,21 @@ func debug_lines() -> Array[String]:
 			doors_total(), buildings_total(), _records.size()])
 	lines.append("gen %.1f ms | materialize %.1f ms | resident chunks %d (cold %d)"
 			% [avg_gen_ms(), avg_mat_ms(), _chunks.size(), cold_count()])
-	lines.append("terrain verts %d | tris %d | colliders %d | t_mat %.1f ms | active terrain %d"
-			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, _terrain_mat_ms_total, terrain_active_count()])
+	lines.append("terrain verts %d | tris %d | colliders %d | t_gen %.1f ms | t_mat %.1f ms | active terrain %d"
+			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count()])
 	return lines
 
 func terrain_active_count() -> int:
 	var n := 0
 	for v in _chunks.values():
-		if int(v.get("terrain_colliders", 0)) > 0:
+		if v.get("state", "") == &"active" and int(v.get("terrain_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func terrain_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("terrain_colliders", 0)) > 0:
 			n += 1
 	return n
 
