@@ -1,111 +1,64 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_id": "ring-bell",
+  "controller": "ring-bell-autopilot-v2",
+  "board": "ring-bell-v2",
   "repo_path": "C:/Vibe Code project/Godot Project/ring-bell",
+  "enabled": false,
   "phase": "paused",
-  "revision": 1,
-  "baseline": {
-    "legacy_state": "AUTOPILOT_STATE.md",
-    "legacy_last_iteration": 49,
-    "commit": "5202744",
-    "branch": "master",
-    "origin_aligned": true
+  "pause_reason": "Configured only; explicit user start is required.",
+  "configured_from_commit": "cbe711a1a245df630cf1f1874b873b60355cbab1",
+  "legacy_archive": "C:/junk/ring-bell-autopilot-legacy-20260829-000738",
+  "grand_plan": {
+    "path": ".hermes/autopilot/GRAND_PLAN.md",
+    "source_path": ".hermes/plans/2026-08-27_224936-ring-bell-macro-world-plan.md",
+    "source_sha256": "06bf72c031b2bbf94bc162825388711e4c3f47e0b55a7f78a5dcd76072bfbca8",
+    "principle": "Maximize sustained player enjoyment."
   },
-  "milestone": {
-    "id": "P1-INTERIORS-TRAVERSAL",
-    "title": "Playable semantic interiors and reliable traversal loop",
-    "status": "paused_for_workflow_repair"
+  "roles": {
+    "architect_reviewer": {
+      "profile": "lunaringbell",
+      "model": "gpt-5.6-luna",
+      "provider": "openai-codex",
+      "reasoning_effort": "max"
+    },
+    "builder": {
+      "profile": "museringbell",
+      "model": "gpt-5.6-luna",
+      "provider": "openai-codex",
+      "reasoning_effort": "max"
+    }
   },
-  "spec": {
-    "path": ".hermes/autopilot/specs/SPEC-001.md",
-    "sha256": "c345afd4e24513305ab19a64c955268bd6056af927ee6f56358397049e9a1ce9",
-    "approved": true,
-    "approved_by": "lunaringbell"
+  "policy": {
+    "max_revision_rounds": 2,
+    "minor_findings": "defer_to_next_design",
+    "principal_findings": "architect_designs_bounded_revision",
+    "revision_limit_outcome": "architect_recovery_cycle",
+    "post_acceptance": "next_architect_cycle",
+    "one_active_writer": true,
+    "review_link_is_nonblocking": true
   },
-  "acceptance_criteria": [
-    "InteriorPlan deterministically validates residential and retail manifests across the canonical and alternate seeds",
-    "Every eligible building has canonical use metadata, required rooms, a service/toilet room per floor, and a connected room graph",
-    "Real streamed residential and retail buildings materialize collision-backed partitions, apertures, room-scoped furniture, internal doors, and usable stations",
-    "Bed/rest changes fatigue once without advancing time; retail storage grants exactly one allowed item and persists consumption",
-    "Internal/exterior door physics preserve closed blocking and open-leaf collision while allowing the aperture to be traversed",
-    "The no-teleport walkthrough enters, traverses rooms, climbs every storey, reaches the roof, returns, exits, closes, and re-blocks the entrance",
-    "City runtime proves deterministic entity ownership, floor-gate behavior, streaming, and save/load persistence for doors and stations",
-    "citytest, smoke, cityruntime, havoctest, and walkthrough each print finished with 0 failure(s)"
-  ],
-  "completed_items": [
-    "P0 prototype survivor, zombie, quest, dialogue, save/load, and HUD systems",
-    "P0.5 deterministic streamed city foundation",
-    "P0.5 generated buildings, roofs, stairs, parkour ledges, lighting, and Prague facade detail phases through AI",
-    "Baseline citytest and smoke suites pass with zero reported failures",
-    "Pilot baseline and current gameplay gate failures were reproduced and recorded in SPEC-001"
-  ],
-  "remaining_items": [
-    "Deterministic semantic residential/retail room plans and connected interior partitions",
-    "Real interior traversal with internal doors and player-facing bed/retail station value",
-    "Reliable no-teleport traversal proof across generated architecture",
-    "Move the P0 narrative cast into the generated city",
-    "Navigation/pathfinding and zombie active-chunk integration",
-    "Persistence delta application on chunk rebuild",
-    "Measured performance and LOD/occlusion tuning"
-  ],
-  "known_bugs": [
-    "Zombie sight ignores walls",
-    "No NavigationServer pathfinding yet; zombies steer and sidestep",
-    "Legacy narrative cast remains outside the generated city",
-    "Placeholder geometry and limited player-facing interior readability remain",
-    "cityruntime has a closed-door physics assertion failure",
-    "walkthrough cannot currently cross the open entrance, climb, descend, or exit",
-    "havoctest has a known-tree clear-shot probe failure"
-  ],
-  "architectural_decisions": [
-    "WorldState owns persistent simulation facts",
-    "CityPlan is pure and immutable; chunks materialize deterministic geometry",
-    "Buildings have stable global IDs and belong to their footprint-center chunk",
-    "Visual facade details must not become a substitute for gameplay milestones",
-    "AUTOPILOT_STATE.json is canonical project-control state; Kanban is execution state; Git is implementation state",
-    "InteriorPlan is pure and deterministic; BuildingBuilder owns static room geometry; ChunkBuilder owns dynamic doors/stations",
-    "Existing Door, ChunkManager, WorldState, InteriorProbe, and ParkourController contracts are extended additively rather than replaced",
-    "Only residential and retail interior programs are authorized in this milestone; facade cosmetics and new autoloads are prohibited"
-  ],
-  "current_builder_task": "Ring Bell build P1-INTERIORS-TRAVERSAL revision 1: integrate InteriorPlan into CityPlan/BuildingBuilder/ChunkBuilder, add collision-backed partitions and real InteriorStation/inner Door entities with WorldState persistence, repair the existing physical door and no-teleport walkthrough failures, add behavioral citytest/cityruntime coverage, and run every SPEC-001 gate. Assignee museringbell; 2 hour runtime; 3 retries; implementation only within SPEC-001; request Luna review on completion.",
-  "last_successful_test": {
-    "commands": [
-      "python tools/run_suite.py --citytest 300",
-      "python tools/run_suite.py --smoke 120"
-    ],
-    "result": "citytest and smoke finished with 0 failure(s)",
-    "notes": "Latest review execution: import passed; cityruntime finished with 1 failure (closed leaf blocks doorway ray), havoctest with 1 failure (clear-shot prop probe), and walkthrough with 4 failures (interior route, climb, descent, exit). These remain blocking milestone defects. Full evidence: .hermes/autopilot/reports/REVIEW-001.md"
+  "current": {
+    "cycle": 1,
+    "revision_round": 0,
+    "milestone_id": null,
+    "milestone_title": null,
+    "spec_path": null,
+    "spec_sha256": null,
+    "acceptance_criteria": [],
+    "required_tests": [],
+    "gameplay_value": null,
+    "architect_task_id": null,
+    "build_task_id": null,
+    "build_handoff_run": null,
+    "review_task_id": null
   },
-  "last_luna_review": {
-    "revision": 1,
-    "result": "continuation_authorized_partial_implementation",
-    "notes": [
-      "Continuation is correct: 6c36a6c adds only an unintegrated plan-layer InteriorPlan and 14f05bc adds canonical CityPlan use metadata; the P1 player-facing loop is not implemented or accepted",
-      "SPEC-001 criteria 1-10 remain the contract; criteria 4-8 are not met and the latest cityruntime/havoctest/walkthrough failures must be fixed rather than reclassified",
-      "Next bounded builder task is recorded in current_builder_task; no new roadmap milestone or facade work is authorized",
-      "Review evidence: .hermes/autopilot/reports/REVIEW-001.md"
-    ]
-  },
-  "escalation": {
-    "required": false,
-    "reason": "",
-    "same_failure_count": 0,
-    "failure_signatures": []
-  },
-  "orchestration": {
-    "paused": true,
-    "pause_reason": "User requested stop and workflow repair after duplicate worker redispatch.",
-    "build_task_id": "t_123c4a78",
-    "review_task_id": null,
-    "last_muse_handoff_run": 16,
-    "build_attempt": 1,
-    "active_actor": null,
-    "resume_requires": "Review and explicitly resume the repaired Luna/Muse lifecycle; do not dispatch the archived or legacy cards."
-  },
-  "lease": {
-    "owner": null,
-    "task_id": null,
-    "lock_path": ".hermes/autopilot/locks/pilot.lock",
-    "expires_at": null
-  }
+  "deferred_findings": [],
+  "accepted_milestones": [],
+  "history": [
+    {
+      "event": "v2_configured_paused",
+      "detail": "Fresh board, deterministic controller, nonblocking review links, and bounded revisions configured without starting a worker."
+    }
+  ]
 }

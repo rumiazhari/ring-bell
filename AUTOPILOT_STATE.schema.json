@@ -1,25 +1,100 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ring Bell Autopilot State v2",
   "type": "object",
-  "required": ["schema_version", "project_id", "repo_path", "phase", "revision", "milestone", "spec", "acceptance_criteria", "completed_items", "remaining_items", "known_bugs", "architectural_decisions", "current_builder_task", "last_successful_test", "last_luna_review", "escalation", "lease"],
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "project_id",
+    "controller",
+    "board",
+    "repo_path",
+    "enabled",
+    "phase",
+    "grand_plan",
+    "roles",
+    "policy",
+    "current",
+    "deferred_findings",
+    "accepted_milestones",
+    "history"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "project_id": {"const": "ring-bell"},
-    "repo_path": {"type": "string"},
-    "phase": {"enum": ["needs_architect", "authorized_build", "building", "review", "blocked", "paused", "accepted"]},
-    "revision": {"type": "integer", "minimum": 0},
-    "milestone": {"type": "object", "required": ["id", "title", "status"]},
-    "spec": {"type": "object", "required": ["path", "sha256", "approved", "approved_by"]},
-    "acceptance_criteria": {"type": "array"},
-    "completed_items": {"type": "array", "items": {"type": "string"}},
-    "remaining_items": {"type": "array", "items": {"type": "string"}},
-    "known_bugs": {"type": "array", "items": {"type": "string"}},
-    "architectural_decisions": {"type": "array", "items": {"type": "string"}},
-    "current_builder_task": {"type": ["string", "null"]},
-    "last_successful_test": {"type": "object"},
-    "last_luna_review": {"type": "object"},
-    "escalation": {"type": "object", "required": ["required", "reason", "same_failure_count", "failure_signatures"]},
-    "lease": {"type": "object", "required": ["owner", "task_id", "lock_path", "expires_at"]}
+    "controller": {"const": "ring-bell-autopilot-v2"},
+    "board": {"const": "ring-bell-v2"},
+    "repo_path": {"const": "C:/Vibe Code project/Godot Project/ring-bell"},
+    "enabled": {"type": "boolean"},
+    "phase": {
+      "enum": [
+        "paused",
+        "needs_architect",
+        "architecting",
+        "ready_to_build",
+        "building",
+        "awaiting_review",
+        "reviewing",
+        "revision_ready"
+      ]
+    },
+    "grand_plan": {
+      "type": "object",
+      "required": ["path", "source_path", "source_sha256", "principle"]
+    },
+    "roles": {
+      "type": "object",
+      "required": ["architect_reviewer", "builder"]
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "max_revision_rounds",
+        "minor_findings",
+        "principal_findings",
+        "revision_limit_outcome",
+        "post_acceptance",
+        "one_active_writer",
+        "review_link_is_nonblocking"
+      ],
+      "properties": {
+        "max_revision_rounds": {"const": 2},
+        "one_active_writer": {"const": true},
+        "review_link_is_nonblocking": {"const": true}
+      }
+    },
+    "current": {
+      "type": "object",
+      "required": [
+        "cycle",
+        "revision_round",
+        "milestone_id",
+        "milestone_title",
+        "spec_path",
+        "spec_sha256",
+        "acceptance_criteria",
+        "required_tests",
+        "gameplay_value",
+        "architect_task_id",
+        "build_task_id",
+        "build_handoff_run",
+        "review_task_id"
+      ],
+      "properties": {
+        "cycle": {"type": "integer", "minimum": 1},
+        "revision_round": {"type": "integer", "minimum": 0, "maximum": 2},
+        "acceptance_criteria": {"type": "array", "maxItems": 7},
+        "required_tests": {"type": "array", "maxItems": 8}
+      }
+    },
+    "deferred_findings": {"type": "array"},
+    "accepted_milestones": {"type": "array"},
+    "history": {"type": "array"}
   },
-  "additionalProperties": false
+  "allOf": [
+    {
+      "if": {"properties": {"phase": {"const": "paused"}}},
+      "then": {"properties": {"enabled": {"const": false}}}
+    }
+  ]
 }

@@ -1,80 +1,51 @@
-# Ring Bell agent rules
+# Ring Bell Agent Rules
 
-This repository is the Ring Bell pilot for a strict Luna → Muse workflow.
-Read these files before any work:
+## Canonical checkout
 
-1. `AUTOPILOT_POLICY.md`
-2. `AUTOPILOT_STATE.json`
-3. `ARCHITECTURE.md`
-4. `DEVELOPMENT.md`
-5. `TODO.md`
+`C:/Vibe Code project/Godot Project/ring-bell`
 
-## Role routing
+Never use a OneDrive copy.
 
-- `lunaringbell` is the architect, game designer, technical director, and
-  reviewer. Luna chooses milestones, designs interfaces, defines acceptance
-  criteria, and reviews actual implementation. Luna must not edit production
-  code; Luna may edit only control-plane/spec/review files.
-- `museringbell` is the implementation engineer and QA worker. Muse may edit
-  production code only for the currently approved Kanban task. Muse must not
-  choose the next milestone, create roadmap work, or turn a completed task
-  into cosmetic busywork.
-- Hermes Kanban is the durable handoff and execution state. Use its structured
-  task/review transitions, not Bot Chat prose, for authority.
+## Read first
 
-## Kanban lifecycle safety
+Every autonomous role must read:
 
-- A Muse implementation card stays in `review` after `kanban_request_review`.
-  It must never be reassigned or reused as a Luna card.
-- The supervisor creates a separate idempotent Luna review card linked to the
-  Muse card. `kanban.review_dispatch` is disabled for this pilot so a review
-  status can never accidentally respawn the builder.
-- Every card explicitly pins its model/provider: Luna is
-  `gpt-5.6-luna`/`openai-codex`; Muse is
-  `muse-spark-1.2-contributor`/`opencode-go`.
-- Only one Ring Bell task may be `ready` or `running` for this checkout at a
-  time. If an active task already owns the checkout, the supervisor must not
-  create another one.
+1. `AUTOPILOT_STATE.json`
+2. `AUTOPILOT_POLICY.md`
+3. `.hermes/autopilot/GRAND_PLAN.md`
+4. the current approved specification or revision specification
+5. `ARCHITECTURE.md`, `DEVELOPMENT.md`, and relevant source/tests
+6. current Git status and recent commits
 
-## Scope guard
+`AUTOPILOT_STATE.json` is the only machine state. Do not recreate or use `AUTOPILOT_STATE.md`.
 
-Before editing, confirm that the requested change is in the current approved
-specification and that `AUTOPILOT_STATE.json` is in `authorized_build` or
-`building`. If the next task is ambiguous, the state is stale, or a change
-requires architectural redesign, stop and escalate to Luna.
+## Hard role boundary
 
-The current user directive prioritizes functional interiors, traversal,
-world/gameplay systems, persistence, and player-facing value over additional
-Prague facade ornament. Do not add another facade-only detail unless Luna's
-current specification explicitly authorizes it as part of a higher-value
-system.
+- `lunaringbell` is architect and reviewer. It designs the entire project and reviews implementation, but never edits production code/tests/scenes/assets/project settings.
+- `museringbell` is builder. It implements only the approved design, but never selects milestones or edits control state.
+- Both use `gpt-5.6-luna` via `openai-codex` with `agent.reasoning_effort=max` (Luna Ultra mapping).
+- `tools/ring_bell_autopilot_v2.py` alone creates lifecycle tasks and mutates state.
 
-## Test and Git gates
+## Construction discipline
 
-Use the repository harness:
+- One active writer only.
+- Strict TDD for new behavior and bug fixes.
+- Run every gate named by the active specification through `tools/run_suite.py`.
+- Judge Godot gates by their documented `finished with N failure(s)` marker; a Windows shutdown code is acceptable only when the required success marker is present.
+- Never weaken assertions, hide errors, accept pending/inflight work as completed behavior, or replace ordinary movement with teleportation when the specification requires player traversal.
+- Preserve all unrelated dirty files and user work. Never reset or clean the checkout.
+- Never delete files; move unwanted artifacts into project `junk/`.
+- Commit coherent verified construction and include exact changed files, commits, tests, player-facing evidence, and residual risk in the review handoff.
 
-```text
-python tools/run_suite.py --citytest 120
-python tools/run_suite.py --smoke 120
-python tools/run_suite.py --cityruntime 180
-python tools/run_suite.py --havoctest 180
-python tools/run_suite.py --walkthrough 240
-```
+## Review discipline
 
-Judge success by `finished with 0 failure(s)`. The documented Windows
-`3221225477` shutdown code is acceptable only when the log contains that
-zero-failure line. Do not weaken assertions or hide errors.
+- Review the actual repository and evidence, not prose alone.
+- Minor findings are deferred to a later related milestone.
+- Only principal design conflicts justify direct revision.
+- Maximum direct revisions: two.
+- After the cap, use a fresh recovery architecture cycle rather than a third patch loop.
+- Review cards are independent nonblocking cards; never add a Kanban parent dependency to the source build.
 
-Commit coherent stable implementation units with concise messages. Before a
-new milestone, the previous approved checkpoint must be committed. Never use
-historical OneDrive paths. Never delete files; move unwanted artifacts into a
-project `junk/` directory.
+## No-start gate
 
-## Crash and escalation protocol
-
-Long work must keep the Kanban heartbeat alive and preserve useful commits.
-If the same failure persists through three serious repairs, or if the fix
-would alter a core API/architecture, use a structured Luna escalation rather
-than brute-forcing. On completion, record changed files, commit(s), tests,
-acceptance results, residual risks, and next decision in the Kanban handoff and
-`AUTOPILOT_STATE.json`/`.hermes/autopilot/reports/` as appropriate.
+If `enabled=false` or `phase=paused`, do not create, promote, claim, dispatch, implement, review, or resume any Ring Bell task. Only validation/audit/configuration is allowed until the user explicitly starts v2.
