@@ -637,7 +637,7 @@ func _run_all() -> void:
 	var phy_ok := true
 	var phy_detail := ""
 	# helper: materialize one chunk into phy_root, ray at its center, compare hit Y
-	for tc in [Vector2i(8, 0), Vector2i(15, 0), Vector2i(-5, -5)]:
+	for tc in [Vector2i(0, 0), Vector2i(8, 0), Vector2i(15, 0), Vector2i(-5, -5)]:
 		var mf := TerrainChunkBuilder.build_manifest(wp, tc)
 		var holder := Node3D.new()
 		phy_root.add_child(holder)
@@ -670,10 +670,8 @@ func _run_all() -> void:
 		holder.queue_free()
 		await get_tree().process_frame
 		await get_tree().physics_frame
-		if not phy_ok:
-			break
 	# cliff ray if available (search outer)
-	if phy_ok:
+	if true:
 		var cliff_c := Vector2i(30, 20)
 		var found_c := false
 		for cx in [-40, -25, -15, 15, 25, 40]:
@@ -726,7 +724,7 @@ func _run_all() -> void:
 				await get_tree().process_frame
 				await get_tree().physics_frame
 	# 64m seam ray between (10,0) and (11,0) - materialize both, ray at seam line
-	if phy_ok:
+	if true:
 		var mf_a := TerrainChunkBuilder.build_manifest(wp, Vector2i(10, 0))
 		var mf_b := TerrainChunkBuilder.build_manifest(wp, Vector2i(11, 0))
 		var seam_holder := Node3D.new()
@@ -754,7 +752,7 @@ func _run_all() -> void:
 		await get_tree().process_frame
 		await get_tree().physics_frame
 	# 256m seam ray between (3,0)-(4,0)
-	if phy_ok:
+	if true:
 		var mf_c2 := TerrainChunkBuilder.build_manifest(wp, Vector2i(3, 0))
 		var mf_d := TerrainChunkBuilder.build_manifest(wp, Vector2i(4, 0))
 		var seam2_holder := Node3D.new()
@@ -782,7 +780,7 @@ func _run_all() -> void:
 		await get_tree().process_frame
 		await get_tree().physics_frame
 	# negative 64m seam (-5,0)-(-4,0)
-	if phy_ok:
+	if true:
 		var mf_nA := TerrainChunkBuilder.build_manifest(wp, Vector2i(-5, 0))
 		var mf_nB := TerrainChunkBuilder.build_manifest(wp, Vector2i(-4, 0))
 		var seamN_holder := Node3D.new()
@@ -810,7 +808,7 @@ func _run_all() -> void:
 		await get_tree().process_frame
 		await get_tree().physics_frame
 	# negative 256m seam (-5,0 is already, but use -9,-8 for another)
-	if phy_ok:
+	if true:
 		var mf_nC := TerrainChunkBuilder.build_manifest(wp, Vector2i(-9, 0))
 		var mf_nD := TerrainChunkBuilder.build_manifest(wp, Vector2i(-8, 0))
 		var seamN2_holder := Node3D.new()
