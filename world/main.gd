@@ -107,6 +107,10 @@ func _ready() -> void:
 		var tester6: Node = load("res://debug/terrain_test.gd").new()
 		tester6.name = "TerrainTest"
 		add_child(tester6)
+	elif user_args.has("--terrainmaterialtest"):
+		var tester6b: Node = load("res://debug/terrain_material_test.gd").new()
+		tester6b.name = "TerrainMaterialTest"
+		add_child(tester6b)
 	elif user_args.has("--doortest"):
 		var tester7: Node = load("res://debug/temp_door_probe.gd").new()
 		tester7.name = "TempDoorProbe"
@@ -175,10 +179,11 @@ func _spawn_survivor(entry: Dictionary, saved_state: Dictionary) -> Survivor:
 
 func _build_streamed_city() -> void:
 	city_plan = CityPlan.new()
+	var wplan := WorldPlan.new(city_plan.seed_used)
 	chunk_manager = ChunkManager.new()
 	chunk_manager.name = "Chunks"
 	add_child(chunk_manager)
-	chunk_manager.setup(city_plan)
+	chunk_manager.setup_world(city_plan, wplan)
 
 
 func _spawn_city_population() -> void:

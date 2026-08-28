@@ -30,7 +30,12 @@ const STREAM_UPDATE_INTERVAL := 0.2      # seconds between full ring recalcs
 const MAX_INFLIGHT_BUILDS := 2           # concurrent worker-thread batch jobs
 
 var plan: CityPlan
+var world_plan: WorldPlan
 var synchronous := false                # tests: build inline, no workers
+var _terrain_vertices_total := 0
+var _terrain_triangles_total := 0
+var _terrain_colliders_total := 0
+var _terrain_mat_ms_total := 0.0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -50,6 +55,13 @@ var _player_chunk_changed := true
 
 func setup(city_plan: CityPlan) -> void:
 	plan = city_plan
+	if world_plan == null:
+		world_plan = WorldPlan.new(city_plan.seed_used if city_plan != null else WorldSeed.get_world_seed())
+	add_to_group(&"chunk_manager")
+
+func setup_world(city_plan: CityPlan, wplan: WorldPlan) -> void:
+	plan = city_plan
+	world_plan = wplan
 	add_to_group(&"chunk_manager")
 
 
@@ -66,6 +78,10 @@ func reset_stream() -> void:
 		if task_id >= 0:
 			WorkerThreadPool.wait_for_task_completion(task_id)
 	_inflight.clear()
+	_terrain_vertices_total = 0
+	_terrain_triangles_total = 0
+	_terrain_colliders_total = 0
+	_terrain_mat_ms_total = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -134,25 +150,28 @@ func _enqueue_missing(desired: Dictionary, pc: Vector2i) -> void:
 		return da < db if da != db else a.y * 131 + a.x < b.y * 131 + b.x)
 
 
-## Hand up to MAX_INFLIGHT_BUILDS queued chunks to worker threads (pure data).
 func _launch_batch_jobs() -> void:
 	while not _pending.is_empty() and _inflight.size() < MAX_INFLIGHT_BUILDS:
 		var c: Vector2i = _pending.pop_front()
 		if _chunks.has(c) or _inflight.has(c):
 			continue
 		var batcher := MeshBatcher.new()
+		var terrain_manifest: Dictionary = {}
+		if world_plan != null:
+			# Terrain manifest is pure and worker-safe (private WorldPlan)
+			var local_world := WorldPlan.new(world_plan.seed_used)
+			terrain_manifest = TerrainChunkBuilder.build_manifest(local_world, c)
 		if synchronous:
 			var t0 := Time.get_ticks_usec()
 			_fill_job(batcher, c)
-			_inflight[c] = {"batcher": batcher, "task_id": -1,
+			_inflight[c] = {"batcher": batcher, "terrain": terrain_manifest, "task_id": -1,
 					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0}
 		else:
 			var t0 := Time.get_ticks_usec()
 			var task_id := WorkerThreadPool.add_task(
 					_fill_job.bind(batcher, c), false,
 					"chunk_%d_%d" % [c.x, c.y])
-			# gen_ms refined at collection time (add_task overhead excluded).
-			_inflight[c] = {"batcher": batcher, "task_id": task_id,
+			_inflight[c] = {"batcher": batcher, "terrain": terrain_manifest, "task_id": task_id,
 					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0}
 
 
@@ -185,10 +204,10 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		# Stale job? Player moved on while the data was cooking.
 		if chebyshev_distance(c, pc) > UNLOAD_RADIUS or _chunks.has(c):
 			continue
-		_materialize(c, job["batcher"], job["gen_ms"], pc)
+		_materialize(c, job["batcher"], job["terrain"], job["gen_ms"], pc)
 
 
-func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
+func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
 		pc: Vector2i) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
@@ -212,6 +231,12 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 			dead_doors[did] = true
 	# Exactly ONE materialization: flush meshes/static body + doors + props.
 	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors)
+	# Materialize terrain under same chunk if manifest present
+	var tstats := {}
+	if not terrain_manifest.is_empty():
+		var chunk_node := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node != null:
+			tstats = TerrainChunkBuilder.materialize(chunk_node, terrain_manifest)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -222,6 +247,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 					(child as Door).load_state(dstates[String(child.name)])
 	var dist := chebyshev_distance(coord, pc)
 	var state: StringName = &"active" if dist <= ACTIVE_RADIUS else &"warm"
+	var terrain_verts := int(tstats.get("terrain_vertices", 0))
+	var terrain_tris := int(tstats.get("terrain_triangles", 0))
+	var terrain_cols := int(tstats.get("terrain_colliders", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -229,6 +257,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 		"doors": int(stats["doors"]),
 		"buildings": int(stats["buildings"]),
 		"props": int(stats.get("props", 0)),
+		"terrain_vertices": terrain_verts,
+		"terrain_triangles": terrain_tris,
+		"terrain_colliders": terrain_cols,
+		"terrain_manifest": terrain_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -236,10 +268,16 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, gen_ms: float,
 		"rebuild_queued": false,
 		"gen_ms": gen_ms,
 		"mat_ms": float(stats["mat_ms"]),
+		"terrain_mat_ms": float(tstats.get("terrain_mat_ms", 0.0)),
 	}
+	_terrain_vertices_total += terrain_verts
+	_terrain_triangles_total += terrain_tris
+	_terrain_colliders_total += terrain_cols
+	_terrain_mat_ms_total += float(tstats.get("terrain_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
+	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
 			% [coord, gen_ms, float(stats["mat_ms"]), state])
@@ -257,6 +295,11 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
 			node.queue_free()
+		var rec: Dictionary = _chunks[c]
+		_terrain_vertices_total -= int(rec.get("terrain_vertices", 0))
+		_terrain_triangles_total -= int(rec.get("terrain_triangles", 0))
+		_terrain_colliders_total -= int(rec.get("terrain_colliders", 0))
+		_terrain_mat_ms_total -= float(rec.get("terrain_mat_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -570,7 +613,16 @@ func debug_lines() -> Array[String]:
 			doors_total(), buildings_total(), _records.size()])
 	lines.append("gen %.1f ms | materialize %.1f ms | resident chunks %d (cold %d)"
 			% [avg_gen_ms(), avg_mat_ms(), _chunks.size(), cold_count()])
+	lines.append("terrain verts %d | tris %d | colliders %d | t_mat %.1f ms | active terrain %d"
+			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, _terrain_mat_ms_total, terrain_active_count()])
 	return lines
+
+func terrain_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if int(v.get("terrain_colliders", 0)) > 0:
+			n += 1
+	return n
 
 
 # --- Persistence contract ----------------------------------------------------
