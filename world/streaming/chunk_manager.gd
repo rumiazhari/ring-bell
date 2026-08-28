@@ -162,27 +162,26 @@ func _launch_batch_jobs() -> void:
 		if world_plan != null:
 			holder["terrain"] = {}
 			holder["terrain_gen_ms"] = 0.0
+			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
-			var t0 := Time.get_ticks_usec()
 			_thread_build(batcher, c, holder, seed_used)
-			var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
-			var t_gen: float = holder.get("terrain_gen_ms", 0.0)
+			var gen_ms: float = float(holder.get("gen_ms", 0.0))
+			var t_gen: float = float(holder.get("terrain_gen_ms", 0.0))
 			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "task_id": -1,
 					"gen_ms": gen_ms, "terrain_gen_ms": t_gen}
 		else:
-			var t0 := Time.get_ticks_usec()
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
-			# gen_ms approximated by launch overhead; actual build time measured inside holder via _thread_build if needed
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": float(Time.get_ticks_usec() - t0) / 1000.0, "terrain_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
 ## Builds city batcher + terrain manifest (if holder has terrain key) using private plans.
 func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, seed_used: int) -> void:
+	var t_all := Time.get_ticks_usec()
 	var local_plan := CityPlan.new()
 	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
 	if holder.has("terrain"):
@@ -194,6 +193,7 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["terrain"] = {}
 		holder["terrain_gen_ms"] = 0.0
+	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
 ## Legacy helper kept for direct sync tests
 func _fill_job(batcher: MeshBatcher, coord: Vector2i) -> void:
@@ -219,13 +219,15 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			continue
 		var terrain_manifest: Dictionary = {}
 		var terrain_gen_ms: float = float(job.get("terrain_gen_ms", 0.0))
+		var gen_ms: float = float(job.get("gen_ms", 0.0))
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
 			terrain_manifest = holder.get("terrain", {})
 			terrain_gen_ms = float(holder.get("terrain_gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, job["gen_ms"], pc, terrain_gen_ms)
+			gen_ms = float(holder.get("gen_ms", 0.0))
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms)
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
