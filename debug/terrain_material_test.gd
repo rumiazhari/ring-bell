@@ -744,18 +744,8 @@ func _run_all() -> void:
 				var spc: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
 				var hitc: Dictionary = spc.intersect_ray(qc)
 				if hitc.is_empty():
-					# fallback: shape existence already ensures coverage
-					var has_shape := false
-					for ch in holder_c.get_children():
-						if String(ch.name).begins_with("Terrain_"):
-							var bd2: StaticBody3D = (ch as Node3D).get_node_or_null(NodePath("TerrainBody")) as StaticBody3D
-							if bd2 != null:
-								for shch in bd2.get_children():
-									if shch is CollisionShape3D and (shch as CollisionShape3D).shape != null:
-										has_shape = true
-						if not has_shape:
-							phy_ok = false
-							phy_detail = "cliff no hit at %s idx %d" % [cliff_c, cliff_idx]
+					phy_ok = false
+					phy_detail = "cliff no hit at %s idx %d" % [cliff_c, cliff_idx]
 				else:
 					var hyc: float = (hitc["position"] as Vector3).y
 					if absf(hyc - h_c) > 0.25:
@@ -782,16 +772,9 @@ func _run_all() -> void:
 		var sps: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
 		var hits: Dictionary = sps.intersect_ray(qs)
 		if hits.is_empty():
-			# fallback: if shapes exist, treat as pass (ray flake)
-			var has_s := false
-			for ch in seam_holder.get_children():
-				if String(ch.name).begins_with("Terrain_"):
-					var bds: StaticBody3D = (ch as Node3D).get_node_or_null(NodePath("TerrainBody")) as StaticBody3D
-					if bds != null:
-						for shch in bds.get_children():
-							if shch is CollisionShape3D and (shch as CollisionShape3D).shape != null:
-								has_s = true
-			if not has_s:
+			phy_ok = false
+			phy_detail = "seam 64m no hit"
+			if false:
 				phy_ok = false
 				phy_detail = "seam 64m no hit"
 		else:

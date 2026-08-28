@@ -181,6 +181,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	body.collision_mask = 0
 	terrain_node.add_child(body)
 	var concave := ConcavePolygonShape3D.new()
+	concave.backface_collision = true
 	var faces := PackedVector3Array()
 	faces.resize(indices.size())
 	for idx in indices.size():
