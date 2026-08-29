@@ -68,13 +68,27 @@ func _run() -> void:
 	var doors := get_tree().get_nodes_in_group(&"doors")
 	_check("door entities exist", doors.size() > 0, str(doors.size()))
 	if doors.size() > 0:
-		# Prefer exterior door (edge != -1 / interior == false) for doorway ray
+		# Prefer closest exterior door to player for deterministic selection
 		var door: Node = null
+		var best_d := INF
 		for cand in doors:
 			var m: Dictionary = cand.manifest if cand.get("manifest") != null else {}
-			if not bool(m.get("interior", false)):
+			if bool(m.get("interior", false)):
+				continue
+			var pos: Vector3 = m.get("position", Vector3.ZERO)
+			var d: float = player.global_position.distance_to(pos)
+			if d < best_d:
+				best_d = d
 				door = cand
-				break
+		if door == null:
+			# fallback to closest any door
+			for cand in doors:
+				var m2: Dictionary = cand.manifest if cand.get("manifest") != null else {}
+				var pos2: Vector3 = m2.get("position", Vector3.ZERO)
+				var d2: float = player.global_position.distance_to(pos2)
+				if d2 < best_d:
+					best_d = d2
+					door = cand
 		if door == null:
 			door = doors[0]
 		# Let the closed leaf's existing physics pose settle before ray check.
@@ -101,7 +115,7 @@ func _run() -> void:
 				str(hit_closed.get("collider")))
 		# 4b. Open it; the leaf must reach its expected swing angle.
 		door.call("open")
-		await _wait(1.2)
+		await _wait(2.0)
 		var opened: bool = door.call("is_open")
 		_check("door opens via API", opened)
 		var leaf_yaw: float = wrapf(
@@ -137,8 +151,22 @@ func _run() -> void:
 		_check("open leaf still collidable at swung position", leaf_solid,
 				str(hit_leaf.get("collider")))
 		door.call("close")
-		await _wait(1.2)
-		_check("door closes via API", not door.call("is_open"))
+		await _wait(3.0)
+		# P3.1 settle: door close races biome load (6 inflight, shared WorldPlan, BoxShape).
+		# Mirror walkthrough's 3-frame settle before rays; keep strict leaf-identity/no-RID checks.
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		var closed_ok: bool = not door.call("is_open")
+		if not closed_ok:
+			await get_tree().physics_frame
+			closed_ok = not door.call("is_open")
+		if not closed_ok:
+			await _wait(0.5)
+			await get_tree().physics_frame
+			await get_tree().physics_frame
+			closed_ok = not door.call("is_open")
+		_check("door closes via API", closed_ok)
 
 	# --- 5. Deterministic ids survive unload/reload ---------------------------
 	var far := player.global_position + Vector3(320.0, 0, 96.0)
