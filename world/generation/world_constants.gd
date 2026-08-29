@@ -128,6 +128,44 @@ const MAX_ROAD_SEGMENTS_PER_CHUNK := 8
 const MAX_ACTIVE_ROAD_COLLIDERS := 9
 const ROAD_SMOOTH_SAMPLE_M := 12.0
 
+# --- Rural Building Fabric (P4.2) authoritative numerics ---
+const RURAL_BUILDING_VOCAB: Array[StringName] = [&"village_house", &"cottage", &"barn", &"farmhouse", &"stable", &"shed"]
+const RURAL_BUILDING_FOOTPRINT_VILLAGE_MIN := Vector2(8, 10)
+const RURAL_BUILDING_FOOTPRINT_VILLAGE_MAX := Vector2(10, 12)
+const RURAL_BUILDING_FOOTPRINT_COTTAGE_MIN := Vector2(7, 8)
+const RURAL_BUILDING_FOOTPRINT_COTTAGE_MAX := Vector2(9, 11)
+const RURAL_BUILDING_FOOTPRINT_FARMHOUSE_MIN := Vector2(7, 8)
+const RURAL_BUILDING_FOOTPRINT_FARMHOUSE_MAX := Vector2(9, 11)
+const RURAL_BUILDING_FOOTPRINT_BARN_MIN := Vector2(8, 10)
+const RURAL_BUILDING_FOOTPRINT_BARN_MAX := Vector2(10, 14)
+const RURAL_BUILDING_FOOTPRINT_STABLE_MIN := Vector2(8, 10)
+const RURAL_BUILDING_FOOTPRINT_STABLE_MAX := Vector2(10, 14)
+const RURAL_BUILDING_FOOTPRINT_SHED_MIN := Vector2(6, 8)
+const RURAL_BUILDING_FOOTPRINT_SHED_MAX := Vector2(8, 10)
+const RURAL_BUILDING_FOOTPRINT_MIN := Vector2(6, 8)
+const RURAL_BUILDING_FOOTPRINT_MAX := Vector2(10, 14)
+const RURAL_BUILDING_HEIGHT_SINGLE := 4.2
+const RURAL_BUILDING_HEIGHT_VILLAGE_TWO_STOREY_EXTRA := 2.9
+const RURAL_BUILDING_SPACING_MIN := 8.0
+const RURAL_BUILDING_ROAD_SETBACK := 4.0
+const RURAL_BUILDING_SETTLEMENT_INNER_CLEARANCE := 6.0
+const RURAL_BUILDING_COUNT_VILLAGE_MIN := 4
+const RURAL_BUILDING_COUNT_VILLAGE_MAX := 6
+const RURAL_BUILDING_COUNT_HAMLET_MIN := 2
+const RURAL_BUILDING_COUNT_HAMLET_MAX := 3
+const RURAL_BUILDING_COUNT_FARMSTEAD_MIN := 1
+const RURAL_BUILDING_COUNT_FARMSTEAD_MAX := 2
+const RURAL_BUILDING_COUNTS: Dictionary = {"village": Vector2i(4,6), "hamlet": Vector2i(2,3), "farmstead": Vector2i(1,2), "isolated_farm": Vector2i(1,1)}
+const MAX_RURAL_BUILDINGS_PER_CHUNK := 6
+const MAX_RURAL_VERTS_PER_CHUNK := 320
+const MAX_RURAL_VERTS_TYPICAL := 192
+const MAX_RURAL_TRIS_PER_CHUNK := 240
+const MAX_RURAL_TRIS_TYPICAL := 144
+const MAX_RURAL_COLLIDERS_PER_CHUNK := 1
+const MAX_ACTIVE_RURAL_COLLIDERS := 9
+const RURAL_DOOR_COUNT_MAX_PER_CHUNK := 6
+const RURAL_OVERLAY_LIFT_M := 0.04
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]

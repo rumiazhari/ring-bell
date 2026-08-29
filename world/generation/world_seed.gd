@@ -95,6 +95,7 @@ const GEOLOGY_DOMAINS: Array[StringName] = [&"geology", &"geology_ridge", &"geol
 const BIOME_DOMAINS: Array[StringName] = [&"biome", &"biome_moisture", &"biome_temp", &"biome_forest_field", &"biome_orchard", &"biome_field_edge", &"biome_density", &"biome_tint"]
 const SETTLEMENT_DOMAINS: Array[StringName] = [&"settlement", &"settlement_field", &"settlement_jitter", &"settlement_gate_phi", &"settlement_gate_radius", &"settlement_jitter_count"]
 const ROAD_DOMAINS: Array[StringName] = [&"road", &"road_mid", &"road_width", &"road_hierarchy", &"road_extra"]
+const RURAL_BUILDING_DOMAINS: Array[StringName] = [&"rural_building", &"rural_building_count", &"rural_building_radius", &"rural_building_angle", &"rural_building_fp_x", &"rural_building_fp_y", &"rural_building_yaw", &"rural_building_palette", &"rural_building_nudge"]
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation

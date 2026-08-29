@@ -10,6 +10,7 @@ var geology: GeologyPlan
 var biome: BiomePlan
 var settlement: SettlementPlan
 var road_network: RoadNetworkPlan
+var rural_building: RuralBuildingPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -19,6 +20,7 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	biome = BiomePlan.new(seed, terrain, hydrology, geology)
 	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
+	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
 
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
@@ -167,3 +169,20 @@ func nearest_crossing(p: Vector2) -> Dictionary:
 
 func road_width_at(p: Vector2) -> float:
 	return road_network.road_width_at(p)
+
+# --- Rural building forwarding (pure, deterministic) ---
+
+func rural_buildings() -> Array[Dictionary]:
+	return rural_building.rural_buildings()
+
+func rural_buildings_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_buildings_in(rect)
+
+func nearest_rural_building(p: Vector2) -> Dictionary:
+	return rural_building.nearest_rural_building(p)
+
+func rural_building_at(p: Vector2) -> Dictionary:
+	return rural_building.rural_building_at(p)
+
+func settlement_buildings(settlement_id: String) -> Array[Dictionary]:
+	return rural_building.settlement_buildings(settlement_id)
