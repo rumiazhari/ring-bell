@@ -3,6 +3,9 @@ extends RefCounted
 ## Pure water manifest + main-thread materialization for P2.2 hydrology slice.
 ## 9x9 samples per 64m chunk (8m spacing), world-space shared edges,
 ## one muted-teal mesh + at most one collider per wet chunk, 81/128 budgets.
+## Bank ribbon choice: 1.5 m earth bank ribbon remains a vertex-color transition WITHOUT extra geometry
+## as the budgeted choice for this slice, keeping 81 verts / <=128 tris / 1 collider wet-chunk budget.
+## A narrow earth-geometry strip will be evaluated when/if terrain trench carve through the historic basin is designed (deferred truthfully, not silently omitted).
 
 const RESOLUTION := 9
 const SPACING := 8.0
@@ -84,6 +87,16 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	vertex_count = 81 if has_water else 0
 	tri_count = tri_count  # actual emitted (<=128)
 	var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+	# district_hint derived from radial distance and distance_to_water (authoritative)
+	var center := origin + size * 0.5
+	var d_water_center := world_plan.distance_to_water(center)
+	var district_hint: StringName = &"rural_plateau"
+	if center.length() < WorldConstants.URBAN_INNER_M:
+		district_hint = &"urban_basin"
+	elif d_water_center <= WorldConstants.BANK_W + WorldConstants.FLOODPLAIN_W + 16.0:
+		district_hint = &"river_valley"
+	else:
+		district_hint = &"rural_plateau"
 	# For manifest byte-identical across shuffled builds: deterministic keys and packed arrays
 	return {
 		"coord": coord,
@@ -102,6 +115,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"water_colliders": colliders,
 		"has_water": has_water,
 		"water_gen_ms": gen_ms,
+		"district_hint": district_hint,
 	}
 
 static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:

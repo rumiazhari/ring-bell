@@ -94,6 +94,8 @@ static func unit_float(purpose: String, parts: Array) -> float:
 
 const TERRAIN_DOMAINS: Array[StringName] = [&"terrain", &"ridge", &"valley", &"soil", &"moisture", &"temperature", &"geology", &"settlement"]
 const HYDRO_DOMAINS: Array[StringName] = [&"hydro", &"hydro_cx", &"hydro_phi", &"hydro_meander2", &"hydro_width", &"hydro_level", &"hydro_trib_ax", &"hydro_trib_az", &"hydro_trib_cz", &"hydro_trib_mid"]
+const GEOLOGY_DOMAINS: Array[StringName] = [&"geology", &"geology_ridge", &"geology_soil", &"geology_strata", &"geology_fertility", &"geology_quarry", &"geology_cave"]
+const BIOME_DOMAINS: Array[StringName] = [&"biome", &"biome_moisture", &"biome_temp", &"biome_forest_field", &"biome_orchard", &"biome_field_edge", &"biome_density", &"biome_tint"]
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation
