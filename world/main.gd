@@ -54,6 +54,15 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 
+	# Focused regression harness: it owns its tiny fixture and intentionally
+	# bypasses normal city startup so stale-roster and stream-pacing failures
+	# are isolated from gameplay setup.
+	if args.has("--streamingregressiontest"):
+		var streaming_tester: Node = load("res://debug/streaming_regression_test.gd").new()
+		streaming_tester.name = "StreamingRegressionTest"
+		add_child(streaming_tester)
+		return
+
 	if _mode == WorldMode.LEGACY_BLOCK:
 		_build_legacy_block()
 	else:

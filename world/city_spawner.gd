@@ -63,14 +63,21 @@ func _spawn_for(coord: Vector2i) -> void:
 
 
 ## Despawn to records. Zombies that died during the visit unregister
-## themselves; survivors of the roster are unregistered here.
+## themselves; survivors of the roster are unregistered here. A dead zombie
+## can leave an invalid Object reference in the cached roster until this
+## transition; keep the loop Variant-typed until validity is established.
 func _despawn(coord: Vector2i) -> void:
 	if not _live.has(coord):
 		return
-	for zombie: Zombie in _live[coord]:
-		if is_instance_valid(zombie):
-			ActorRegistry.unregister(zombie.zombie_id)
-			zombie.queue_free()
+	var roster: Array = _live[coord] as Array
+	for node in roster:
+		if not is_instance_valid(node):
+			continue
+		if not (node is Zombie):
+			continue
+		var zombie: Zombie = node as Zombie
+		ActorRegistry.unregister(zombie.zombie_id)
+		zombie.queue_free()
 	_live.erase(coord)
 
 

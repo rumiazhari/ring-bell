@@ -26,6 +26,7 @@ const ACTIVE_RADIUS := 1
 const WARM_RADIUS := 2
 const UNLOAD_RADIUS := WARM_RADIUS + 1   # hysteresis ring
 const FRAME_BUDGET_MS := 12.0         # doors/props materialize alongside mesh
+const MAX_MATERIALIZATIONS_PER_FRAME := 1 # never burst several completed chunks into one render frame
 const STREAM_UPDATE_INTERVAL := 0.1      # seconds between full ring recalcs (was 0.2, reduced for P3.1 to keep 300s budget)
 const MAX_INFLIGHT_BUILDS := 6           # concurrent worker-thread batch jobs (was 2, increased for P3.1 biome+water+terrain to keep 300s budget)
 
@@ -132,6 +133,11 @@ func _process(delta: float) -> void:
 		_last_player_chunk = pc
 		_player_chunk_changed = true
 
+	# Workers can finish together; admit at most one main-thread mesh/physics
+	# materialization before considering the periodic streaming update. This
+	# keeps the player-visible frame from absorbing a completed-job burst.
+	_collect_finished_jobs(pc)
+
 	if _stream_timer < STREAM_UPDATE_INTERVAL and not _player_chunk_changed:
 		return
 	_stream_timer = 0.0
@@ -140,7 +146,6 @@ func _process(delta: float) -> void:
 	var desired := _desired_set(pc)
 	_enqueue_missing(desired, pc)
 	_launch_batch_jobs()
-	_collect_finished_jobs(pc)
 	_unload_far(desired, pc)
 	_update_chunk_states(pc)
 
@@ -255,13 +260,23 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var task_id: int = _inflight[c]["task_id"]
 		if task_id < 0 or WorkerThreadPool.is_task_completed(task_id):
 			done.append(c)
+	var materialized := 0
+	# Synchronous mode is the deterministic harness contract: it builds and
+	# drains inline. Runtime streaming stays capped so completed worker jobs
+	# cannot turn one player-visible frame into a materialization burst.
+	var materialization_limit := done.size() if synchronous else MAX_MATERIALIZATIONS_PER_FRAME
 	for c in done:
 		var job: Dictionary = _inflight[c]
+		var stale := chebyshev_distance(c, pc) > UNLOAD_RADIUS or _chunks.has(c)
+		# Discard stale completions immediately, but leave valid completions in
+		# the worker-complete set for a later frame once this frame's single
+		# materialization slot has been consumed.
+		if not stale and materialized >= materialization_limit:
+			continue
 		if job["task_id"] >= 0:
 			WorkerThreadPool.wait_for_task_completion(job["task_id"])
 		_inflight.erase(c)
-		# Stale job? Player moved on while the data was cooking.
-		if chebyshev_distance(c, pc) > UNLOAD_RADIUS or _chunks.has(c):
+		if stale:
 			continue
 		var terrain_manifest: Dictionary = {}
 		var terrain_gen_ms: float = float(job.get("terrain_gen_ms", 0.0))
@@ -284,6 +299,7 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			biome_gen_ms = float(holder.get("biome_gen_ms", 0.0))
 			gen_ms = float(holder.get("gen_ms", 0.0))
 		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms)
+		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
