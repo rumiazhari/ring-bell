@@ -56,6 +56,8 @@ var _rural_triangles_total := 0
 var _rural_colliders_total := 0
 var _rural_doors_total := 0
 var _rural_buildings_total := 0
+var _rural_crates_total := 0
+var _rural_furniture_total := 0
 var _rural_mat_ms_total := 0.0
 
 var _player: Node3D
@@ -131,6 +133,8 @@ func reset_stream() -> void:
 	_rural_colliders_total = 0
 	_rural_doors_total = 0
 	_rural_buildings_total = 0
+	_rural_crates_total = 0
+	_rural_furniture_total = 0
 	_rural_mat_ms_total = 0.0
 	_total_rural_gen_ms = 0.0
 	for c: Vector2i in _chunks:
@@ -428,14 +432,38 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	# Materialize rural under same chunk if manifest present
 	var rustats := {}
 	if not rural_manifest.is_empty():
+		# Apply crate deltas before materialize (persistence-first)
+		var c_deltas: Dictionary = {}
+		if _records.has(coord):
+			var c_delta: Dictionary = (_records[coord].get("deltas", {}) as Dictionary).get("crates", {}) as Dictionary
+			if c_delta is Dictionary:
+				c_deltas = c_delta
+		if not c_deltas.is_empty():
+			var cms: Array = rural_manifest.get("crate_manifests", []) as Array
+			var patched: Array[Dictionary] = []
+			for cm in cms:
+				var cd: Dictionary = cm as Dictionary
+				var cid: String = String(cd.get("id",""))
+				if c_deltas.has(cid):
+					var saved: Dictionary = c_deltas[cid] as Dictionary
+					var new_contents: Dictionary = {}
+					for k in saved.keys():
+						new_contents[StringName(str(k))] = int(saved[k])
+					cd = cd.duplicate()
+					cd["contents"] = new_contents
+				patched.append(cd)
+			rural_manifest["crate_manifests"] = patched
 		var chunk_node_ru := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
 		if chunk_node_ru != null:
 			rustats = RuralBuildingChunkBuilder.materialize(chunk_node_ru, rural_manifest)
-			# ACTIVE-only rural physics: disable warm rural colliders (visual retained)
+			# ACTIVE-only rural physics: disable warm rural colliders (visual retained) and crate interactability
 			if not include_collision:
 				var rub := chunk_node_ru.get_node_or_null(NodePath("Rural_%d_%d/RuralBody" % [coord.x, coord.y]))
 				if rub != null and is_instance_valid(rub):
 					(rub as StaticBody3D).collision_layer = 0
+				_set_rural_crates_enabled(chunk_node_ru, coord, false)
+			else:
+				_set_rural_crates_enabled(chunk_node_ru, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -463,6 +491,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var rural_cols := int(rustats.get("rural_colliders", 0))
 	var rural_doors := int(rustats.get("rural_doors", 0))
 	var rural_buildings := int(rustats.get("rural_buildings", 0))
+	var rural_crates := int(rustats.get("rural_crates", 0))
+	var rural_furniture := int(rustats.get("rural_furniture", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -497,6 +527,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_colliders_active": rural_cols if include_collision else 0,
 		"rural_doors": rural_doors,
 		"rural_buildings": rural_buildings,
+		"rural_crates": rural_crates,
+		"rural_furniture": rural_furniture,
+		"rural_crates_active": rural_crates if include_collision else 0,
 		"rural_manifest": rural_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
@@ -539,6 +572,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_rural_colliders_total += rural_cols
 	_rural_doors_total += rural_doors
 	_rural_buildings_total += rural_buildings
+	_rural_crates_total += rural_crates
+	_rural_furniture_total += rural_furniture
 	_rural_mat_ms_total += float(rustats.get("rural_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
@@ -597,6 +632,8 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_rural_colliders_total -= int(rec.get("rural_colliders", 0))
 		_rural_doors_total -= int(rec.get("rural_doors", 0))
 		_rural_buildings_total -= int(rec.get("rural_buildings", 0))
+		_rural_crates_total -= int(rec.get("rural_crates", 0))
+		_rural_furniture_total -= int(rec.get("rural_furniture", 0))
 		_rural_mat_ms_total -= float(rec.get("rural_mat_ms", 0.0))
 		_total_rural_gen_ms -= float(rec.get("rural_gen_ms", 0.0))
 		_chunks.erase(c)
@@ -659,6 +696,15 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					(rural_body as StaticBody3D).collision_layer = 1
 				elif previous_state == &"active":
 					(rural_body as StaticBody3D).collision_layer = 0
+			# Rural crates ACTIVE-only
+			if desired_state == &"active" and previous_state != &"active":
+				var rural_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if rural_node_active != null:
+					_set_rural_crates_enabled(rural_node_active, coord, true)
+			elif desired_state != &"active" and previous_state == &"active":
+				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if rural_node_warm != null:
+					_set_rural_crates_enabled(rural_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -987,8 +1033,8 @@ func debug_lines() -> Array[String]:
 			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
 	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
-	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
-			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
+	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
+			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
@@ -1062,6 +1108,65 @@ func rural_warm_count() -> int:
 	return n
 
 
+func _set_rural_crates_enabled(rural_parent: Node, coord: Vector2i, enabled: bool) -> void:
+	var rural_node: Node = rural_parent
+	if rural_parent.name.begins_with("Chunk_"):
+		rural_node = rural_parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+		if rural_node == null:
+			return
+	for child in rural_node.get_children():
+		if child is FoodCrate:
+			var crate: FoodCrate = child as FoodCrate
+			if is_instance_valid(crate):
+				crate.collision_layer = 1 if enabled else 0
+				var inter = crate.get("_interactable")
+				if inter != null and is_instance_valid(inter):
+					inter.enabled = enabled and not crate.is_empty()
+				for sub in crate.get_children():
+					if sub is CollisionShape3D:
+						var sb := sub.get_parent()
+						if sb is StaticBody3D:
+							(sb as StaticBody3D).collision_layer = 1 if enabled else 0
+	for child in rural_node.get_children():
+		if child is FoodCrate:
+			continue
+		for sub in child.get_children():
+			if sub is FoodCrate:
+				var crate2: FoodCrate = sub as FoodCrate
+				if is_instance_valid(crate2):
+					crate2.collision_layer = 1 if enabled else 0
+
+func _record_crate(coord: Vector2i, crate_id: String, state: Dictionary) -> void:
+	if crate_id == "":
+		return
+	note_discovered(coord)
+	var crates: Dictionary = _records[coord]["deltas"].get("crates", {})
+	crates[crate_id] = state.duplicate()
+	_records[coord]["deltas"]["crates"] = crates
+
+func _snapshot_resident_crates() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_crates_recursive(node, c)
+
+func _collect_crates_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if child is FoodCrate and not (child as FoodCrate).is_queued_for_deletion():
+			if String(child.name).begins_with("rural_crate_"):
+				var st: Dictionary = (child as FoodCrate).save_state()
+				_record_crate(coord, String(child.name), st)
+		if child.get_child_count() > 0:
+			_collect_crates_recursive(child, coord)
+
+func _restore_crates_recursive(n: Node, cstates: Dictionary) -> void:
+	for child in n.get_children():
+		if child is FoodCrate and cstates.has(String(child.name)):
+			(child as FoodCrate).load_state(cstates[String(child.name)])
+		if child.get_child_count() > 0:
+			_restore_crates_recursive(child, cstates)
+
 # --- Persistence contract ----------------------------------------------------
 
 ## Records survive saves; geometry is rebuilt deterministically on return.
@@ -1071,6 +1176,7 @@ func rural_warm_count() -> int:
 ## their current open/closed state.
 func save_state() -> Dictionary:
 	_snapshot_resident_doors()
+	_snapshot_resident_crates()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]

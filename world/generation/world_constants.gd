@@ -157,14 +157,30 @@ const RURAL_BUILDING_COUNT_FARMSTEAD_MIN := 1
 const RURAL_BUILDING_COUNT_FARMSTEAD_MAX := 2
 const RURAL_BUILDING_COUNTS: Dictionary = {"village": Vector2i(4,6), "hamlet": Vector2i(2,3), "farmstead": Vector2i(1,2), "isolated_farm": Vector2i(1,1)}
 const MAX_RURAL_BUILDINGS_PER_CHUNK := 6
-const MAX_RURAL_VERTS_PER_CHUNK := 320
-const MAX_RURAL_VERTS_TYPICAL := 192
-const MAX_RURAL_TRIS_PER_CHUNK := 240
-const MAX_RURAL_TRIS_TYPICAL := 144
+const MAX_RURAL_VERTS_PER_CHUNK := 400
+const MAX_RURAL_VERTS_TYPICAL := 240
+const MAX_RURAL_TRIS_PER_CHUNK := 300
+const MAX_RURAL_TRIS_TYPICAL := 180
 const MAX_RURAL_COLLIDERS_PER_CHUNK := 1
 const MAX_ACTIVE_RURAL_COLLIDERS := 9
 const RURAL_DOOR_COUNT_MAX_PER_CHUNK := 6
 const RURAL_OVERLAY_LIFT_M := 0.04
+
+# --- Rural Interior & Scavenge (P4.3) authoritative numerics ---
+const RURAL_INTERIOR_WALL_THICKNESS := 0.15
+const RURAL_INTERIOR_WALL_LENGTH_FRACTION_MIN := 0.55
+const RURAL_INTERIOR_WALL_LENGTH_FRACTION_MAX := 0.85
+const RURAL_INTERIOR_DOORWAY_GAP_M := 0.95
+const RURAL_FURNITURE_VOCAB: Array[StringName] = [&"bed", &"shelf", &"table", &"stove"]
+const RURAL_FURNITURE_MAX_PER_BUILDING := 3
+const RURAL_FURNITURE_MAX_PER_VILLAGE_CHUNK := 6
+const RURAL_FURNITURE_CAP_PER_CHUNK := 6
+const RURAL_CRATE_MAX_PER_CHUNK := 3
+const RURAL_CRATE_MAX_PER_VILLAGE := 3
+const RURAL_CRATE_MAX_PER_HAMLET := 1
+const RURAL_CRATE_ITEMS_MIN := 1
+const RURAL_CRATE_ITEMS_MAX_VILLAGE := 4
+const RURAL_CRATE_ITEMS_MAX_HAMLET := 2
 
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
