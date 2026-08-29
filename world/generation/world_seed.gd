@@ -35,7 +35,6 @@ static func get_world_seed() -> int:
 static func set_world_seed(value: int) -> void:
 	ProjectSettings.set_setting(SEED_SETTING, value)
 
-
 ## Chunk coordinate for a world XZ position.
 static func chunk_coord(x: float, z: float) -> Vector2i:
 	return Vector2i(floori(x / float(CHUNK_SIZE)), floori(z / float(CHUNK_SIZE)))
@@ -53,7 +52,6 @@ static func mix64(x: int) -> int:
 	x = (x ^ (x >> 30)) * MIX_A
 	x = (x ^ (x >> 27)) * MIX_B
 	return x ^ (x >> 31)
-
 
 ## Stable positive hash for a purpose name ("roads", "parcels", ...).
 static func str_hash(purpose: String) -> int:
@@ -83,7 +81,6 @@ static func rng_for(purpose: String, parts: Array = []) -> RandomNumberGenerator
 	gen.seed = combine(all_parts)
 	return gen
 
-
 ## Uniform float in [0,1) straight from the mixed hash - no RNG object needed.
 ## Ideal for point lookups (district noise) where allocating an RNG is waste.
 static func unit_float(purpose: String, parts: Array) -> float:
@@ -96,6 +93,8 @@ const TERRAIN_DOMAINS: Array[StringName] = [&"terrain", &"ridge", &"valley", &"s
 const HYDRO_DOMAINS: Array[StringName] = [&"hydro", &"hydro_cx", &"hydro_phi", &"hydro_meander2", &"hydro_width", &"hydro_level", &"hydro_trib_ax", &"hydro_trib_az", &"hydro_trib_cz", &"hydro_trib_mid"]
 const GEOLOGY_DOMAINS: Array[StringName] = [&"geology", &"geology_ridge", &"geology_soil", &"geology_strata", &"geology_fertility", &"geology_quarry", &"geology_cave"]
 const BIOME_DOMAINS: Array[StringName] = [&"biome", &"biome_moisture", &"biome_temp", &"biome_forest_field", &"biome_orchard", &"biome_field_edge", &"biome_density", &"biome_tint"]
+const SETTLEMENT_DOMAINS: Array[StringName] = [&"settlement", &"settlement_field", &"settlement_jitter", &"settlement_gate_phi", &"settlement_gate_radius", &"settlement_jitter_count"]
+const ROAD_DOMAINS: Array[StringName] = [&"road", &"road_mid", &"road_width", &"road_hierarchy", &"road_extra"]
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation

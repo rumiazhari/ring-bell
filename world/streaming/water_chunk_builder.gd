@@ -141,9 +141,6 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			"water_mat_ms": mat_ms_empty,
 			"water_nodes": 0,
 		}
-	var water_node := Node3D.new()
-	water_node.name = "Water_%d_%d" % [coord.x, coord.y]
-	parent.add_child(water_node)
 	# Build vertex arrays for ArrayMesh (full RES*RES grid, but indices only reference wet triangles)
 	var verts := PackedVector3Array()
 	verts.resize(RESOLUTION * RESOLUTION)
@@ -168,17 +165,27 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	if not colors.is_empty():
 		arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
+	# If has_water but no triangles (isolated wet samples) → treat as dry to avoid NO_INDEX_ARRAY error
+	if indices.size() < 3:
+		var mat_ms_empty2 := float(Time.get_ticks_usec() - t0) / 1000.0
+		return {
+			"water_vertices": 0,
+			"water_triangles": 0,
+			"water_colliders": 0,
+			"water_gen_ms": float(manifest.get("water_gen_ms", 0.0)),
+			"water_mat_ms": mat_ms_empty2,
+			"water_nodes": 0,
+		}
+	var water_node := Node3D.new()
+	water_node.name = "Water_%d_%d" % [coord.x, coord.y]
+	parent.add_child(water_node)
 	var mesh := ArrayMesh.new()
-	if indices.size() >= 3:
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		var mat := StandardMaterial3D.new()
-		mat.vertex_color_use_as_albedo = true
-		mat.roughness = 0.65
-		mat.metallic = 0.0
-		mesh.surface_set_material(0, mat)
-	else:
-		# No triangles (should not happen if has_water, but handle)
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.65
+	mat.metallic = 0.0
+	mesh.surface_set_material(0, mat)
 	var mi := MeshInstance3D.new()
 	mi.name = "WaterMesh"
 	mi.mesh = mesh

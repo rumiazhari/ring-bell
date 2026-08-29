@@ -46,6 +46,11 @@ var _biome_triangles_total := 0
 var _biome_colliders_total := 0
 var _biome_instances_total := 0
 var _biome_mat_ms_total := 0.0
+var _road_vertices_total := 0
+var _road_triangles_total := 0
+var _road_colliders_total := 0
+var _road_bridges_total := 0
+var _road_mat_ms_total := 0.0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -62,6 +67,7 @@ var _total_mat_ms := 0.0               # materialization time (main thread)
 var _total_terrain_gen_ms := 0.0        # terrain manifest generation (measured inside worker)
 var _total_water_gen_ms := 0.0          # water manifest generation
 var _total_biome_gen_ms := 0.0          # biome manifest generation
+var _total_road_gen_ms := 0.0           # road manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
 
@@ -107,6 +113,12 @@ func reset_stream() -> void:
 	_biome_instances_total = 0
 	_biome_mat_ms_total = 0.0
 	_total_biome_gen_ms = 0.0
+	_road_vertices_total = 0
+	_road_triangles_total = 0
+	_road_colliders_total = 0
+	_road_bridges_total = 0
+	_road_mat_ms_total = 0.0
+	_total_road_gen_ms = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -193,6 +205,8 @@ func _launch_batch_jobs() -> void:
 			holder["water_gen_ms"] = 0.0
 			holder["biome"] = {}
 			holder["biome_gen_ms"] = 0.0
+			holder["road"] = {}
+			holder["road_gen_ms"] = 0.0
 			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
@@ -201,14 +215,15 @@ func _launch_batch_jobs() -> void:
 			var t_gen: float = float(holder.get("terrain_gen_ms", 0.0))
 			var w_gen: float = float(holder.get("water_gen_ms", 0.0))
 			var b_gen: float = float(holder.get("biome_gen_ms", 0.0))
-			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "task_id": -1,
-					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen}
+			var r_gen: float = float(holder.get("road_gen_ms", 0.0))
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen}
 		else:
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
@@ -218,7 +233,7 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	var local_plan := CityPlan.new()
 	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
 	var shared_world: WorldPlan = null
-	if holder.has("terrain") or holder.has("water") or holder.has("biome"):
+	if holder.has("terrain") or holder.has("water") or holder.has("biome") or holder.has("road"):
 		shared_world = WorldPlan.new(seed_used)
 	if holder.has("terrain"):
 		var t0 := Time.get_ticks_usec()
@@ -244,6 +259,14 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["biome"] = {}
 		holder["biome_gen_ms"] = 0.0
+	if holder.has("road"):
+		var tr0 := Time.get_ticks_usec()
+		var rm := RoadChunkBuilder.build_manifest(shared_world, coord)
+		holder["road"] = rm
+		holder["road_gen_ms"] = float(Time.get_ticks_usec() - tr0) / 1000.0
+	else:
+		holder["road"] = {}
+		holder["road_gen_ms"] = 0.0
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
 ## Legacy helper kept for direct sync tests
@@ -285,10 +308,13 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var water_gen_ms: float = float(job.get("water_gen_ms", 0.0))
 		var biome_manifest: Dictionary = {}
 		var biome_gen_ms: float = float(job.get("biome_gen_ms", 0.0))
+		var road_manifest: Dictionary = {}
+		var road_gen_ms: float = float(job.get("road_gen_ms", 0.0))
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
 			water_manifest = job.get("water", {})
 			biome_manifest = job.get("biome", {})
+			road_manifest = job.get("road", {})
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
 			terrain_manifest = holder.get("terrain", {})
@@ -297,13 +323,15 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			water_gen_ms = float(holder.get("water_gen_ms", 0.0))
 			biome_manifest = holder.get("biome", {})
 			biome_gen_ms = float(holder.get("biome_gen_ms", 0.0))
+			road_manifest = holder.get("road", {})
+			road_gen_ms = float(holder.get("road_gen_ms", 0.0))
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms)
 		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -356,6 +384,17 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				var bb := chunk_node_b.get_node_or_null(NodePath("Biome_%d_%d/BiomeBody" % [coord.x, coord.y]))
 				if bb != null and is_instance_valid(bb):
 					(bb as StaticBody3D).collision_layer = 0
+	# Materialize road under same chunk if manifest present
+	var rstats := {}
+	if not road_manifest.is_empty():
+		var chunk_node_r := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node_r != null:
+			rstats = RoadChunkBuilder.materialize(chunk_node_r, road_manifest)
+			# ACTIVE-only road physics: disable warm road colliders (visual ribbon retained)
+			if not include_collision:
+				var rb := chunk_node_r.get_node_or_null(NodePath("Road_%d_%d/RoadBody" % [coord.x, coord.y]))
+				if rb != null and is_instance_valid(rb):
+					(rb as StaticBody3D).collision_layer = 0
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -376,6 +415,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var biome_tris := int(bstats.get("biome_triangles", 0))
 	var biome_cols := int(bstats.get("biome_colliders", 0))
 	var biome_instances := int(bstats.get("biome_instances", 0))
+	var road_verts := int(rstats.get("road_vertices", 0))
+	var road_tris := int(rstats.get("road_triangles", 0))
+	var road_cols := int(rstats.get("road_colliders", 0))
+	var road_bridges := int(rstats.get("bridge_vertices", 0) > 0 or rstats.get("has_bridge", false) as bool)
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -398,6 +441,12 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"biome_colliders_active": biome_cols if include_collision else 0,
 		"biome_instances": biome_instances,
 		"biome_manifest": biome_manifest,
+		"road_vertices": road_verts,
+		"road_triangles": road_tris,
+		"road_colliders": road_cols,
+		"road_colliders_active": road_cols if include_collision else 0,
+		"road_bridges": road_bridges,
+		"road_manifest": road_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -411,6 +460,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"water_mat_ms": float(wstats.get("water_mat_ms", 0.0)),
 		"biome_gen_ms": biome_gen_ms,
 		"biome_mat_ms": float(bstats.get("biome_mat_ms", 0.0)),
+		"road_gen_ms": road_gen_ms,
+		"road_mat_ms": float(rstats.get("road_mat_ms", 0.0)),
 	}
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
@@ -425,12 +476,18 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_biome_colliders_total += biome_cols
 	_biome_instances_total += biome_instances
 	_biome_mat_ms_total += float(bstats.get("biome_mat_ms", 0.0))
+	_road_vertices_total += road_verts
+	_road_triangles_total += road_tris
+	_road_colliders_total += road_cols
+	_road_bridges_total += road_bridges
+	_road_mat_ms_total += float(rstats.get("road_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
 	_total_terrain_gen_ms += terrain_gen_ms
 	_total_water_gen_ms += water_gen_ms
 	_total_biome_gen_ms += biome_gen_ms
+	_total_road_gen_ms += road_gen_ms
 	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
@@ -469,6 +526,12 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_biome_instances_total -= int(rec.get("biome_instances", 0))
 		_biome_mat_ms_total -= float(rec.get("biome_mat_ms", 0.0))
 		_total_biome_gen_ms -= float(rec.get("biome_gen_ms", 0.0))
+		_road_vertices_total -= int(rec.get("road_vertices", 0))
+		_road_triangles_total -= int(rec.get("road_triangles", 0))
+		_road_colliders_total -= int(rec.get("road_colliders", 0))
+		_road_bridges_total -= int(rec.get("road_bridges", 0))
+		_road_mat_ms_total -= float(rec.get("road_mat_ms", 0.0))
+		_total_road_gen_ms -= float(rec.get("road_gen_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -515,6 +578,13 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					(biome_body as StaticBody3D).collision_layer = 1
 				elif previous_state == &"active":
 					(biome_body as StaticBody3D).collision_layer = 0
+			# Road ACTIVE-only physics: warm retains RoadMesh visual but disables RoadBody collision
+			var road_body := get_node_or_null(NodePath("Chunk_%d_%d/Road_%d_%d/RoadBody" % [coord.x, coord.y, coord.x, coord.y]))
+			if road_body != null and is_instance_valid(road_body):
+				if desired_state == &"active":
+					(road_body as StaticBody3D).collision_layer = 1
+				elif previous_state == &"active":
+					(road_body as StaticBody3D).collision_layer = 0
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -801,6 +871,12 @@ func avg_biome_gen_ms() -> float:
 func avg_biome_mat_ms() -> float:
 	return _biome_mat_ms_total / maxf(1.0, float(maxi(1, _biome_vertices_total)))
 
+func avg_road_gen_ms() -> float:
+	return _total_road_gen_ms / maxf(1.0, float(_total_loads))
+
+func avg_road_mat_ms() -> float:
+	return _road_mat_ms_total / maxf(1.0, float(maxi(1, _road_vertices_total)))
+
 func is_resident(coord: Vector2i) -> bool:
 	return _chunks.has(coord)
 
@@ -829,6 +905,8 @@ func debug_lines() -> Array[String]:
 			% [_water_vertices_total, _water_triangles_total, _water_colliders_total, avg_water_gen_ms(), _water_mat_ms_total, water_active_count(), water_warm_count()])
 	lines.append("biome verts %d | tris %d | colliders %d | instances %d | t_biome_gen %.1f ms | t_biome_mat %.1f ms | active biome %d (warm %d)"
 			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
+	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
+			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
@@ -870,6 +948,20 @@ func biome_warm_count() -> int:
 	var n := 0
 	for v in _chunks.values():
 		if v.get("state", "") == &"warm" and int(v.get("biome_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func road_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("road_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func road_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("road_colliders", 0)) > 0:
 			n += 1
 	return n
 

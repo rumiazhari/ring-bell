@@ -129,6 +129,10 @@ func _ready() -> void:
 		var tester6d: Node = load("res://debug/biome_test.gd").new()
 		tester6d.name = "BiomeTest"
 		add_child(tester6d)
+	elif user_args.has("--roadtest") or user_args.has("--settlementtest") or user_args.has("--roadmaterialtest"):
+		var tester6e: Node = load("res://debug/road_test.gd").new()
+		tester6e.name = "RoadTest"
+		add_child(tester6e)
 	elif user_args.has("--doortest"):
 		var tester7: Node = load("res://debug/temp_door_probe.gd").new()
 		tester7.name = "TempDoorProbe"

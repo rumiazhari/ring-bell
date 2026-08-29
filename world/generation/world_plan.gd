@@ -8,6 +8,8 @@ var terrain: TerrainPlan
 var hydrology: HydrologyPlan
 var geology: GeologyPlan
 var biome: BiomePlan
+var settlement: SettlementPlan
+var road_network: RoadNetworkPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -15,6 +17,8 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	hydrology = HydrologyPlan.new(seed)
 	geology = GeologyPlan.new(seed)
 	biome = BiomePlan.new(seed, terrain, hydrology, geology)
+	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
+	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
@@ -120,3 +124,46 @@ func biome_density_at(p: Vector2) -> float:
 
 func surface_tint_at(p: Vector2) -> Color:
 	return biome.surface_tint_at(p)
+
+# --- Settlement forwarding (pure, deterministic) ---
+
+func settlement_anchors() -> Array[Dictionary]:
+	return settlement.settlement_anchors()
+
+func settlements_in(rect: Rect2) -> Array[Dictionary]:
+	return settlement.settlements_in(rect)
+
+func nearest_settlement(p: Vector2) -> Dictionary:
+	return settlement.nearest_settlement(p)
+
+func settlement_at(p: Vector2) -> Dictionary:
+	return settlement.settlement_at(p)
+
+func is_settlement_center(p: Vector2, kind_filter: StringName = &"") -> bool:
+	return settlement.is_settlement_center(p, kind_filter)
+
+func city_gates() -> Array[Dictionary]:
+	return settlement.city_gates()
+
+func city_gate_positions() -> Array[Vector2]:
+	return settlement.city_gate_positions()
+
+# --- Road forwarding (pure, deterministic) ---
+
+func road_graph() -> Dictionary:
+	return road_network.road_graph()
+
+func road_segments_in(rect: Rect2) -> Array[Dictionary]:
+	return road_network.road_segments_in(rect)
+
+func road_hierarchy_at(p: Vector2) -> StringName:
+	return road_network.road_hierarchy_at(p)
+
+func distance_to_road(p: Vector2) -> float:
+	return road_network.distance_to_road(p)
+
+func nearest_crossing(p: Vector2) -> Dictionary:
+	return road_network.nearest_crossing(p)
+
+func road_width_at(p: Vector2) -> float:
+	return road_network.road_width_at(p)

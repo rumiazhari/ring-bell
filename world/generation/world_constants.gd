@@ -94,6 +94,40 @@ const TERRAIN_CLASSES: Array[StringName] = [&"basin", &"rolling_hill", &"upland"
 const SURFACE_MATERIALS: Array[StringName] = [&"alluvial_soil", &"meadow_soil", &"upland_grass", &"rock"]
 const WATER_BODIES: Array[StringName] = [&"sea", &"lake", &"river", &"reservoir"]  # named only; sea not generated in continental Prague basin
 
+# --- Settlement & Road (P4.1) authoritative numerics ---
+const SETTLEMENT_VOCAB: Array[StringName] = [&"village", &"hamlet", &"farmstead", &"isolated_farm", &"town"]
+const ROAD_HIERARCHY_VOCAB: Array[StringName] = [&"primary", &"secondary", &"track"]
+const SETTLEMENT_MACRO_CELL := 1024.0
+const SETTLEMENT_LANDSCAPE_CELL := 256.0
+const SETTLEMENT_SITE_RADIUS_VILLAGE_MIN := 48.0
+const SETTLEMENT_SITE_RADIUS_VILLAGE_MAX := 90.0
+const SETTLEMENT_SITE_RADIUS_HAMLET_MIN := 26.0
+const SETTLEMENT_SITE_RADIUS_HAMLET_MAX := 46.0
+const SETTLEMENT_SITE_RADIUS_FARMSTEAD_MIN := 16.0
+const SETTLEMENT_SITE_RADIUS_FARMSTEAD_MAX := 28.0
+const SETTLEMENT_SITE_RADIUS_ISOLATED_FARM_MIN := 16.0
+const SETTLEMENT_SITE_RADIUS_ISOLATED_FARM_MAX := 28.0
+const SETTLEMENT_SPACING_VILLAGE := 700.0
+const SETTLEMENT_SPACING_HAMLET := 420.0
+const SETTLEMENT_SPACING_FARMSTEAD := 220.0
+const SETTLEMENT_MIN_RADIUS_FACTOR := 1.8
+const SETTLEMENT_GATE_RADIUS := 18.0
+const SETTLEMENT_GATE_COUNT_MIN := 4
+const SETTLEMENT_GATE_COUNT_MAX := 8
+const ROAD_WIDTH_PRIMARY := 7.0
+const ROAD_WIDTH_SECONDARY := 5.0
+const ROAD_WIDTH_TRACK := 3.5
+const ROAD_LIFT_M := 0.04
+const BRIDGE_DECK_LIFT_M := 0.35
+const BRIDGE_WIDTH_EXTRA := 0.6
+const MAX_ROAD_VERTS_PER_CHUNK := 160
+const MAX_ROAD_VERTS_TYPICAL := 96
+const MAX_ROAD_TRIS_PER_CHUNK := 96
+const MAX_ROAD_TRIS_TYPICAL := 64
+const MAX_ROAD_SEGMENTS_PER_CHUNK := 8
+const MAX_ACTIVE_ROAD_COLLIDERS := 9
+const ROAD_SMOOTH_SAMPLE_M := 12.0
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]
