@@ -93,6 +93,7 @@ static func unit_float(purpose: String, parts: Array) -> float:
 # --- Stateless coordinate sampling (P2 terrain) -------------------------------
 
 const TERRAIN_DOMAINS: Array[StringName] = [&"terrain", &"ridge", &"valley", &"soil", &"moisture", &"temperature", &"geology", &"settlement"]
+const HYDRO_DOMAINS: Array[StringName] = [&"hydro", &"hydro_cx", &"hydro_phi", &"hydro_meander2", &"hydro_width", &"hydro_level", &"hydro_trib_ax", &"hydro_trib_az", &"hydro_trib_cz", &"hydro_trib_mid"]
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation

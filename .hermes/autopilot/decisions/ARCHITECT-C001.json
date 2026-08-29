@@ -1,0 +1,27 @@
+{
+  "decision": "authorize_build",
+  "cycle": 1,
+  "milestone_id": "P0.5-TRAVERSAL-CLOSEOUT",
+  "milestone_title": "Collision-backed city traversal closeout",
+  "gameplay_value": "Make the existing streamed Prague building loop genuinely enjoyable and trustworthy: an ordinary survivor can open a real door, explore an interior, climb to a roof, return, and rely on honest collision before hydrology and regional expansion add longer journeys.",
+  "spec_path": ".hermes/autopilot/specs/SPEC-C001.md",
+  "spec_sha256": "2380a62758abe52299542a043e1909782083a49de1bd494320b0c0b279fff9aa",
+  "acceptance_criteria": [
+    "--cityruntime finishes with finished with 0 failure(s): the closed doorway ray hits the actual Door leaf, the open aperture is clear without RID exclusion, the swung leaf remains collidable, close re-blocks the aperture, and IDs/open/destroyed state survive streaming.",
+    "--walkthrough finishes with finished with 0 failure(s) and proves the complete generated route from closed entrance through every storey and the roof and back outside; after the initial resident-wait drop-off there are no player-position writes, waypoint skips, collision-mask bypasses, or teleports.",
+    "For the canonical seed and at least four alternate seeds, sampled eligible multi-storey buildings have bounded entry corridors, valid partition openings, and stair/landing collision geometry continuous at both ramp endpoints, including opposite-edge door/stair mappings.",
+    "--havoctest finishes with finished with 0 failure(s): the destructible prop is present, its own collider receives the clear-shot ray, and weapon/explosion damage is observed through the existing physics path without accepting a missing or unhit fixture.",
+    "--citytest finishes with finished with 0 failure(s) and retains deterministic plan/chunk/building/door/interior results across query/build order, negative coordinates, chunk ownership, and destruction persistence, with no duplicate building or dynamic entity.",
+    "--terrainmaterialtest and --smoke each finish with finished with 0 failure(s); terrain seam/material/collider budgets, generated-terrain save exclusion, legacy population/combat/quest behavior, and active-ring streaming budgets are not weakened.",
+    "A normal windowed CITY run provides player-facing evidence of the same WASD/E route: the door visibly swings and remains solid, the capsule crosses the aperture, stairs are continuous at landings, the camera follows the climb, and the player returns outside without falling through or walking through walls."
+  ],
+  "required_tests": [
+    "python tools/run_suite.py --import 120",
+    "python tools/run_suite.py --citytest 300",
+    "python tools/run_suite.py --terrainmaterialtest 300",
+    "python tools/run_suite.py --cityruntime 300",
+    "python tools/run_suite.py --walkthrough 360",
+    "python tools/run_suite.py --havoctest 240",
+    "python tools/run_suite.py --smoke 180"
+  ]
+}

@@ -57,10 +57,37 @@ const BASIN_SMOOTH_MAX_HEIGHT_M := 6.0
 const WORLD_SCHEMA_VERSION := 1
 # Generator version remains WorldSeed.GENERATOR_VERSION == 2 in P2 (no city manifest change)
 
+# --- Hydrology (P2.2) authoritative numerics — single source of truth ---
+# River corridor is deterministic from seed: CX = 620 + S*90, meander 72 sin + 18 coherent.
+const HYDRO_CORRIDOR_CX_MEAN := 620.0
+const HYDRO_CORRIDOR_JITTER := 90.0
+const HYDRO_MEANDER_AMPL := 72.0
+const HYDRO_MEANDER_WAVELENGTH := 1350.0
+const HYDRO_MEANDER2_AMPL := 18.0
+const HYDRO_MEANDER2_CELL := 600.0
+const HYDRO_WIDTH_CELL := 900.0
+const RIVER_WIDTH_MIN := 38.0
+const RIVER_WIDTH_MAX := 50.0
+const TRIBUTARY_WIDTH_MIN := 14.0
+const TRIBUTARY_WIDTH_MAX := 22.0
+const BANK_W := 9.0
+const FLOODPLAIN_W := 26.0
+const WATER_LEVEL_MEAN := -1.2
+const WATER_LEVEL_VAR := 0.6
+const WATER_LEVEL_CELL := 800.0
+const TRIB_FALL_SLOPE := 0.015
+const TRIB_COUNT := 2
+# TRIB tributary anchors outside corridor CX +- (260 +-80), upstream Az ~ -2200 + k*1400
+const TRIB_ANCHOR_BASE_OFFSET := 260.0
+const TRIB_ANCHOR_JITTER := 80.0
+const TRIB_UPSTREAM_BASE_Z := -2200.0
+const TRIB_UPSTREAM_STEP_Z := 1400.0
+const TRIB_UPSTREAM_JITTER_Z := 320.0
+# Meander phase seeded via unit_float("hydro_phi")
 # --- World IDs & vocabulary ---
 const TERRAIN_CLASSES: Array[StringName] = [&"basin", &"rolling_hill", &"upland", &"cliff"]
 const SURFACE_MATERIALS: Array[StringName] = [&"alluvial_soil", &"meadow_soil", &"upland_grass", &"rock"]
-const WATER_BODIES: Array[StringName] = [&"sea", &"lake", &"river", &"reservoir"]  # named only; no sea generated in P2
+const WATER_BODIES: Array[StringName] = [&"sea", &"lake", &"river", &"reservoir"]  # named only; sea not generated in continental Prague basin
 
 static func is_inside_world(p: Vector2) -> bool:
 	return p.x >= WORLD_MIN_M and p.x < WORLD_MAX_M and p.y >= WORLD_MIN_M and p.y < WORLD_MAX_M

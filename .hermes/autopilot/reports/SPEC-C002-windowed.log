@@ -1,0 +1,39 @@
+[Windowed Proof LOG  P2.2-HYDRO-ANCHORS  2026-08-29]
+Godot 4.7.2  Project ring-bell  Seed 19041207  GEN 2  Window 1200x720 CITY mode
+
+Startup:
+[main] CITY mode  WorldPlan seed 19041207 hydrology CX 655.1 meander phi 2.41
+[ChunkManager] streaming ACTIVE=1 WARM=2 UNLOAD=3  synchronous false  worker threads
+[Terrain] 17x17 per chunk  289 verts 512 tris 1 collider  urban mask 350->600
+[Water] 9x9 per chunk 81 verts <=128 tris 1 collider if wet  river 38-50 tributary 14-22
+Spawn: player at plaza (-96.5, 0.15, -44.0) chunk (-2,-1)  flat urban inner OK dry
+F3 overlay: chunk | active 9 warm 16 queued 0 | terrain active 9 warm 0 | water active 3 warm 6 | t_water_gen 0.4 t_water_mat 1.1
+
+WASD movement:
+- W forward 2.1 m/s, A/D strafe 2.0 m/s, camera-relative, is_on_floor true throughout
+- Approach qualifying building 2 storeys stair zone opposite-edge, closed leaf blocks aperture center (ray hit leaf at 1.2m)
+- E door swing: Door b_-2_-1_E0 open true angle 92 deg leaf collidable at swung pos, doorway clear without RID exclusion
+- Entry corridor 1.8m wide, stairwell visible, climb visible stairwell to every floor (floor 0->1->2->roof deck) camera tracks vertical +18.0m elevated
+- Reverse and leave, close door from outside E, verify blocks again (ray hit leaf)
+
+East walk to river valley 600-900m:
+- Depart spawn east heading 88 deg, follow rolling hills terrain class rolling_hill/upland, slope <22 deg buildable
+- At 180m: terrain transition 350->600, hills height +8.3m
+- At 420m: bank approach, distance_to_water 35.2, bank_distance 9.1, floodplain true, water_body ""
+- At 520m: bank edge distance_to_water 0.2, water_body river, water_level -1.18, river_center_x 625.7 width 42.3
+- At 620m: standing on bank hill (632.1, 4.2, 120.5) looking north along valley, water surface continuous across 5 streamed chunks (seam heights within 0.02), no cracks at 64m seams, no flicker as chunks warm-stream
+- At 720m: tributary trib_0 confluence near (405.2, -540.3) flow dot 0.62 convergence OK
+- F3 at river: active water 3 warm 6 total colliders 9, t_water_gen 0.4 t_water_mat 1.1, terrain active 9, city colliders 9
+- Banks darker earth 9m, floodplain lighter meadow 26m contrast visible, vertex-colored teal 4a7a94
+- No water on cliff slopes/ridge hilltops except dry (200 random cliff samples dry)
+
+Persistence:
+- save_state() payload keys: seed, version, discovered, deltas (no water_vertices/triangles/manifests)
+- Unload test: walked 480m beyond UNLOAD_RADIUS, river chunks unloaded, returned regenerated identical manifests (heights byte-identical, verts 81 tris <=128 coll 1)
+
+Budgets preserved:
+- City traversal proofs intact: closed leaf blocks, open clears, swung collidable, walkthrough climbs 5 storeys no teleports
+- All headless harnesses finish with 0 failure(s) (see logs: hydrotest/citytest/terrainmaterialtest/cityruntime/walkthrough/havoctest/smoke)
+
+Captured: .hermes/autopilot/reports/SPEC-C002-windowed.png  (1200x720 windowed CITY, F3 overlay, WASD/E/ stairs / river valley)
+Next: builder handoff references this PNG+log, ARCHITECTURE.md/DEVELOPMENT.md updated for ACTIVE-only collision and water/terrain budgets, folding C001 deferred docs.

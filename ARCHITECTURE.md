@@ -3,9 +3,7 @@
 3D top-down open-world zombie survival RPG centered on realistic survivor
 simulation. This document maps the codebase: what owns what, how data flows,
 and where new systems plug in. Read this before editing.
-
 **Golden rules**
-
 1. Small focused files; one responsibility each.
 2. Simulation facts live in `WorldState`, never in quest/dialogue scripts.
 3. Quests and dialogue query world state - they never fake or copy NPCs.
@@ -67,64 +65,82 @@ world/
   food_crate.gd          Lootable container; also feeds NPC brains
   day_night_controller.g Sun energy/color, ambient, streetlamps vs clock
 
-  generation/          P0.5 deterministic city plan (pure functions of seed+coords)
+  generation/          P0.5 deterministic city plan + P2 terrain + P2.2 hydrology (pure functions of seed+coords)
     world_seed.gd        WorldSeed: seed storage, GENERATOR_VERSION, splitmix
-                         RNG helpers - every random choice flows through here
+                         RNG helpers, sample_coherent lattice + domain separation
+    world_constants.gd   Authoritative numerics: CHUNK_SIZE, WORLD_BOUNDS, height/slope thresholds,
+                         hydrology corridor/meander/width/bank/floodplain/water-level, budget tolerances
+    world_plan.gd        Facade owning one TerrainPlan + one HydrologyPlan (pure, per-worker)
     city_plan.gd         Hierarchical macro plan: districts -> road grid ->
                          urban blocks -> plazas -> parcels/building specs.
                          Cached per instance; queries are order-independent
+    terrain_plan.gd      Layered heightfield: ridge/valley/temperature sampling, urban radial mask
+    hydrology_plan.gd    Vltava-like primary river (CX 620+-90, meander 72+18) + 2 bezier tributaries,
+                         width/level/distance/flow/crossing queries (pure, deterministic)
     building_builder.gd  One building spec -> batched geometry ops (shell,
                          floors, stairs, roof, balconies, windows)
-    chunk_builder.gd     Materializes ONE chunk: ground, roads, blocks,
+    chunk_builder.gd     Materializes ONE city chunk: ground, roads, blocks,
                          buildings via BuildingBuilder, props; MeshBatcher out
 
-  streaming/           P0.5 chunk lifecycle
+  streaming/           P0.5 chunk lifecycle + P2 terrain + P2.2 water
     chunk_manager.gd     Tracks player chunk; budgeted load/unload queues;
-                         ACTIVE/WARM/COLD rings; stats for F3 overlay
+                         ACTIVE/WARM/COLD rings; worker-thread fill_batcher + build_manifest;
+                         materializes city + terrain + water; stats for F3 overlay (t_gen/t_mat/t_water_gen/t_water_mat)
     mesh_batcher.gd      Collects (box,color,collide) tuples during build,
                          flushes to ONE merged vertex-colored ArrayMesh +
-                         one StaticBody3D per chunk
+                         one StaticBody3D per chunk (ACTIVE-only physics, see below)
+    terrain_chunk_builder.gd  17x17 height samples per 64 m chunk (289 verts / 512 tris), one mesh + one Concave per chunk
+    water_chunk_builder.gd    9x9 water samples per 64 m chunk (81 verts / <=128 tris, <=1 collider), muted-teal mesh + bank ribbon
 
 ui/hud.gd             Clock, vitals bars, quest tracker, prompts, banners,
                       death screen (all code-built)
 debug/smoke_test.gd   Headless regression harness (--smoke / --soak modes)
 debug/world_test.gd   Headless city determinism harness (--citytest)
+debug/terrain_test.gd                Pure terrain plan checks
+debug/terrain_material_test.gd       Terrain manifest + streaming budgets
+debug/hydrology_test.gd              Hydrology determinism + water manifest budgets (--hydrotest / --hydromaterialtest)
+debug/city_runtime_test.gd           Streamed-city integration (physics rays, stairs, doors, destruction)
+debug/walkthrough_probe.gd           Honest player traversal (WASD through doors, stairs 5 storeys)
+debug/havoc_test.gd                  Havoc physics + firearms integration
 camera/follow_camera.gd Elevated rotatable rig; group "camera_rig"
 ```
 
-## World architecture (P0.5)
+## World architecture (P0.5 + P2 terrain + P2.2 hydrology)
 
-Two strictly separated layers:
+Two strictly separated layers (now three plan owners behind one facade):
 
 ```
 PLAN LAYER (pure, immutable, cheap)          MATERIAL LAYER (scene nodes)
-CityPlan(world_seed)                          ChunkManager
-  .district_at(cell)                 reads     .load_chunk(coord)
-  .roads_near(rect)                  ---->       ChunkBuilder.build(...)
-  .blocks_in(rect)                               -> MeshBatcher/MultiMesh
-  .buildings_in(rect)                            -> StaticBody3D collision
-  .building_by_id(id)                        unload => queue_free subtree
+WorldPlan(world_seed)                         ChunkManager
+  .terrain: TerrainPlan                         .load_chunk(coord) -> city + terrain + water
+  .hydrology: HydrologyPlan                  threads: fill_batcher + terrain/water manifests
+  .district_at(cell)  --\
+  .roads_near(rect)     \
+  .blocks_in(rect)      reads  ChunkBuilder.build(...) + TerrainChunkBuilder + WaterChunkBuilder
+  .buildings_in(rect)   ---->    -> MeshBatcher/MultiMesh (city)
+  .building_by_id(id)            -> Terrain Mesh+Concave (1/chunk)
+  .height_at(p)                  -> Water Mesh+Concave (1/chunk if wet)
+  .water_body_at(p)              unload => queue_free subtree (city+terrain+water together)
 ```
 
 - The plan NEVER touches the scene tree; chunks NEVER make random choices -
-  all randomness comes from WorldSeed.rng([seed, purpose_hash, coords...]).
+  all randomness comes from WorldSeed.rng([seed, purpose_hash, coords...]) or WorldSeed.sample_coherent* with explicit domains.
 - Determinism contract: any two chunk builds for the same coord under the
   same seed produce identical node trees and identical collision shapes,
-  regardless of which neighbors were built first. `--citytest` enforces this.
+  regardless of which neighbors were built first. `--citytest`, `--terrainmaterialtest`, and `--hydrotest` enforce this (including negative coords and shuffled build order).
 - Chunk size is 64 m (`WorldSeed.CHUNK_SIZE`). Active ring = chebyshev <= 1
-  (geometry + physics), warm ring <= 2 (kept resident, future throttling),
-  beyond = unloaded. Buildings are owned by the chunk containing their
-  footprint center; with a 64 m grid and <= 20 m deep lots this keeps every
-  visible building resident while its chunk is active or warm.
+  (geometry + physics), warm ring <= 2 (resident visuals, no physics), beyond = unloaded (hysteresis `UNLOAD_RADIUS = WARM_RADIUS + 1 = 3`). Buildings are owned by the chunk containing their footprint center; with a 64 m grid and <= 20 m deep lots this keeps every visible building resident while its chunk is active or warm.
+- **ACTIVE-only collision (intentional budgeted optimization, clarified from P0.5 assumption):** warm chunks retain their merged city `MeshInstance3D` visuals and terrain/water meshes, but their `StaticBody3D`/water `WaterBody` collision is disabled (`collision_layer=0` or batcher.disable_collision()). Only chunks with state ACTIVE contribute to `colliders`/`terrain_colliders`/`water_colliders` and to the F3 `active terrain` / `active water` counts. This keeps physics at a 3x3 budget (9 city + 9 terrain + at most 9 water colliders) while warm visuals stay resident for seamless streaming. Previous docs assumed warm+active physics; that assumption is corrected here.
+- **Budgets:** city geometry batched to ONE vertex-colored ArrayMesh + one StaticBody3D per chunk (ACTIVE-only). Terrain: 17x17 samples per 64 m chunk (4 m spacing, 289 verts / 512 tris, 1 Concave per chunk, 9 active max). Water: 9x9 samples per 64 m chunk (8 m spacing, 81 verts / <=128 tris, at most 1 Concave per wet chunk, 0 if dry, 9 active water max). Per-chunk timings `t_gen/t_mat` (city) plus `t_terrain_gen/t_terrain_mat` and `t_water_gen/t_water_mat` are measured inside the worker (`_thread_build` with private WorldPlan) and on the main thread (`materialize`) and exposed via `ChunkManager.debug_lines()` and F3 overlay.
 - Persistence = deterministic regeneration + deltas. Saves store the seed,
-  generator version, discovered-chunk set and per-chunk modification dicts.
-  Raw generated geometry is NEVER serialized.
+  generator version, discovered-chunk set and per-chunk modification dicts (destroyed cells, damage, door states). Raw generated geometry (city meshes, terrain heights, water surfaces) is NEVER serialized.
 - Generator versioning: saves carry `generator_version`; on mismatch the
-  loader warns and regenerates baseline geometry (migration tooling later).
+  loader warns and regenerates baseline geometry (migration tooling later). `GENERATOR_VERSION` remains 2 through P2 and P2.2 because hydrology sits outside the dense historic core (`CX 530-710 m`) and does not carve city blocks or terrain trench in this slice.
+- Streaming pipeline: `ChunkManager._thread_build` builds city batcher + `TerrainChunkBuilder.build_manifest` + `WaterChunkBuilder.build_manifest` on WorkerThreadPool with a private `WorldPlan` (plan_mutex guards CityPlan caches), measuring `water_gen_ms`; `_materialize` creates `Chunk_X_Y` plus `Terrain_X_Y` and `Water_X_Y` children, measuring `water_mat_ms`. Water meshes use muted Vltava teal vertex colors; a 1.5 m earth bank ribbon hides the terrain/water seam visually without extra collider.
 
 Planned next layers (do not implement early): interiors/furniture passes,
 apocalypse damage pass, survivor modification pass, traversal graph records,
-parkour controller under actors/traversal/.
+parkour controller under actors/traversal/ — plus biome/geology/road/bridge layers that will inherit the established hydrology constraint.
 
 ## Autoload contracts (order matters)
 
@@ -193,6 +209,8 @@ and Kenji's dialogue switches to grief because his tree checks death first.
 - **City geometry is batched**: all boxes of a chunk merge into ONE
   vertex-colored ArrayMesh + one StaticBody3D via MeshBatcher (~2 nodes per
   chunk regardless of prop density). Decorative objects get NO scripted nodes.
+  Terrain and water reuse the same pattern: one terrain mesh+Concave and at most one water mesh+Concave per chunk, all parented under the same `Chunk_X_Y` node so streaming unloads them atomically.
+- **Streaming stays additive:** hydrology (`HydrologyPlan` + `WaterChunkBuilder`) is owned by `WorldPlan`/`ChunkManager` but `TerrainPlan` remains unchanged this cycle (valley bias at `x=-180` decorative only). The river at `CX 620+-90` is outside the `URBAN_INNER_M=350` flat and beyond `URBAN_OUTER_M=600` transition, so the spawn chunk stays dry and no building footprint overlap check is required. Future in-city trench carving and bridge meshes are deferred.
 
 ## Extension points (already wired)
 
@@ -204,3 +222,4 @@ and Kenji's dialogue switches to grief because his tree checks death first.
   and/or `NeedsComponent.speed_multiplier()`.
 - Settlements/economy/factions: faction id already exists in IdentityComponent;
   `WorldState.flags` can hold arbitrary typed values today.
+- Hydrology consumers: query `WorldPlan.water_body_at / water_level_at / distance_to_water / flow_direction_at / crossing_candidates` or `HydrologyPlan` directly; never duplicate the CX/meander/width math — import `WorldConstants`.

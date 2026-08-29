@@ -1,0 +1,28 @@
+{
+  "decision": "authorize_build",
+  "cycle": 2,
+  "milestone_id": "P2.2-HYDRO-ANCHORS",
+  "milestone_title": "Vltava-anchored hydrology slice: deterministic river corridor, tributaries and streamed water surfaces",
+  "gameplay_value": "Give the player a readable landscape-scale landmark beyond buildings: a deterministic Vltava-like river valley with banks, floodplain and tributaries that orients exploration, constrains future farms, roads and settlements, and creates crossing choices while preserving the proven city-traversal budgets.",
+  "spec_path": ".hermes/autopilot/specs/SPEC-C002.md",
+  "spec_sha256": "16ef8e407bc21c8ba989f7aefa96402963a0d43d8eba73bf39ed5e915a4b4029",
+  "acceptance_criteria": [
+    "--hydrotest finishes with finished with 0 failure(s): same-seed hydrology queries and water manifests identical regardless of query/build order (incl. negative coords), different seed materially differs, primary centerline continuous across every chunk seam, both tributaries approach monotonically and meet within 600 m of seeded confluence.",
+    "Geographic validity for canonical +4 alternate seeds: deterministic CX 530-710 m + meander +-72 m, width 38-50 m, bank 9 m / floodplain 26 m monotonic, no water on cliff slopes/ridge hilltops except lake placeholder, flow unit length with northward >0.35 primary and >0.45 tributary convergence dot using real WorldConstants thresholds.",
+    "Water materialization budgets and seams proven: chunk water manifests byte-identical across shuffled builds, shared-edge heights/centerline within 0.02 m at + and - boundaries, <=1 water collider per chunk (0 if dry), <=9 active water colliders in 3x3 ring, bounded verts/tris per wet chunk (81/128 for 9x9 or documented 17x17) and per-chunk water_mat_ms measured.",
+    "ChunkManager streams water with terrain+city without duplication: 3x3 ACTIVE ring around hill near river claims active water <=9, walking 480 m beyond UNLOAD_RADIUS unloads river chunks and returning regenerates identical water manifests, debug stats contain t_water_gen/t_water_mat, generated water excluded from save_state().",
+    "Determinism and buildability preserved after water: GENERATOR_VERSION stays 2, WorldPlan remains pure, CityPlan deterministic IDs unchanged, spawn anchor found, multi-storey buildings unchanged — proven by --citytest finishing with finished with 0 failure(s) and retained overlap/door/stair/facade assertions.",
+    "Existing budgets not weakened: --citytest, --terrainmaterialtest, --cityruntime, --walkthrough, --havoctest, --smoke each finish with finished with 0 failure(s) (3221225477 with marker is not a failure; ObjectDB inside_tree noise reduced). Closed leaf still blocks aperture center, open doorway clear without RID exclusion, swung leaf collidable, walkthrough climbs 5 storeys and back with no position writes/skips, havoctest prop clear-shot and damage honest.",
+    "Windowed player-facing proof archived: normal windowed CITY run shows WASD movement, E door swing (closed blocks/open clears), stair climb to roof with camera following and F3 overlay (active water + t_water_* visible), then 600-900 m east walk to river valley showing continuous water surface, banks and floodplain contrast. At least one PNG + log stored under .hermes/autopilot/reports/ or junk/ and referenced in handoff; ARCHITECTURE.md/DEVELOPMENT.md updated for ACTIVE-only collision and water/terrain budgets, folding C001 deferred docs."
+  ],
+  "required_tests": [
+    "python tools/run_suite.py --import 120",
+    "python tools/run_suite.py --hydrotest 300",
+    "python tools/run_suite.py --citytest 300",
+    "python tools/run_suite.py --terrainmaterialtest 300",
+    "python tools/run_suite.py --cityruntime 300",
+    "python tools/run_suite.py --walkthrough 360",
+    "python tools/run_suite.py --havoctest 240",
+    "python tools/run_suite.py --smoke 180"
+  ]
+}

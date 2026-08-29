@@ -112,6 +112,10 @@ func _ready() -> void:
 		var tester6b: Node = load("res://debug/terrain_material_test.gd").new()
 		tester6b.name = "TerrainMaterialTest"
 		add_child(tester6b)
+	elif user_args.has("--hydrotest") or user_args.has("--hydromaterialtest"):
+		var tester6c: Node = load("res://debug/hydrology_test.gd").new()
+		tester6c.name = "HydrologyTest"
+		add_child(tester6c)
 	elif user_args.has("--doortest"):
 		var tester7: Node = load("res://debug/temp_door_probe.gd").new()
 		tester7.name = "TempDoorProbe"
@@ -222,20 +226,23 @@ func _spawn_city_population() -> void:
 ## This is a startup synchronization gate, not a movement/teleport fallback.
 func _release_city_spawn_gate_when_ready() -> void:
 	if not _city_spawn_gate_active or player == null \
-			or not is_instance_valid(player) or chunk_manager == null:
+			or not is_instance_valid(player) or not player.is_inside_tree() \
+			or chunk_manager == null or not is_instance_valid(chunk_manager) \
+			or not chunk_manager.is_inside_tree():
 		return
 	var coord := WorldSeed.chunk_coord(player.global_position.x,
 			player.global_position.z)
 	var chunk := chunk_manager.get_node_or_null(
 			NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
-	if chunk == null:
+	if chunk == null or not is_instance_valid(chunk) or not chunk.is_inside_tree():
 		return
 	var terrain_body := chunk.get_node_or_null(
 			NodePath("Terrain_%d_%d/TerrainBody" % [coord.x, coord.y]))
-	if terrain_body == null:
+	if terrain_body == null or not is_instance_valid(terrain_body):
 		return
 	_city_spawn_gate_active = false
-	player.process_mode = Node.PROCESS_MODE_INHERIT
+	if is_instance_valid(player) and player.is_inside_tree():
+		player.process_mode = Node.PROCESS_MODE_INHERIT
 
 
 func _wire_player(p: Survivor) -> void:
@@ -272,7 +279,7 @@ func _on_dialogue_closed() -> void:
 ## Hide building roofs while the player stands inside the footprint so
 ## interiors stay readable from the elevated camera.
 func _update_roof_visibility() -> void:
-	if player == null or not is_instance_valid(player):
+	if player == null or not is_instance_valid(player) or not player.is_inside_tree():
 		return
 	var p := Vector2(player.global_position.x, player.global_position.z)
 	var any_inside := false
@@ -301,8 +308,9 @@ func _update_roof_visibility() -> void:
 ##    player, so rotating the camera swaps which wall is faded. Opposite
 ##    walls stay visible and preserve the room shape.
 func _update_city_interior() -> void:
-	if player == null or not is_instance_valid(player) \
-			or city_plan == null or chunk_manager == null:
+	if player == null or not is_instance_valid(player) or not player.is_inside_tree() \
+			or city_plan == null or chunk_manager == null \
+			or not is_instance_valid(chunk_manager) or not chunk_manager.is_inside_tree():
 		return
 	var p3 := player.global_position
 	var p := Vector2(p3.x, p3.z)
@@ -338,9 +346,15 @@ func _update_city_interior() -> void:
 		# the ACTUAL Camera3D lens position - the rig origin tracks the
 		# PLAYER, so it sits at the player and its "sector" was near zero.
 		var cam_xz := p
-		if camera_rig != null and is_instance_valid(camera_rig):
-			cam_xz = Vector2(camera_rig.camera_world_position().x,
-					camera_rig.camera_world_position().z)
+		if camera_rig != null and is_instance_valid(camera_rig) and camera_rig.is_inside_tree():
+			# Guard against shutdown race where camera_rig is freed but still instance-valid.
+			var cam_pos: Vector3 = camera_rig.camera_world_position() if camera_rig.has_method("camera_world_position") else Vector3.ZERO
+			if cam_pos.is_finite():
+				cam_xz = Vector2(cam_pos.x, cam_pos.z)
+			else:
+				# Fallback to rig position if camera not yet inside tree.
+				if camera_rig.is_inside_tree():
+					cam_xz = Vector2(camera_rig.global_position.x, camera_rig.global_position.z)
 		var new_faded: Array = InteriorProbe.faded_facades(p, cam_xz) \
 				if floor_i < n else []
 		if owner_coord != _gate_coord or tag != _gate_tag:

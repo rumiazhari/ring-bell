@@ -36,6 +36,10 @@ var _terrain_vertices_total := 0
 var _terrain_triangles_total := 0
 var _terrain_colliders_total := 0
 var _terrain_mat_ms_total := 0.0
+var _water_vertices_total := 0
+var _water_triangles_total := 0
+var _water_colliders_total := 0
+var _water_mat_ms_total := 0.0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -50,6 +54,7 @@ var _total_unloads := 0
 var _total_gen_ms := 0.0               # plan/batch data time (threaded)
 var _total_mat_ms := 0.0               # materialization time (main thread)
 var _total_terrain_gen_ms := 0.0        # terrain manifest generation (measured inside worker)
+var _total_water_gen_ms := 0.0          # water manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
 
@@ -84,6 +89,11 @@ func reset_stream() -> void:
 	_terrain_colliders_total = 0
 	_terrain_mat_ms_total = 0.0
 	_total_terrain_gen_ms = 0.0
+	_water_vertices_total = 0
+	_water_triangles_total = 0
+	_water_colliders_total = 0
+	_water_mat_ms_total = 0.0
+	_total_water_gen_ms = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -162,20 +172,23 @@ func _launch_batch_jobs() -> void:
 		if world_plan != null:
 			holder["terrain"] = {}
 			holder["terrain_gen_ms"] = 0.0
+			holder["water"] = {}
+			holder["water_gen_ms"] = 0.0
 			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
 			_thread_build(batcher, c, holder, seed_used)
 			var gen_ms: float = float(holder.get("gen_ms", 0.0))
 			var t_gen: float = float(holder.get("terrain_gen_ms", 0.0))
-			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "task_id": -1,
-					"gen_ms": gen_ms, "terrain_gen_ms": t_gen}
+			var w_gen: float = float(holder.get("water_gen_ms", 0.0))
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen}
 		else:
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": 0.0, "terrain_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
@@ -193,6 +206,15 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["terrain"] = {}
 		holder["terrain_gen_ms"] = 0.0
+	if holder.has("water"):
+		var local_world_w := WorldPlan.new(seed_used)
+		var tw0 := Time.get_ticks_usec()
+		var wm := WaterChunkBuilder.build_manifest(local_world_w, coord)
+		holder["water"] = wm
+		holder["water_gen_ms"] = float(Time.get_ticks_usec() - tw0) / 1000.0
+	else:
+		holder["water"] = {}
+		holder["water_gen_ms"] = 0.0
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
 ## Legacy helper kept for direct sync tests
@@ -220,18 +242,23 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var terrain_manifest: Dictionary = {}
 		var terrain_gen_ms: float = float(job.get("terrain_gen_ms", 0.0))
 		var gen_ms: float = float(job.get("gen_ms", 0.0))
+		var water_manifest: Dictionary = {}
+		var water_gen_ms: float = float(job.get("water_gen_ms", 0.0))
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
+			water_manifest = job.get("water", {})
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
 			terrain_manifest = holder.get("terrain", {})
 			terrain_gen_ms = float(holder.get("terrain_gen_ms", 0.0))
+			water_manifest = holder.get("water", {})
+			water_gen_ms = float(holder.get("water_gen_ms", 0.0))
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms)
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -262,6 +289,17 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		var chunk_node := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
 		if chunk_node != null:
 			tstats = TerrainChunkBuilder.materialize(chunk_node, terrain_manifest)
+	# Materialize water under same chunk if manifest present
+	var wstats := {}
+	if not water_manifest.is_empty():
+		var chunk_node_w := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node_w != null:
+			wstats = WaterChunkBuilder.materialize(chunk_node_w, water_manifest)
+			# ACTIVE-only water physics: disable warm water colliders
+			if not include_collision:
+				var wb := chunk_node_w.get_node_or_null(NodePath("Water_%d_%d/WaterBody" % [coord.x, coord.y]))
+				if wb != null and is_instance_valid(wb):
+					(wb as StaticBody3D).collision_layer = 0
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -275,6 +313,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var terrain_verts := int(tstats.get("terrain_vertices", 0))
 	var terrain_tris := int(tstats.get("terrain_triangles", 0))
 	var terrain_cols := int(tstats.get("terrain_colliders", 0))
+	var water_verts := int(wstats.get("water_vertices", 0))
+	var water_tris := int(wstats.get("water_triangles", 0))
+	var water_cols := int(wstats.get("water_colliders", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -287,6 +328,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"terrain_triangles": terrain_tris,
 		"terrain_colliders": terrain_cols,
 		"terrain_manifest": terrain_manifest,
+		"water_vertices": water_verts,
+		"water_triangles": water_tris,
+		"water_colliders": water_cols,
+		"water_manifest": water_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -296,15 +341,22 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"mat_ms": float(stats["mat_ms"]),
 		"terrain_gen_ms": terrain_gen_ms,
 		"terrain_mat_ms": float(tstats.get("terrain_mat_ms", 0.0)),
+		"water_gen_ms": water_gen_ms,
+		"water_mat_ms": float(wstats.get("water_mat_ms", 0.0)),
 	}
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
 	_terrain_colliders_total += terrain_cols
 	_terrain_mat_ms_total += float(tstats.get("terrain_mat_ms", 0.0))
+	_water_vertices_total += water_verts
+	_water_triangles_total += water_tris
+	_water_colliders_total += water_cols
+	_water_mat_ms_total += float(wstats.get("water_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
 	_total_terrain_gen_ms += terrain_gen_ms
+	_total_water_gen_ms += water_gen_ms
 	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
@@ -332,6 +384,11 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_terrain_colliders_total -= int(rec.get("terrain_colliders", 0))
 		_terrain_mat_ms_total -= float(rec.get("terrain_mat_ms", 0.0))
 		_total_terrain_gen_ms -= float(rec.get("terrain_gen_ms", 0.0))
+		_water_vertices_total -= int(rec.get("water_vertices", 0))
+		_water_triangles_total -= int(rec.get("water_triangles", 0))
+		_water_colliders_total -= int(rec.get("water_colliders", 0))
+		_water_mat_ms_total -= float(rec.get("water_mat_ms", 0.0))
+		_total_water_gen_ms -= float(rec.get("water_gen_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -364,6 +421,13 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				batcher.disable_collision()
 				rec["static"] = null
 				rec["colliders"] = 0
+			# Water ACTIVE-only physics: warm retains WaterMesh visual but disables collision
+			var water_body := get_node_or_null(NodePath("Chunk_%d_%d/Water_%d_%d/WaterBody" % [coord.x, coord.y, coord.x, coord.y]))
+			if water_body != null and is_instance_valid(water_body):
+				if desired_state == &"active":
+					(water_body as StaticBody3D).collision_layer = 1
+				elif previous_state == &"active":
+					(water_body as StaticBody3D).collision_layer = 0
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -638,6 +702,11 @@ func avg_mat_ms() -> float:
 func avg_terrain_gen_ms() -> float:
 	return _total_terrain_gen_ms / maxf(1.0, float(_total_loads))
 
+func avg_water_gen_ms() -> float:
+	return _total_water_gen_ms / maxf(1.0, float(_total_loads))
+
+func avg_water_mat_ms() -> float:
+	return _water_mat_ms_total / maxf(1.0, float(maxi(1, _water_vertices_total)))  # per-chunk mat approx
 
 func is_resident(coord: Vector2i) -> bool:
 	return _chunks.has(coord)
@@ -663,6 +732,8 @@ func debug_lines() -> Array[String]:
 			% [avg_gen_ms(), avg_mat_ms(), _chunks.size(), cold_count()])
 	lines.append("terrain verts %d | tris %d | colliders %d | t_gen %.1f ms | t_mat_total %.1f ms | active terrain %d (warm %d)"
 			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count(), terrain_warm_count()])
+	lines.append("water verts %d | tris %d | colliders %d | t_water_gen %.1f ms | t_water_mat %.1f ms | active water %d (warm %d)"
+			% [_water_vertices_total, _water_triangles_total, _water_colliders_total, avg_water_gen_ms(), _water_mat_ms_total, water_active_count(), water_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
@@ -676,6 +747,20 @@ func terrain_warm_count() -> int:
 	var n := 0
 	for v in _chunks.values():
 		if v.get("state", "") == &"warm" and int(v.get("terrain_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func water_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("water_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func water_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("water_colliders", 0)) > 0:
 			n += 1
 	return n
 

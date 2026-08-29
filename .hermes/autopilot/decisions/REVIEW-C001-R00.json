@@ -1,0 +1,50 @@
+{
+  "verdict": "accept_with_deferred",
+  "severity": "minor",
+  "summary": "C001 traversal closeout is principally correct: closed leaf physically blocks the aperture, entry corridor and scaffold no longer seal the route, walkthrough climbs all 5 storeys and back with no position writes or waypoint skips, and all 7 required harnesses finish with 0 failures. Minor windowed-screenshot and warm-collision documentation deferred.",
+  "deferred_findings": [
+    "Archive one normal windowed CITY run (WASD/E door swing, stair climb to roof, F3 overlay) as PNG/log — headless --shot cannot capture due to dummy renderer null texture.",
+    "Document ACTIVE-only city collision (warm visuals without Static, active physics) as intentional budgeted optimization versus previous warm+active Static assumption in ARCHITECTURE.md/DEVELOPMENT.md.",
+    "Reduce cosmetic headless shutdown noise: Windows exit 3221225477 when marker present and ObjectDB !is_inside_tree() warnings on smoke/walkthrough shutdown."
+  ],
+  "review_of_task": "t_b4ae6339",
+  "review_of_run": 3,
+  "spec_path": ".hermes/autopilot/specs/SPEC-C001.md",
+  "spec_sha256": "2380a62758abe52299542a043e1909782083a49de1bd494320b0c0b279fff9aa",
+  "commit": "f0bfe4f695e718e65eedebc778d038e5f9ea18dc",
+  "changed_files": [
+    "debug/city_runtime_test.gd",
+    "debug/havoc_test.gd",
+    "debug/walkthrough_probe.gd",
+    "world/buildings/door.gd",
+    "world/generation/building_builder.gd",
+    "world/main.gd",
+    "world/streaming/chunk_builder.gd",
+    "world/streaming/chunk_manager.gd",
+    "world/streaming/mesh_batcher.gd"
+  ],
+  "tests": [
+    {"command": "python tools/run_suite.py --import 120", "marker": "[Import] boot OK - all scripts parsed, world build skipped", "exit": 0},
+    {"command": "python tools/run_suite.py --citytest 300", "marker": "[CityTest] finished with 0 failure(s)", "exit": 3221225477, "note": "cosmetic shutdown code but required marker present"},
+    {"command": "python tools/run_suite.py --terrainmaterialtest 300", "marker": "[TerrainMaterialTest] finished with 0 failure(s)", "exit": 3221225477, "note": "cosmetic shutdown code but required marker present"},
+    {"command": "python tools/run_suite.py --cityruntime 300", "marker": "[CityRuntime] finished with 0 failure(s)", "exit": 0, "verified_fresh": "elapsed 218s reviewer re-run 2026-08-29"},
+    {"command": "python tools/run_suite.py --walkthrough 360", "marker": "[Walkthrough] finished with 0 failure(s)", "exit": 0},
+    {"command": "python tools/run_suite.py --havoctest 240", "marker": "[Havoc] finished with 0 failure(s)", "exit": 3221225477, "note": "cosmetic shutdown code but required marker present"},
+    {"command": "python tools/run_suite.py --smoke 180", "marker": "[SmokeTest] finished with 0 failure(s)", "exit": 0}
+  ],
+  "acceptance_criteria_verified": [
+    "cityruntime closed leaf blocks aperture, open clear without RID exclusion, swung leaf collidable, close re-blocks, IDs survive streaming",
+    "walkthrough no teleports/skips after initial drop-off, complete entry/climb/descend/exit/close route",
+    "canonical plus four alternate seeds stair/corridor/ramp geometry continuous, opposite-edge mapping",
+    "havoctest prop present with own collider hit and weapon damage via physics",
+    "citytest deterministic plan/chunk/building/door/interior no duplicates",
+    "terrainmaterial and smoke budgets and save exclusion preserved",
+    "windowed CITY route deferred to manual capture; headless walkthrough proves honest physics"
+  ],
+  "performance_collision_save": "Preserved 64m chunks ACTIVE 1 WARM 2, ACTIVE-only city Static (warm visuals), 9 active terrain colliders, deterministic IDs, delta-based saves, WorldSeed version unchanged",
+  "residual_risks": [
+    "Windowed WASD/E PNG not yet archived in headless env — deferred",
+    "Warm collision optimization changes prior one-Static-per-resident assumption — documented as deferred",
+    "Cosmetic exit 3221225477 and ObjectDB warnings are noisy but non-failing"
+  ]
+}
