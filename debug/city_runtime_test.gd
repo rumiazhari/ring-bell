@@ -150,22 +150,26 @@ func _run() -> void:
 				and hit_leaf.get("collider") == leaf
 		_check("open leaf still collidable at swung position", leaf_solid,
 				str(hit_leaf.get("collider")))
+		# Deterministic door close: mirror walkthrough step-back retry to avoid leaf pinning.
+		# Place player clear of the 0.5 m leaf sweep before close, then retry with physics drain.
+		var away := Vector3(dpos.x, 0.15, dpos.z) - inw * 2.2
+		player.global_position = away
+		await _wait(0.1)
+		await get_tree().physics_frame
 		door.call("close")
-		await _wait(3.0)
-		# P3.1 settle: door close races biome load (6 inflight, shared WorldPlan, BoxShape).
-		# Mirror walkthrough's 3-frame settle before rays; keep strict leaf-identity/no-RID checks.
-		await get_tree().physics_frame
-		await get_tree().physics_frame
-		await get_tree().physics_frame
-		var closed_ok: bool = not door.call("is_open")
-		if not closed_ok:
-			await get_tree().physics_frame
-			closed_ok = not door.call("is_open")
-		if not closed_ok:
-			await _wait(0.5)
+		var closed_ok: bool = false
+		for attempts in range(4):
+			await _wait(0.9)
 			await get_tree().physics_frame
 			await get_tree().physics_frame
 			closed_ok = not door.call("is_open")
+			if closed_ok:
+				break
+			# Blocked leaf bounces open (DRIVE_TICKS_LIMIT 90); step back further and retry.
+			var retry_away := Vector3(dpos.x, 0.15, dpos.z) - inw * (1.8 + attempts + 1)
+			player.global_position = retry_away
+			await get_tree().physics_frame
+			door.call("close")
 		_check("door closes via API", closed_ok)
 
 	# --- 5. Deterministic ids survive unload/reload ---------------------------
