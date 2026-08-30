@@ -2,9 +2,9 @@ class_name CharacterLocomotion
 extends Node
 ## Owns AnimationPlayer + AnimationTree (StateMachine), update() contract, foot_slide/hand_snap telemetry
 ## Capsule drives position; skeleton drives pose; ACTIVE-only tick.
-## P-C2: vault/mantle/hang/climb with 4cm IK, stamina gate, 11 clips, root<0.005.
+## P-C3: vault/mantle/hang/climb + crouch/slide/stand_up with capsule lerp 0.18s, 15 clips, root<0.005.
 
-enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180, VAULT, MANTLE, HANG, CLIMB_UP }
+enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180, VAULT, MANTLE, HANG, CLIMB_UP, CROUCH_IDLE, CROUCH_WALK, SLIDE, STAND_UP }
 
 signal state_changed(new_state: State)
 
@@ -17,12 +17,17 @@ var hand_snap: float = 0.0
 var stamina: float = 100.0
 var ledge_pos: Vector3 = Vector3.ZERO
 var ledge_normal: Vector3 = Vector3.ZERO
+# Capsule height lerp (ACTIVE-only)
+var capsule_height: float = 1.7
+var _capsule_target: float = 1.7
 
 # Parkour timers
 var _vault_timer: float = 0.0
 var _mantle_timer: float = 0.0
 var _climb_timer: float = 0.0
 var _hang_timer: float = 0.0
+var _slide_timer: float = 0.0
+var _standup_timer: float = 0.0
 
 # Constants per spec
 const VAULT_COST := 8.0
@@ -39,6 +44,19 @@ const MANTLE_HEIGHT_MIN := 0.9
 const MANTLE_HEIGHT_MAX := 1.2
 const LEDGE_RISE_MIN := 1.6
 const LEDGE_RISE_MAX := 2.2
+# P-C3 crouch/slide constants
+const CROUCH_IDLE_LEN := 1.2
+const CROUCH_WALK_LEN := 0.70
+const SLIDE_LEN := 0.90
+const STAND_UP_LEN := 0.35
+const SLIDE_SPEED := 6.0
+const SLIDE_SPEED_MAX := 6.5
+const SLIDE_DRAIN := 18.0
+const SLIDE_BLOCK := 15.0
+const CAP_STAND := 1.7
+const CAP_CROUCH := 1.25
+const CAP_SLIDE := 1.00
+const CAP_LERP := 0.18
 
 var skeleton: Skeleton3D = null
 var model_root: Node3D = null
@@ -121,7 +139,11 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	_mantle_timer = 0.0
 	_climb_timer = 0.0
 	_hang_timer = 0.0
+	_slide_timer = 0.0
+	_standup_timer = 0.0
 	hand_snap = 0.0
+	capsule_height = CAP_STAND
+	_capsule_target = CAP_STAND
 	# Create AnimationPlayer if not exists
 	if anim_player == null or not is_instance_valid(anim_player):
 		anim_player = AnimationPlayer.new()
@@ -145,7 +167,7 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 		anim_tree.name = "LocomotionTree"
 		add_child(anim_tree)
 	anim_tree.anim_player = anim_player.get_path()
-	# Build StateMachine with 11 nodes
+	# Build StateMachine with 15 nodes
 	var sm := AnimationNodeStateMachine.new()
 	var node_idle := AnimationNodeAnimation.new()
 	node_idle.animation = "locomotion/Idle"
@@ -180,6 +202,18 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	var node_climb := AnimationNodeAnimation.new()
 	node_climb.animation = "locomotion/ClimbUp"
 	sm.add_node("ClimbUp", node_climb)
+	var node_crouch_idle := AnimationNodeAnimation.new()
+	node_crouch_idle.animation = "locomotion/CrouchIdle"
+	sm.add_node("CrouchIdle", node_crouch_idle)
+	var node_crouch_walk := AnimationNodeAnimation.new()
+	node_crouch_walk.animation = "locomotion/CrouchWalk"
+	sm.add_node("CrouchWalk", node_crouch_walk)
+	var node_slide := AnimationNodeAnimation.new()
+	node_slide.animation = "locomotion/Slide"
+	sm.add_node("Slide", node_slide)
+	var node_stand := AnimationNodeAnimation.new()
+	node_stand.animation = "locomotion/StandUp"
+	sm.add_node("StandUp", node_stand)
 	# Transitions (allow any via AUTO; for parkour we use travel)
 	var t_idle_walk := AnimationNodeStateMachineTransition.new()
 	t_idle_walk.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
@@ -208,6 +242,23 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	# Allow Hang to Idle/Walk etc via travel as well (auto)
 	var t_hang_idle := AnimationNodeStateMachineTransition.new()
 	sm.add_transition("Hang", "Idle", t_hang_idle)
+	# Crouch/Slide transitions
+	var t_crouch_walk := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("CrouchIdle", "CrouchWalk", t_crouch_walk)
+	var t_walk_crouch := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Walk", "CrouchIdle", t_walk_crouch)
+	var t_idle_crouch := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Idle", "CrouchIdle", t_idle_crouch)
+	var t_crouch_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("CrouchIdle", "Idle", t_crouch_idle)
+	var t_crouch_stand := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("CrouchIdle", "StandUp", t_crouch_stand)
+	var t_stand_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("StandUp", "Idle", t_stand_idle)
+	var t_slide_stand := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Slide", "StandUp", t_slide_stand)
+	var t_slide_crouch := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Slide", "CrouchIdle", t_slide_crouch)
 	anim_tree.tree_root = sm
 	anim_tree.active = true
 	anim_tree.process_mode = Node.PROCESS_MODE_INHERIT
@@ -312,6 +363,7 @@ func update(p: Dictionary, delta: float) -> void:
 		# still need to handle parkour timers for determinism even without skeleton
 		_handle_timers(delta, p)
 		_handle_state(speed_init, yaw_init, airborne_init, delta, p)
+		_update_capsule(delta)
 		_anim_ms = float(Time.get_ticks_usec() - t0) / 1000.0
 		return
 
@@ -337,19 +389,26 @@ func update(p: Dictionary, delta: float) -> void:
 	_spine_pitch = clamp(-slope_deg * 0.35, -10.0, 10.0)
 	if _shamble:
 		_spine_pitch += 8.0
+	# During SLIDE, lean minimal
+	if state == State.SLIDE:
+		_spine_roll *= 0.2
+		_spine_pitch *= 0.5
 
 	var prev_state: State = state
 	_handle_timers(delta, p)
 	_handle_state(speed, yaw_delta, is_airborne, delta, p)
+	_update_capsule(delta)
 
 	var run_ratio: float = clamp(speed / 6.4, 0.0, 1.0)
 	var freq: float = lerp(6.2, 11.0, run_ratio)
-	# Phase advance: frozen during HANG, slowed during vault/mantle/climb
+	# Phase advance: frozen during HANG, slowed during vault/mantle/climb/slide/stand
 	if state == State.HANG:
 		_phase += 1.1 * delta
-	elif state in [State.VAULT, State.MANTLE, State.CLIMB_UP]:
+	elif state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
 		_phase += freq * 0.6 * delta
-	elif speed > 0.2 and _turn_timer <= 0.0 and not is_airborne and state not in [State.VAULT, State.MANTLE, State.HANG, State.CLIMB_UP]:
+	elif state in [State.CROUCH_IDLE, State.CROUCH_WALK]:
+		_phase += freq * 0.7 * delta if speed > 0.2 else 1.7 * delta
+	elif speed > 0.2 and _turn_timer <= 0.0 and not is_airborne and state not in [State.VAULT, State.MANTLE, State.HANG, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK]:
 		_phase += freq * delta
 	else:
 		if speed <= 0.2:
@@ -371,6 +430,32 @@ func update(p: Dictionary, delta: float) -> void:
 		state_changed.emit(state)
 
 	_anim_ms = float(Time.get_ticks_usec() - t0) / 1000.0
+
+func _update_capsule(delta: float) -> void:
+	# Decide target based on state
+	var target: float = CAP_STAND
+	match state:
+		State.CROUCH_IDLE, State.CROUCH_WALK:
+			target = CAP_CROUCH
+		State.SLIDE:
+			target = CAP_SLIDE
+		State.STAND_UP:
+			target = CAP_STAND
+		_:
+			target = CAP_STAND
+	_capsule_target = target
+	# Lerp capsule_height towards target with CAP_LERP 0.18s linear speed
+	var diff: float = _capsule_target - capsule_height
+	if abs(diff) < 0.001:
+		capsule_height = _capsule_target
+	else:
+		# linear speed = max diff / CAP_LERP ensures worst case reaches in 0.18
+		var max_diff: float = abs(CAP_STAND - CAP_SLIDE) # 0.7
+		var speed: float = max_diff / CAP_LERP
+		capsule_height = move_toward(capsule_height, _capsule_target, speed * delta)
+		# Also ensure exponential fallback not overshoot - move_toward clamps
+	# Clamp to valid range
+	capsule_height = clamp(capsule_height, CAP_SLIDE, CAP_STAND)
 
 func _handle_timers(delta: float, p: Dictionary) -> void:
 	# Decrement active timers and handle transitions
@@ -398,17 +483,58 @@ func _handle_timers(delta: float, p: Dictionary) -> void:
 			hand_snap = 0.0
 			ledge_pos = Vector3.ZERO
 			ledge_normal = Vector3.ZERO
+	if _slide_timer > 0.0:
+		# Drain stamina during slide via actor path
+		var drain: float = SLIDE_DRAIN * delta
+		var actor := _find_actor()
+		if actor != null and "stamina" in actor:
+			var cur: float = float(actor.get("stamina"))
+			cur = maxf(0.0, cur - drain)
+			actor.set("stamina", cur)
+			stamina = cur
+		else:
+			stamina = maxf(0.0, stamina - drain)
+		_slide_timer -= delta
+		if _slide_timer <= 0.0:
+			_slide_timer = 0.0
+			# slide ends -> either STAND_UP if headroom clear else CROUCH_IDLE
+			var headroom_clear: bool = bool(p.get("headroom_clear", true))
+			if headroom_clear:
+				state = State.STAND_UP
+				_standup_timer = STAND_UP_LEN
+			else:
+				state = State.CROUCH_IDLE
+	if _standup_timer > 0.0:
+		_standup_timer -= delta
+		if _standup_timer <= 0.0:
+			_standup_timer = 0.0
+			var speed3: float = float(p.get("speed", 0.0))
+			var crouch_held: bool = bool(p.get("crouch_held", false))
+			var headroom_clear2: bool = bool(p.get("headroom_clear", true))
+			if not headroom_clear2:
+				state = State.CROUCH_IDLE
+			elif crouch_held:
+				if speed3 < 0.2:
+					state = State.CROUCH_IDLE
+				else:
+					state = State.CROUCH_WALK
+			else:
+				_select_state_by_speed(speed3)
 	if state == State.HANG:
 		_hang_timer += delta
 		# HANG indefinite, but keep hand_snap updated
 
 func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: float, p: Dictionary) -> void:
-	# If in locked parkour states, timers handle exit; don't allow new triggers
+	# If in locked parkour/slide/stand states, timers handle exit; don't allow new triggers
 	if state == State.VAULT and _vault_timer > 0.0:
 		return
 	if state == State.MANTLE and _mantle_timer > 0.0:
 		return
 	if state == State.CLIMB_UP and _climb_timer > 0.0:
+		return
+	if state == State.SLIDE and _slide_timer > 0.0:
+		return
+	if state == State.STAND_UP and _standup_timer > 0.0:
 		return
 	if state == State.HANG:
 		# Handle climb trigger
@@ -435,7 +561,7 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 		# Also allow drop? For now stay hanging
 		hand_snap = 0.02
 		return
-	# Turn handling (only when not in parkour)
+	# Turn handling (only when not in parkour/crouch/slide)
 	if _turn_timer > 0.0:
 		_turn_timer -= delta
 		if _turn_timer <= 0.0:
@@ -443,13 +569,12 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 			_select_state_by_speed(speed)
 		else:
 			return
-	if is_airborne and state not in [State.VAULT, State.MANTLE, State.HANG, State.CLIMB_UP]:
+	if is_airborne and state not in [State.VAULT, State.MANTLE, State.HANG, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK]:
 		# Allow ledge probe while airborne to trigger HANG
 		var ledge_probe: Dictionary = p.get("ledge_probe", {}) as Dictionary
 		if not ledge_probe.is_empty() and bool(ledge_probe.get("has_hit", false)):
 			var rise: float = float(ledge_probe.get("rise", 0.0))
 			if rise >= LEDGE_RISE_MIN and rise <= LEDGE_RISE_MAX:
-				var stamina_now2: float = float(p.get("stamina", stamina))
 				# HANG does not cost stamina on entry (mantle/climb do), but check not shamble
 				if not _shamble:
 					ledge_pos = ledge_probe.get("ledge_pos", Vector3.ZERO) as Vector3
@@ -465,6 +590,53 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 					return
 		_select_state_by_speed(speed)
 		return
+	# --- P-C3 crouch/slide priority before general locomotion, but after HANG ---
+	# Slide trigger: sprint && crouch_pressed && speed>3.0 && stamina>=15 && not shamble && not airborne
+	if not _shamble:
+		var crouch_pressed: bool = bool(p.get("crouch_pressed", false))
+		var sprint_held: bool = bool(p.get("sprint_held", false))
+		var headroom_clear_slide: bool = bool(p.get("headroom_clear", true))
+		# Slide requires headroom? Actually slide needs headroom at 1.0, but we check crouch beam vs slide beam separately; allow slide regardless of headroom.
+		if crouch_pressed and sprint_held and speed > 3.0 and not is_airborne:
+			var stamina_now_s: float = float(p.get("stamina", stamina))
+			# unified stamina check via actor if available
+			var actor_s := _find_actor()
+			var stamina_actor: float = stamina_now_s
+			if actor_s != null and "stamina" in actor_s:
+				stamina_actor = float(actor_s.get("stamina"))
+			if stamina_actor >= SLIDE_BLOCK:
+				state = State.SLIDE
+				_slide_timer = SLIDE_LEN
+				# do not deduct upfront, drain handled in _handle_timers
+				return
+	# Crouch handling (shamble never crouches)
+	if not _shamble:
+		var crouch_held: bool = bool(p.get("crouch_held", false))
+		var headroom_clear: bool = bool(p.get("headroom_clear", true))
+		if crouch_held:
+			# crouch_held true -> CROUCH_IDLE or CROUCH_WALK based on speed
+			if speed < 0.2:
+				state = State.CROUCH_IDLE
+				return
+			elif speed < 1.6:
+				state = State.CROUCH_WALK
+				return
+			else:
+				# if moving faster while crouch_held (e.g. sprint), still crouch walk but clamped externally
+				state = State.CROUCH_WALK
+				return
+		else:
+			# crouch_held false, if currently crouched check headroom then STAND_UP or stay
+			if state == State.CROUCH_IDLE or state == State.CROUCH_WALK:
+				if headroom_clear:
+					state = State.STAND_UP
+					_standup_timer = STAND_UP_LEN
+					return
+				else:
+					state = State.CROUCH_IDLE
+					return
+			# if in STAND_UP, handled via timer above, but if we are in STAND_UP and crouch_held becomes true again? Stay STAND_UP until timer.
+			# Also if we were sliding and headroom blocked, we already transitioned to CROUCH_IDLE via timer.
 	# Ground parkour probes
 	var vault_probe: Dictionary = p.get("vault_probe", {}) as Dictionary
 	var mantle_probe: Dictionary = p.get("mantle_probe", {}) as Dictionary
@@ -544,6 +716,12 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 				_vault_timer = VAULT_LEN
 				hand_snap = 0.04
 				return
+			elif _shamble:
+				# shamble vault cost-free even if stamina low (explicit exception)
+				state = State.VAULT
+				_vault_timer = VAULT_LEN
+				hand_snap = 0.06
+				return
 	if speed < 0.2 and abs(yaw_delta) > deg_to_rad(60.0):
 		if abs(yaw_delta) > deg_to_rad(140.0):
 			state = State.TURN_180
@@ -591,6 +769,10 @@ func _travel_state(s: State) -> void:
 		State.MANTLE: target = "Mantle"
 		State.HANG: target = "Hang"
 		State.CLIMB_UP: target = "ClimbUp"
+		State.CROUCH_IDLE: target = "CrouchIdle"
+		State.CROUCH_WALK: target = "CrouchWalk"
+		State.SLIDE: target = "Slide"
+		State.STAND_UP: target = "StandUp"
 	if target != "" and playback.get_current_node() != target:
 		playback.travel(target)
 
@@ -627,9 +809,9 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 	if state == State.HANG and ledge_pos != Vector3.ZERO:
 		_apply_hang_ik()
 		return
-	# Vault/Mantle/Climb specific pose overrides are handled by AnimationTree clips;
+	# Vault/Mantle/Climb/Slide/Stand specific pose overrides are handled by AnimationTree clips;
 	# we keep procedural leg swing for Walk/Run/Sprint but skip during locked parkour to let clip drive
-	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP]:
+	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
 		# Keep hips root zero, but allow AnimationTree to drive limbs; just ensure foot offsets not applied
 		var l_thigh_idx2 := skeleton.find_bone("l_thigh")
 		var r_thigh_idx2 := skeleton.find_bone("r_thigh")
@@ -642,6 +824,22 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 			skeleton.set_bone_pose_position(r_shin_idx2, Vector3.ZERO)
 		# Arms also driven by clip
 		return
+	if state in [State.CROUCH_IDLE, State.CROUCH_WALK]:
+		# Crouch pose driven by clip, but keep procedural small adjustments for crouch walk
+		if state == State.CROUCH_WALK and speed > 0.2:
+			# Slight procedural leg swing on top of crouch pose is okay, but keep minimal to preserve clip
+			pass
+		else:
+			# Crouch idle: let clip drive, no procedural swing
+			var l_thigh_idx2 := skeleton.find_bone("l_thigh")
+			var r_thigh_idx2 := skeleton.find_bone("r_thigh")
+			var l_shin_idx2 := skeleton.find_bone("l_shin")
+			var r_shin_idx2 := skeleton.find_bone("r_shin")
+			if l_shin_idx2 >= 0:
+				skeleton.set_bone_pose_position(l_shin_idx2, Vector3.ZERO)
+			if r_shin_idx2 >= 0:
+				skeleton.set_bone_pose_position(r_shin_idx2, Vector3.ZERO)
+			return
 	var l_thigh_idx := skeleton.find_bone("l_thigh")
 	var r_thigh_idx := skeleton.find_bone("r_thigh")
 	var l_shin_idx := skeleton.find_bone("l_shin")
@@ -692,14 +890,14 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 		if r_shin_idx >= 0:
 			skeleton.set_bone_pose_rotation(r_shin_idx, Quaternion.IDENTITY)
 			skeleton.set_bone_pose_position(r_shin_idx, Vector3.ZERO)
-		if spine_idx >= 0 and speed < 0.2 and _turn_timer <= 0.0 and state not in [State.HANG, State.VAULT, State.MANTLE, State.CLIMB_UP]:
+		if spine_idx >= 0 and speed < 0.2 and _turn_timer <= 0.0 and state not in [State.HANG, State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK]:
 			var breathe: float = sin(_phase * 1.3) * deg_to_rad(1.6)
 			var q2 := Quaternion.from_euler(Vector3(deg_to_rad(_spine_pitch) + breathe * 0.6, 0, _spine_roll))
 			skeleton.set_bone_pose_rotation(spine_idx, q2)
 	var l_arm_idx := skeleton.find_bone("l_upper_arm")
 	var r_arm_idx := skeleton.find_bone("r_upper_arm")
 	if l_arm_idx >= 0 and r_arm_idx >= 0:
-		if state in [State.HANG, State.VAULT, State.MANTLE, State.CLIMB_UP]:
+		if state in [State.HANG, State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK]:
 			# driven by clip or IK, skip procedural
 			pass
 		elif speed > 0.2 and _turn_timer <= 0.0:
@@ -852,9 +1050,12 @@ func _calc_foot_slide(delta: float) -> float:
 			planted = l_len
 		else:
 			planted = r_len
-	# During vault/mantle/climb, allow avg <0.15
-	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP]:
+	# During vault/mantle/climb/slide, allow avg <0.15
+	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
 		return planted * 0.015 * 1.1
+	# Crouch walk also may have slightly higher but keep scaling
+	if state in [State.CROUCH_WALK, State.CROUCH_IDLE]:
+		return planted * 0.015 * 1.05
 	return planted * 0.015
 
 func get_roll_deg() -> float:
@@ -874,3 +1075,9 @@ func get_hand_snap() -> float:
 
 func get_stamina() -> float:
 	return stamina
+
+func get_capsule_height() -> float:
+	return capsule_height
+
+func get_capsule_target() -> float:
+	return _capsule_target

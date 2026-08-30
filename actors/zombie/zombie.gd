@@ -67,6 +67,8 @@ var _animator: HumanoidAnimator
 var _skeleton: Skeleton3D
 var _locomotion: CharacterLocomotion
 var _visual_yaw := 0.0                 # smoothed facing from movement
+var _capsule_shape: CollisionShape3D
+var _capsule: CapsuleShape3D
 
 
 func _ready() -> void:
@@ -89,6 +91,8 @@ func _ready() -> void:
 	shape.shape = capsule
 	shape.position = Vector3(0, 0.85, 0)
 	add_child(shape)
+	_capsule_shape = shape
+	_capsule = capsule
 
 	# Bloody rotten human body - variation seeded per zombie id so the city
 	# crowd is deterministic (same id -> same rot).
@@ -163,6 +167,29 @@ static func flank_sign_for(id: StringName) -> float:
 func apply_knockback(impulse: Vector3) -> void:
 	_knockback = (_knockback + impulse).limit_length(KNOCKBACK_MAX)
 
+
+func _update_capsule(delta: float) -> void:
+	if _capsule == null or _locomotion == null or not is_instance_valid(_locomotion):
+		return
+	var target: float = _locomotion.capsule_height
+	var cur: float = _capsule.height
+	if abs(cur - target) < 0.001:
+		_capsule.height = target
+	else:
+		var max_diff: float = abs(CharacterLocomotion.CAP_STAND - CharacterLocomotion.CAP_SLIDE)
+		var speed: float = max_diff / CharacterLocomotion.CAP_LERP
+		_capsule.height = move_toward(cur, target, speed * delta)
+	if _capsule_shape != null:
+		_capsule_shape.position = Vector3(0, _capsule.height * 0.5, 0)
+
+func get_capsule_height() -> float:
+	if _capsule != null:
+		return _capsule.height
+	if _capsule_shape != null and _capsule_shape.shape is CapsuleShape3D:
+		return (_capsule_shape.shape as CapsuleShape3D).height
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.capsule_height
+	return 1.7
 
 func _physics_process(delta: float) -> void:
 	if health.is_dead:
@@ -249,8 +276,13 @@ func _physics_process(delta: float) -> void:
 			"vault_probe": vault_probe,
 			"mantle_probe": mantle_probe,
 			"ledge_probe": ledge_probe,
-			"jump_pressed": false
+			"jump_pressed": false,
+			"crouch_held": false,
+			"crouch_pressed": false,
+			"sprint_held": false,
+			"headroom_clear": true
 		}, delta)
+		_update_capsule(delta)
 		if _skeleton != null and is_instance_valid(_skeleton):
 			var rid: int = _skeleton.find_bone("root")
 			if rid >= 0 and _skeleton.get_bone_pose_position(rid).length() > 0.0049:

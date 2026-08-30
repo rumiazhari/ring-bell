@@ -4,6 +4,9 @@ extends RefCounted
 ## Hip at y 0.86, spine_upper at 0.95 matching HumanoidModel pivots, scaled 1.2 via model attachment.
 ## Primitive meshes from HumanoidModel are attached via BoneAttachment3D per limb.
 
+static func capsule_heights() -> Dictionary:
+	return {"stand": 1.7, "crouch": 1.25, "slide": 1.00}
+
 static func bone_names() -> PackedStringArray:
 	return PackedStringArray(["root", "hips", "spine_upper", "head", "l_thigh", "l_shin", "r_thigh", "r_shin", "l_upper_arm", "r_upper_arm"])
 

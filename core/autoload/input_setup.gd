@@ -14,6 +14,7 @@ func _enter_tree() -> void:
 	_add_action(&"interact", [_key(KEY_E)])
 	_add_action(&"attack", [_mouse(MOUSE_BUTTON_LEFT)])
 	_add_action(&"jump", [_key(KEY_SPACE)])
+	_add_action(&"crouch", [_key(KEY_CTRL)])
 	_add_action(&"camera_rotate_left", [_key(KEY_Q)])
 	_add_action(&"camera_rotate_right", [_key(KEY_R)])
 	_add_action(&"eat", [_key(KEY_F)])

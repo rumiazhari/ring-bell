@@ -163,13 +163,20 @@ func _locomotion_line() -> String:
 	var vault: int = 1 if loco.state == CharacterLocomotion.State.VAULT else 0
 	var mantle: int = 1 if loco.state == CharacterLocomotion.State.MANTLE else 0
 	var hang: int = 1 if loco.state == CharacterLocomotion.State.HANG else 0
+	var crouch: int = 1 if loco.state == CharacterLocomotion.State.CROUCH_IDLE or loco.state == CharacterLocomotion.State.CROUCH_WALK else 0
+	var slide: int = 1 if loco.state == CharacterLocomotion.State.SLIDE else 0
 	var hand_snap_cm: float = loco.hand_snap * 100.0 if loco.has_method("get_hand_snap") else 0.0
 	var stamina_val: float = 0.0
 	if player.has_method("get_stamina"):
 		stamina_val = player.get_stamina()
 	elif "stamina" in player:
 		stamina_val = float(player.get("stamina"))
-	return "loco: %s blend %.2f speed %.1f strafe %.1f slope %.1f foot_slide %.3f vault %d mantle %d hang %d hand_snap %.1fcm stamina %.0f anim_ms %.2f active_chars %d/12 skinned %d/9" % [state_str, blend, speed, strafe, slope, foot, vault, mantle, hang, hand_snap_cm, stamina_val, anim_ms, active_chars, skinned]
+	var caps_h: float = 1.7
+	if "capsule_height" in loco:
+		caps_h = float(loco.get("capsule_height"))
+	elif loco.has_method("get_capsule_height"):
+		caps_h = loco.get_capsule_height()
+	return "loco: %s blend %.2f speed %.1f strafe %.1f slope %.1f foot_slide %.3f crouch %d slide %d vault %d mantle %d hang %d hand_snap %.1fcm stamina %.0f caps_h %.2f anim_ms %.2f active_chars %d/12 skinned %d/9" % [state_str, blend, speed, strafe, slope, foot, crouch, slide, vault, mantle, hang, hand_snap_cm, stamina_val, caps_h, anim_ms, active_chars, skinned]
 
 
 func _quest_state_text(quest_id: StringName) -> String:

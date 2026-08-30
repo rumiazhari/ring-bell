@@ -1,6 +1,6 @@
 class_name LocomotionLibrary
 extends RefCounted
-## Procedurally creates 7 in-place Animation resources at runtime: Idle, Walk, Run, Sprint, TurnL90, TurnR90, Turn180
+## Procedurally creates 15 in-place Animation resources at runtime: Idle, Walk, Run, Sprint, TurnL90, TurnR90, Turn180, Vault, Mantle, LedgeHang, ClimbUp, CrouchIdle, CrouchWalk, Slide, StandUp
 ## Each clip animates Skeleton3D bone rotations only (no Skeleton3D translation tracks; root bone position stays Vector3.ZERO)
 ## Walk/Run/Sprint stride frequency maps to lerp(WALK_FREQ 6.2, RUN_FREQ 11, clamp(speed/RUN_SPEED_REF 6.4)) and loops seamlessly.
 
@@ -17,6 +17,10 @@ static func build_library() -> AnimationLibrary:
 	lib.add_animation("Mantle", _build_mantle())
 	lib.add_animation("LedgeHang", _build_ledge_hang())
 	lib.add_animation("ClimbUp", _build_climb_up())
+	lib.add_animation("CrouchIdle", _build_crouch_idle())
+	lib.add_animation("CrouchWalk", _build_crouch_walk())
+	lib.add_animation("Slide", _build_slide())
+	lib.add_animation("StandUp", _build_stand_up())
 	return lib
 
 static func _track_path(bone: String) -> StringName:
@@ -486,5 +490,186 @@ static func _build_climb_up() -> Animation:
 		[0.20, _quat_from_euler_deg(-78, 0, 8)],
 		[0.40, _quat_from_euler_deg(18, 0, 0)],
 		[0.70, _quat_from_euler_deg(-8, 0, 0)],
+	])
+	return anim
+
+static func _build_crouch_idle() -> Animation:
+	var anim := Animation.new()
+	anim.length = 1.2
+	anim.loop_mode = Animation.LOOP_LINEAR
+	# CrouchIdle: hips low, knees bent ~42 deg, breathe while crouched
+	_add_rotation_track(anim, "hips", [
+		[0.0, _quat_from_euler_deg(-8, 0, 0)],
+		[0.6, _quat_from_euler_deg(-10, 0, 0)],
+		[1.2, _quat_from_euler_deg(-8, 0, 0)],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.6, _quat_from_euler_deg(14, 0, 0)],
+		[1.2, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(42, 0, 0)],
+		[0.6, _quat_from_euler_deg(44, 0, 0)],
+		[1.2, _quat_from_euler_deg(42, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(42, 0, 0)],
+		[0.6, _quat_from_euler_deg(44, 0, 0)],
+		[1.2, _quat_from_euler_deg(42, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(38, 0, 0)],
+		[0.6, _quat_from_euler_deg(40, 0, 0)],
+		[1.2, _quat_from_euler_deg(38, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(38, 0, 0)],
+		[0.6, _quat_from_euler_deg(40, 0, 0)],
+		[1.2, _quat_from_euler_deg(38, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.6, _quat_from_euler_deg(10, 0, 0)],
+		[1.2, _quat_from_euler_deg(8, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.6, _quat_from_euler_deg(10, 0, 0)],
+		[1.2, _quat_from_euler_deg(8, 0, 0)],
+	])
+	return anim
+
+static func _build_crouch_walk() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.70
+	anim.loop_mode = Animation.LOOP_LINEAR
+	var amp := 18.0
+	# CrouchWalk: shortened stride, knees bent, hips low
+	_add_rotation_track(anim, "hips", [
+		[0.0, _quat_from_euler_deg(-8, 0, 0)],
+		[0.70, _quat_from_euler_deg(-8, 0, 0)],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(14, 0, 0)],
+		[0.70, _quat_from_euler_deg(14, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(42 + amp, 0, 0)],
+		[0.35, _quat_from_euler_deg(42 - amp, 0, 0)],
+		[0.70, _quat_from_euler_deg(42 + amp, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(42 - amp, 0, 0)],
+		[0.35, _quat_from_euler_deg(42 + amp, 0, 0)],
+		[0.70, _quat_from_euler_deg(42 - amp, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(42, 0, 0)],
+		[0.35, _quat_from_euler_deg(22, 0, 0)],
+		[0.70, _quat_from_euler_deg(42, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(22, 0, 0)],
+		[0.35, _quat_from_euler_deg(42, 0, 0)],
+		[0.70, _quat_from_euler_deg(22, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(-amp*0.6, 0, 0)],
+		[0.35, _quat_from_euler_deg(amp*0.6, 0, 0)],
+		[0.70, _quat_from_euler_deg(-amp*0.6, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(amp*0.6, 0, 0)],
+		[0.35, _quat_from_euler_deg(-amp*0.6, 0, 0)],
+		[0.70, _quat_from_euler_deg(amp*0.6, 0, 0)],
+	])
+	return anim
+
+static func _build_slide() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.90
+	anim.loop_mode = Animation.LOOP_NONE
+	# Slide: hips low, legs extended forward, arms trailing, torso ~12 deg lean
+	_add_rotation_track(anim, "hips", [
+		[0.0, _quat_from_euler_deg(-6, 0, 0)],
+		[0.45, _quat_from_euler_deg(-10, 0, 0)],
+		[0.90, _quat_from_euler_deg(-6, 0, 0)],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.45, _quat_from_euler_deg(14, 0, 0)],
+		[0.90, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(22, 0, 0)],
+		[0.30, _quat_from_euler_deg(68, 0, 0)],
+		[0.60, _quat_from_euler_deg(48, 0, 0)],
+		[0.90, _quat_from_euler_deg(22, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(22, 0, 0)],
+		[0.30, _quat_from_euler_deg(48, 0, 0)],
+		[0.60, _quat_from_euler_deg(68, 0, 0)],
+		[0.90, _quat_from_euler_deg(22, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.45, _quat_from_euler_deg(8, 0, 0)],
+		[0.90, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.45, _quat_from_euler_deg(8, 0, 0)],
+		[0.90, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(28, 0, 0)],
+		[0.45, _quat_from_euler_deg(32, 0, 0)],
+		[0.90, _quat_from_euler_deg(28, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(28, 0, 0)],
+		[0.45, _quat_from_euler_deg(32, 0, 0)],
+		[0.90, _quat_from_euler_deg(28, 0, 0)],
+	])
+	return anim
+
+static func _build_stand_up() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.35
+	anim.loop_mode = Animation.LOOP_NONE
+	# StandUp: hips rise 0.18 to stand, knees straighten
+	_add_rotation_track(anim, "hips", [
+		[0.0, _quat_from_euler_deg(-8, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.35, _quat_from_euler_deg(4, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(42, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(42, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(38, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(38, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.35, Quaternion.IDENTITY],
 	])
 	return anim

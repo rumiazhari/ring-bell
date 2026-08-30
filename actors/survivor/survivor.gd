@@ -72,6 +72,8 @@ var _locomotion: CharacterLocomotion
 var _visual_yaw: float = 0.0
 var _lantern: OmniLight3D
 var _lantern_t := 0.0
+var _capsule_shape: CollisionShape3D
+var _capsule: CapsuleShape3D
 
 
 ## Store spawn configuration; consumed in _ready(). Keys:
@@ -162,6 +164,8 @@ func _setup_body() -> void:
 	shape.shape = capsule
 	shape.position = Vector3(0, 0.85, 0)
 	add_child(shape)
+	_capsule_shape = shape
+	_capsule = capsule
 
 	_visual_root = Node3D.new()
 	_visual_root.name = "Visual"
@@ -208,6 +212,50 @@ func set_body_color(color: Color) -> void:
 	var shirt_m: StandardMaterial3D = _model_root.get_meta("shirt_material")
 	shirt_m.albedo_color = color
 
+func _check_headroom_clear() -> bool:
+	# Upward sphere 0.25m radius at +1.55y for STAND_UP gate
+	if not is_inside_tree() or get_world_3d() == null:
+		return true
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return true
+	var params := PhysicsShapeQueryParameters3D.new()
+	var sphere := SphereShape3D.new()
+	sphere.radius = 0.25
+	params.shape = sphere
+	params.transform = Transform3D(Basis.IDENTITY, global_position + Vector3(0, 1.55, 0))
+	params.collision_mask = LAYER_ENVIRONMENT
+	params.exclude = [get_rid()]
+	var hits: Array = space.intersect_shape(params, 1)
+	return hits.is_empty()
+
+func set_crouch(held: bool) -> void:
+	# Helper for harness: harness may call via set_meta or direct
+	set_meta("crouch_held", held)
+
+func get_capsule_height() -> float:
+	if _capsule != null:
+		return _capsule.height
+	if _capsule_shape != null and _capsule_shape.shape is CapsuleShape3D:
+		return (_capsule_shape.shape as CapsuleShape3D).height
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.capsule_height
+	return 1.7
+
+func _update_capsule(delta: float) -> void:
+	if _capsule == null or _locomotion == null or not is_instance_valid(_locomotion):
+		return
+	var target: float = _locomotion.capsule_height
+	var cur: float = _capsule.height
+	if abs(cur - target) < 0.001:
+		_capsule.height = target
+	else:
+		var max_diff: float = abs(CharacterLocomotion.CAP_STAND - CharacterLocomotion.CAP_SLIDE)
+		var speed: float = max_diff / CharacterLocomotion.CAP_LERP
+		_capsule.height = move_toward(cur, target, speed * delta)
+	if _capsule_shape != null:
+		_capsule_shape.position = Vector3(0, _capsule.height * 0.5, 0)
+
 
 # --- Movement ---------------------------------------------------------------
 
@@ -230,8 +278,11 @@ func _physics_process(delta: float) -> void:
 
 	var moving := _move_dir.length_squared() > 0.01 and not needs.sleeping
 	var sprinting := moving and _wants_sprint and not exhausted
-
-	if sprinting:
+	var is_sliding_now: bool = _locomotion != null and is_instance_valid(_locomotion) and _locomotion.state == CharacterLocomotion.State.SLIDE
+	if is_sliding_now:
+		# During SLIDE, stamina drain is handled by CharacterLocomotion (18/s); skip regen/drain here
+		pass
+	elif sprinting:
 		stamina -= STAMINA_SPRINT_DRAIN * delta
 		if stamina <= 1.0:
 			stamina = 1.0
@@ -244,26 +295,47 @@ func _physics_process(delta: float) -> void:
 
 	needs.exerting = sprinting
 
-	# P-C2: respect parkour state lock - queue move but don't apply while vault/mantle/hang/climb/turn locked
+	# P-C2: respect parkour state lock - queue move but don't apply while vault/mantle/hang/climb/turn/slide/stand locked
 	var is_locked: bool = false
 	if _locomotion != null and is_instance_valid(_locomotion):
 		var ls: int = int(_locomotion.state)
-		if ls == CharacterLocomotion.State.VAULT or ls == CharacterLocomotion.State.MANTLE or ls == CharacterLocomotion.State.HANG or ls == CharacterLocomotion.State.CLIMB_UP or ls == CharacterLocomotion.State.TURN_L90 or ls == CharacterLocomotion.State.TURN_R90 or ls == CharacterLocomotion.State.TURN_180:
+		if ls == CharacterLocomotion.State.VAULT or ls == CharacterLocomotion.State.MANTLE or ls == CharacterLocomotion.State.HANG or ls == CharacterLocomotion.State.CLIMB_UP or ls == CharacterLocomotion.State.TURN_L90 or ls == CharacterLocomotion.State.TURN_R90 or ls == CharacterLocomotion.State.TURN_180 or ls == CharacterLocomotion.State.SLIDE or ls == CharacterLocomotion.State.STAND_UP:
 			is_locked = true
 	# HANG freezes xz (capsule holds, gravity still applies but is_on_floor false keeps hang)
-	if is_locked and _locomotion != null and is_instance_valid(_locomotion) and _locomotion.state == CharacterLocomotion.State.HANG:
-		velocity.x = 0.0
-		velocity.z = 0.0
+	# SLIDE locked to facing*6.0 regardless of stick
+	if is_locked and _locomotion != null and is_instance_valid(_locomotion):
+		if _locomotion.state == CharacterLocomotion.State.HANG:
+			velocity.x = 0.0
+			velocity.z = 0.0
+		elif _locomotion.state == CharacterLocomotion.State.SLIDE:
+			velocity.x = facing.x * CharacterLocomotion.SLIDE_SPEED
+			velocity.z = facing.z * CharacterLocomotion.SLIDE_SPEED
+			# keep gravity still but is_on_floor true keeps grounded
+		elif _locomotion.state == CharacterLocomotion.State.STAND_UP:
+			# Damp velocity during stand-up (keep current but lerp to reduced target)
+			var target_speed_su := WALK_SPEED * 0.5 if moving else 0.0
+			var target_vel_su := _move_dir * target_speed_su if moving else Vector3.ZERO
+			velocity.x = lerpf(velocity.x, target_vel_su.x, 0.3)
+			velocity.z = lerpf(velocity.z, target_vel_su.z, 0.3)
 
 	var target_speed := RUN_SPEED if sprinting else WALK_SPEED
 	target_speed *= needs.speed_multiplier()
+	# CROUCH_WALK clamps to 1.2 even if sprint requested
+	if _locomotion != null and is_instance_valid(_locomotion):
+		if _locomotion.state == CharacterLocomotion.State.CROUCH_WALK:
+			target_speed = 1.2 * needs.speed_multiplier()
+		elif _locomotion.state == CharacterLocomotion.State.CROUCH_IDLE:
+			target_speed = 0.0
 	var target_velocity := _move_dir * target_speed if moving else Vector3.ZERO
+	# If crouch idle, zero velocity regardless of move_dir
+	if _locomotion != null and is_instance_valid(_locomotion) and _locomotion.state == CharacterLocomotion.State.CROUCH_IDLE:
+		target_velocity = Vector3.ZERO
 	var blend := 1.0 - exp(-ACCELERATION * delta)
 	if not is_locked:
 		velocity.x = lerpf(velocity.x, target_velocity.x, blend)
 		velocity.z = lerpf(velocity.z, target_velocity.z, blend)
 	else:
-		# During vault/mantle/climb, keep current xz but allow HANG already zeroed
+		# During vault/mantle/climb/slide/stand, keep current xz but allow HANG/SLIDE already handled
 		pass
 	# Gravity: knockback can lift the body airborne, so the arc must come
 	# back down instead of drifting away forever.
@@ -335,6 +407,19 @@ func _physics_process(delta: float) -> void:
 		var jump_pressed: bool = false
 		if InputMap.has_action("jump"):
 			jump_pressed = Input.is_action_just_pressed("jump")
+		var crouch_held: bool = false
+		if InputMap.has_action("crouch"):
+			crouch_held = Input.is_action_pressed("crouch")
+		if has_meta("crouch_held"):
+			crouch_held = crouch_held or bool(get_meta("crouch_held"))
+		var crouch_pressed: bool = false
+		if InputMap.has_action("crouch"):
+			crouch_pressed = Input.is_action_just_pressed("crouch")
+		if has_meta("crouch_pressed"):
+			crouch_pressed = crouch_pressed or bool(get_meta("crouch_pressed"))
+		# Also check meta for crouch_pressed triggered via harness direct set
+		var sprint_held: bool = _wants_sprint
+		var headroom_clear: bool = _check_headroom_clear()
 		_locomotion.update({
 			"speed": xz_speed,
 			"strafe": strafe_val,
@@ -347,10 +432,20 @@ func _physics_process(delta: float) -> void:
 			"vault_probe": vault_probe,
 			"mantle_probe": mantle_probe,
 			"ledge_probe": ledge_probe,
-			"jump_pressed": jump_pressed
+			"jump_pressed": jump_pressed,
+			"crouch_held": crouch_held,
+			"crouch_pressed": crouch_pressed,
+			"sprint_held": sprint_held,
+			"headroom_clear": headroom_clear
 		}, delta)
+		# Capsule lerp after locomotion decides target
+		_update_capsule(delta)
 		# While HANG, freeze xz and ensure hand_snap
-		if _locomotion.state == CharacterLocomotion.State.HANG:
+		# While SLIDE, ensure velocity stays locked (already set before move_and_slide, also enforce post-update)
+		if _locomotion.state == CharacterLocomotion.State.SLIDE:
+			velocity.x = facing.x * CharacterLocomotion.SLIDE_SPEED
+			velocity.z = facing.z * CharacterLocomotion.SLIDE_SPEED
+		elif _locomotion.state == CharacterLocomotion.State.HANG:
 			velocity.x = 0.0
 			velocity.z = 0.0
 		# In-place guarantee: root bone must stay <0.005
@@ -576,6 +671,10 @@ func get_locomotion_state() -> String:
 			CharacterLocomotion.State.MANTLE: return "MANTLE"
 			CharacterLocomotion.State.HANG: return "HANG"
 			CharacterLocomotion.State.CLIMB_UP: return "CLIMB_UP"
+			CharacterLocomotion.State.CROUCH_IDLE: return "CROUCH_IDLE"
+			CharacterLocomotion.State.CROUCH_WALK: return "CROUCH_WALK"
+			CharacterLocomotion.State.SLIDE: return "SLIDE"
+			CharacterLocomotion.State.STAND_UP: return "STAND_UP"
 	return "IDLE"
 
 func get_locomotion_blend() -> float:
@@ -603,6 +702,10 @@ func get_vault_state() -> String:
 			CharacterLocomotion.State.MANTLE: return "MANTLE"
 			CharacterLocomotion.State.HANG: return "HANG"
 			CharacterLocomotion.State.CLIMB_UP: return "CLIMB_UP"
+			CharacterLocomotion.State.SLIDE: return "SLIDE"
+			CharacterLocomotion.State.CROUCH_IDLE: return "CROUCH_IDLE"
+			CharacterLocomotion.State.CROUCH_WALK: return "CROUCH_WALK"
+			CharacterLocomotion.State.STAND_UP: return "STAND_UP"
 			_: return "NONE"
 	return "NONE"
 
@@ -611,6 +714,9 @@ func get_skeleton() -> Skeleton3D:
 
 func get_locomotion() -> CharacterLocomotion:
 	return _locomotion
+
+func get_capsule_shape() -> CollisionShape3D:
+	return _capsule_shape
 
 
 # --- Persistence ------------------------------------------------------------
@@ -660,4 +766,15 @@ func load_state(data: Dictionary) -> void:
 		_locomotion._mantle_timer = 0.0
 		_locomotion._climb_timer = 0.0
 		_locomotion._hang_timer = 0.0
+		_locomotion._slide_timer = 0.0
+		_locomotion._standup_timer = 0.0
 		_locomotion._turn_timer = 0.0
+		_locomotion.capsule_height = CharacterLocomotion.CAP_STAND
+		_locomotion._capsule_target = CharacterLocomotion.CAP_STAND
+		if _capsule != null:
+			_capsule.height = CharacterLocomotion.CAP_STAND
+			if _capsule_shape != null:
+				_capsule_shape.position = Vector3(0, _capsule.height * 0.5, 0)
+		_visual_yaw = atan2(facing.x, facing.z)
+		if _visual_root != null and is_instance_valid(_visual_root):
+			_visual_root.rotation.y = _visual_yaw

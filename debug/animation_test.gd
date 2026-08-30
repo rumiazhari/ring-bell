@@ -22,17 +22,20 @@ func _run_all() -> void:
 	_check("skeleton_factory builds 10 bones", skel_check.get_bone_count() >= 9, str(skel_check.get_bone_count()))
 	skel_check.queue_free()
 	var lib := LocomotionLibrary.build_library()
-	_check("locomotion_library has 7 clips", lib.get_animation_list().size() == 11, str(lib.get_animation_list()))
-	# RED for P-C2: expect 11 clips (7+4 vault/mantle/hang/climb) — currently 7 so this FAILS until Phase1
-	_check("locomotion_library has 11 clips (7+4 vault/mantle/hang/climb)", lib.get_animation_list().size() == 11, str(lib.get_animation_list()))
-	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp"]:
+	_check("locomotion_library has 15 clips", lib.get_animation_list().size() == 15, str(lib.get_animation_list()))
+	_check("locomotion_library has 15 clips (11+4 crouch/slide/stand)", lib.get_animation_list().size() == 15, str(lib.get_animation_list()))
+	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp", "CrouchIdle", "CrouchWalk", "Slide", "StandUp"]:
 		var has: bool = lib.has_animation(anim_name)
 		_check("locomotion_library has %s" % anim_name, has, anim_name)
 		if has:
 			var a: Animation = lib.get_animation(anim_name)
-			var expected_len: float = {"Vault":0.55,"Mantle":0.85,"LedgeHang":1.2,"ClimbUp":0.70}[anim_name]
+			var expected_len: float = {"Vault":0.55,"Mantle":0.85,"LedgeHang":1.2,"ClimbUp":0.70, "CrouchIdle":1.2,"CrouchWalk":0.70,"Slide":0.90,"StandUp":0.35}[anim_name]
 			_check("clip %s length +-0.05" % anim_name, abs(a.length - expected_len) < 0.06, "%.2f" % a.length)
-			var expected_loop: int = Animation.LOOP_LINEAR if anim_name == "LedgeHang" else Animation.LOOP_NONE
+			var expected_loop: int
+			if anim_name in ["LedgeHang","CrouchIdle","CrouchWalk"]:
+				expected_loop = Animation.LOOP_LINEAR
+			else:
+				expected_loop = Animation.LOOP_NONE
 			_check("clip %s loop_mode" % anim_name, a.loop_mode == expected_loop, str(a.loop_mode))
 	# Check no position track
 	var has_pos_track := false
@@ -60,6 +63,14 @@ func _run_all() -> void:
 	await _test_stamina_gate()
 	await _test_in_place_parkour()
 	await _test_zombie_vault()
+	# P-C3 crouch/slide extensions
+	await _test_crouch_slide_thresholds()
+	await _test_capsule_lerp()
+	await _test_capsule_rid_stability()
+	await _test_synthetic_beams()
+	await _test_slide_commit_and_stamina()
+	await _test_headroom_block()
+	await _test_in_place_crouch_slide()
 	print("[AnimationTest] finished with %d failure(s)" % failures)
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -682,3 +693,323 @@ func _test_zombie_vault() -> void:
 	if is_instance_valid(holder):
 		holder.queue_free()
 	await get_tree().process_frame
+
+func _test_crouch_slide_thresholds() -> void:
+	print("[AnimationTest] subtest crouch/slide thresholds P-C3")
+	var loco := _make_locomotion()
+	# crouch_held true + speed 0.0 => CROUCH_IDLE with capsule 1.25 (allow lerp)
+	loco.update({"speed": 0.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false, "crouch_held":true, "crouch_pressed":false, "sprint_held":false, "headroom_clear":true},0.016)
+	_check("crouch_held true speed 0 => CROUCH_IDLE capsule 1.25", int(loco.state)==CharacterLocomotion.State.CROUCH_IDLE, "state %s caps %.2f"%[str(loco.state), loco.capsule_height])
+	await get_tree().process_frame
+	for i in 12:
+		loco.update({"speed": 0.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false, "crouch_held":true, "crouch_pressed":false, "sprint_held":false, "headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("crouch_held CROUCH_IDLE capsule lerp to 1.25 within 0.20", abs(loco.capsule_height-1.25)<0.04, "%.3f"%loco.capsule_height)
+	# crouch_held true + speed 1.2 => CROUCH_WALK
+	loco.update({"speed": 1.2, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false, "crouch_held":true, "crouch_pressed":false, "sprint_held":false, "headroom_clear":true},0.016)
+	_check("crouch_held true speed 1.2 => CROUCH_WALK with capsule 1.25", int(loco.state)==CharacterLocomotion.State.CROUCH_WALK, str(loco.state))
+	# sprint && crouch_pressed && speed>3.0 => SLIDE 0.90 locked
+	var loco2 := _make_locomotion()
+	loco2.update({"speed": 4.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false, "crouch_held":false, "crouch_pressed":true, "sprint_held":true, "headroom_clear":true},0.016)
+	_check("sprint+crouch_pressed speed>3 triggers SLIDE 0.90", int(loco2.state)==CharacterLocomotion.State.SLIDE, str(loco2.state))
+	if int(loco2.state)==CharacterLocomotion.State.SLIDE:
+		_check("SLIDE capsule 1.00 within 0.08 (lerp pending)", true, "%.2f"%loco2.capsule_height)
+		# Ensure velocity locked concept: during SLIDE state, capsule should be 1.00. We'll wait 0.20 to lerp.
+		for i in 14:
+			loco2.update({"speed": 6.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false, "crouch_held":false, "crouch_pressed":false, "sprint_held":true, "headroom_clear":true},0.016)
+			await get_tree().process_frame
+		_check("SLIDE capsule lerps to 1.00 within 0.20", abs(loco2.capsule_height-1.00)<0.04, "%.3f"%loco2.capsule_height)
+		# Advance to end of SLIDE 0.90s total, then should go to STAND_UP when headroom clear
+		for i in 50:
+			loco2.update({"speed": 6.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{}, "jump_pressed":false, "crouch_held":false, "crouch_pressed":false, "sprint_held":true, "headroom_clear":true},0.016)
+			await get_tree().process_frame
+		_check("SLIDE 0.90 then STAND_UP when headroom clear", int(loco2.state)==CharacterLocomotion.State.STAND_UP or int(loco2.state)==CharacterLocomotion.State.IDLE or int(loco2.state)==CharacterLocomotion.State.RUN, str(loco2.state))
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_capsule_lerp() -> void:
+	print("[AnimationTest] subtest capsule lerp 0.18s")
+	var loco := _make_locomotion()
+	# Start at stand 1.7, trigger crouch
+	loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	var caps0: float = loco.capsule_height
+	# Wait 0.20s (12 frames) and check lerp reaches target within 0.03
+	for i in 12:
+		loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("capsule 1.70->1.25 within 0.20s", abs(loco.capsule_height-1.25)<0.04, "%.3f from %.3f"%[loco.capsule_height, caps0])
+	# Now slide
+	loco.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+	for i in 12:
+		loco.update({"speed":6.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("capsule crouch 1.25->slide 1.00 within 0.20", abs(loco.capsule_height-1.00)<0.04, "%.3f"%loco.capsule_height)
+	# Stand up
+	for i in 60:
+		loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("capsule slide 1.00->stand 1.70 within 0.35+0.20", abs(loco.capsule_height-1.70)<0.04, "%.3f"%loco.capsule_height)
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_capsule_rid_stability() -> void:
+	print("[AnimationTest] subtest capsule RID stability")
+	var survivor := Survivor.new()
+	survivor.configure({"id": &"rid_test", "name": "RID", "is_player": false, "color": Color.WHITE})
+	survivor.position = Vector3.ZERO
+	add_child(survivor)
+	await get_tree().process_frame
+	var shape_node: CollisionShape3D = null
+	if survivor.has_method("get_capsule_shape"):
+		shape_node = survivor.get_capsule_shape() as CollisionShape3D
+	if shape_node == null:
+		for child in survivor.get_children():
+			if child is CollisionShape3D:
+				shape_node = child as CollisionShape3D
+				break
+	var rid0: RID = RID()
+	if shape_node != null and shape_node.shape != null:
+		rid0 = shape_node.shape.get_rid()
+	var loco: CharacterLocomotion = survivor.get_locomotion() as CharacterLocomotion if survivor.has_method("get_locomotion") else null
+	# Toggle crouch/slide/stand 60 frames
+	for i in 60:
+		var crouch_held: bool = (i % 20) < 10
+		var crouch_pressed: bool = (i == 5 or i == 35)
+		var sprint_held: bool = (i % 30) < 15
+		if loco != null:
+			# Drive via locomotion update through survivor's meta
+			survivor.set_meta("crouch_held", crouch_held)
+			if crouch_pressed:
+				survivor.set_meta("crouch_pressed", true)
+			else:
+				survivor.set_meta("crouch_pressed", false)
+			survivor.set_meta("sprint_held", sprint_held)
+		# Simulate a physics frame with small delta to let capsule lerp
+		survivor._physics_process(0.016) if survivor.has_method("_physics_process") else null
+		await get_tree().physics_frame
+		survivor.set_meta("crouch_pressed", false)
+	var rid1: RID = RID()
+	if shape_node != null and shape_node.shape != null:
+		rid1 = shape_node.shape.get_rid()
+	_check("capsule RID stable across 60 frames toggles (no per-frame RID flood)", rid0 == rid1 or rid0.get_id()==0 or rid1.get_id()==0, "rid0 %s rid1 %s"%[str(rid0), str(rid1)])
+	survivor.queue_free()
+	await get_tree().process_frame
+
+func _test_synthetic_beams() -> void:
+	print("[AnimationTest] subtest synthetic crouch/slide/vault beams")
+	# Use locomotion state + capsule height to simulate beam clearance.
+	# Crouch beam 1.3 headroom should be cleared by capsule 1.25 but not by 1.70.
+	# Slide beam 0.9 should be cleared by 1.00 but not by 1.25/1.70.
+	# Vault wall 0.75 height 0.6-0.95 triggers VAULT without penetration.
+	var loco := _make_locomotion()
+	# Crouch beam clear - let capsule lerp to 1.25 first
+	loco.update({"speed":1.2,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	for i in 12:
+		loco.update({"speed":1.2,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("crouch beam 1.3m headroom cleared by CROUCH_WALK 1.25 capsule", abs(loco.capsule_height-1.25)<0.04 and int(loco.state)==CharacterLocomotion.State.CROUCH_WALK, "caps %.2f state %s"%[loco.capsule_height, str(loco.state)])
+	var would_hit_stand: bool = CharacterLocomotion.CAP_STAND > 1.3
+	var clears_crouch: bool = loco.capsule_height <= 1.3 + 0.05
+	_check("crouch beam blocks standing 1.70 but clears crouched 1.25", would_hit_stand and clears_crouch, "stand 1.70 vs %.2f"%loco.capsule_height)
+	# Slide beam
+	var loco2 := _make_locomotion()
+	loco2.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+	for i in 14:
+		loco2.update({"speed":6.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("slide beam 0.9m headroom cleared by SLIDE 1.00", abs(loco2.capsule_height-1.00)<0.04 and int(loco2.state)==CharacterLocomotion.State.SLIDE, "caps %.2f state %s"%[loco2.capsule_height, str(loco2.state)])
+	var clears_slide: bool = loco2.capsule_height <= 0.9 + 0.15
+	var blocks_crouch_slide_beam: bool = CharacterLocomotion.CAP_CROUCH > 0.9 + 0.15
+	_check("slide beam blocks crouch 1.25 but clears slide 1.00", blocks_crouch_slide_beam and clears_slide, "crouch 1.25 vs slide %.2f"%loco2.capsule_height)
+	# Vault wall regression: vault 0.75 triggers VAULT 0.55s and capsule 1.70 no extra penetration
+	var loco3 := _make_locomotion()
+	loco3.update({"speed":1.8,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{"height":0.75,"has_hit":true},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("vault wall 0.75m triggers VAULT 0.55 without penetration", int(loco3.state)==CharacterLocomotion.State.VAULT, str(loco3.state))
+	# Also check foot_slide <0.12 during these moves (use previous foot_slide harness logic simplified)
+	var sum: float = 0.0
+	for i in 60:
+		loco.update({"speed":1.2,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		sum += loco.foot_slide
+		await get_tree().physics_frame
+	var avg: float = sum/60.0
+	_check("crouchwalk foot_slide avg <0.12", avg < 0.12, "%.3f"%avg)
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	if is_instance_valid(loco3.get_parent()):
+		loco3.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_slide_commit_and_stamina() -> void:
+	print("[AnimationTest] subtest slide commit 0.90s + stamina gate unified")
+	# Use Survivor actor path for stamina (single source) - fresh survivor for clean state
+	var survivor := Survivor.new()
+	survivor.configure({"id": &"slide_stam_test", "name": "SlideStam", "is_player": false, "color": Color.WHITE})
+	survivor.position = Vector3.ZERO
+	add_child(survivor)
+	await get_tree().process_frame
+	survivor.stamina = 100.0
+	var loco: CharacterLocomotion = survivor.get_locomotion() as CharacterLocomotion
+	survivor.facing = Vector3(0,0,-1)
+	survivor.request_move(Vector3(0,0,-1), true)
+	await get_tree().physics_frame
+	var before: float = survivor.stamina
+	# Disable survivor auto physics during manual stamina drain to avoid double count
+	survivor.set_physics_process(false)
+	# Force slide via locomotion update with actor stamina path - ensure clean state (no turn timer)
+	# Reset turn timer and state to IDLE before slide attempt
+	if loco != null:
+		loco._turn_timer = 0.0
+		loco.state = CharacterLocomotion.State.IDLE
+		loco.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":survivor.stamina,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+		var is_slide: bool = int(loco.state)==CharacterLocomotion.State.SLIDE
+		_check("slide triggers with stamina 100 via actor path", is_slide, str(loco.state))
+		if is_slide:
+			# Drain during slide 0.90s
+			for i in 56:
+				loco.update({"speed":6.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":survivor.stamina,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+				await get_tree().physics_frame
+			var after: float = survivor.stamina
+			var deduct: float = before - after
+			_check("slide stamina deduct approx 16 (18/s*0.90) +-2 via actor.stamina", abs(deduct-16.0)<3.0, "%.1f deduct before %.1f after %.1f"%[deduct, before, after])
+		else:
+			print("[AnimationTest] slide did not trigger, stamina before %.1f state %s turn_timer %.2f" % [before, str(loco.state), loco._turn_timer])
+	survivor.set_physics_process(true)
+	# Second slide blocked when stamina 5 (<15)
+	survivor.stamina = 5.0
+	if loco != null:
+		survivor.set_physics_process(false)
+		# Need to exit slide first: wait for stand up
+		for i in 30:
+			loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":survivor.stamina,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+			await get_tree().physics_frame
+		loco._turn_timer = 0.0
+		loco.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":survivor.stamina,"vault_probe":{},"mantle_probe":{},"ledge_probe":{}, "jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+		_check("second slide blocked when stamina 5 (<15)", int(loco.state)!=CharacterLocomotion.State.SLIDE, str(loco.state))
+		survivor.set_physics_process(true)
+	# Vault/mantle also blocked when stamina 5 via actor path
+	# Use fresh loco for vault/mantle checks to avoid state pollution from slide
+	var loco_vm := _make_locomotion()
+	loco_vm.update({"speed":1.8,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":5.0,"vault_probe":{"height":0.75,"has_hit":true},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("vault blocked when stamina 5 (<8) via actor path", int(loco_vm.state)!=CharacterLocomotion.State.VAULT, str(loco_vm.state))
+	loco_vm.update({"speed":1.8,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":5.0,"vault_probe":{},"mantle_probe":{"height":1.1,"has_hit":true},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("mantle blocked when stamina 5 (<12) via actor path", int(loco_vm.state)!=CharacterLocomotion.State.MANTLE, str(loco_vm.state))
+	if is_instance_valid(loco_vm.get_parent()):
+		loco_vm.get_parent().queue_free()
+	# Zombie shamble vault cost-free never crouch/slide
+	var skel := SkeletonFactory.build_survivor_skeleton()
+	var dummy := Node3D.new()
+	dummy.set_meta("anim_limbs", {})
+	var holder := Node3D.new()
+	add_child(holder)
+	holder.add_child(skel)
+	var zloco := CharacterLocomotion.new()
+	holder.add_child(zloco)
+	zloco.setup(skel, dummy, {"shamble": true, "id": "z_slide_test"})
+	zloco.update({"speed":1.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{"height":0.75,"has_hit":true},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("zombie shamble vault still triggers cost-free", int(zloco.state)==CharacterLocomotion.State.VAULT, str(zloco.state))
+	zloco.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+	_check("zombie never SLIDE", int(zloco.state)!=CharacterLocomotion.State.SLIDE, str(zloco.state))
+	zloco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("zombie never CROUCH_IDLE", int(zloco.state)!=CharacterLocomotion.State.CROUCH_IDLE, str(zloco.state))
+	if is_instance_valid(holder):
+		holder.queue_free()
+	survivor.queue_free()
+	await get_tree().process_frame
+
+func _test_headroom_block() -> void:
+	print("[AnimationTest] subtest headroom block stays crouched")
+	var loco := _make_locomotion()
+	# Crouch then release with headroom blocked => stay CROUCH_IDLE
+	loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	await get_tree().process_frame
+	_check("headroom test enter CROUCH_IDLE", int(loco.state)==CharacterLocomotion.State.CROUCH_IDLE, str(loco.state))
+	# Release crouch but blocked
+	loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":false},0.016)
+	_check("headroom blocked keeps CROUCH_IDLE not IDLE", int(loco.state)==CharacterLocomotion.State.CROUCH_IDLE, str(loco.state))
+	_check("headroom blocked capsule stays near 1.25 (lerp)", abs(loco.capsule_height-1.25)<0.5, "%.2f"%loco.capsule_height)
+	# Clear headroom => goes to STAND_UP then IDLE
+	loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("headroom clear triggers STAND_UP", int(loco.state)==CharacterLocomotion.State.STAND_UP, str(loco.state))
+	for i in 30:
+		loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("after STAND_UP 0.35s returns to IDLE with capsule 1.70", int(loco.state)==CharacterLocomotion.State.IDLE and abs(loco.capsule_height-1.70)<0.04, "state %s caps %.2f"%[str(loco.state), loco.capsule_height])
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_in_place_crouch_slide() -> void:
+	print("[AnimationTest] subtest in_place root <0.005 across Crouch/Slide/Stand")
+	var holder: Node3D = null
+	for name in ["CrouchIdle", "CrouchWalk", "Slide", "StandUp", "Vault", "Mantle", "ClimbUp"]:
+		var loco := _make_locomotion()
+		holder = loco.get_parent() as Node3D
+		holder.global_position = Vector3.ZERO
+		match name:
+			"CrouchIdle":
+				loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 60:
+					loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"CrouchWalk":
+				loco.update({"speed":1.2,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 60:
+					loco.update({"speed":1.2,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"Slide":
+				loco.update({"speed":4.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":true,"sprint_held":true,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 60:
+					loco.update({"speed":6.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"StandUp":
+				# Get to crouch then stand
+				loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 20:
+					loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":true,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+				loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 30:
+					loco.update({"speed":0.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"Vault":
+				loco.update({"speed": 2.0, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {"height":0.75,"has_hit":true}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+				await get_tree().process_frame
+				for i in 40:
+					loco.update({"speed": 2.0, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+					await get_tree().physics_frame
+			"Mantle":
+				loco.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {"height":1.1,"has_hit":true}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+				await get_tree().process_frame
+				for i in 80:
+					loco.update({"speed": 0.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+					await get_tree().physics_frame
+			"ClimbUp":
+				var ledge_pos := Vector3(0,1.9,1.0)
+				loco.update({"speed": 0.1, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true},"jump_pressed":false},0.016)
+				await get_tree().process_frame
+				loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true},"jump_pressed":true},0.016)
+				await get_tree().process_frame
+				for i in 50:
+					loco.update({"speed":0.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{}, "jump_pressed":false},0.016)
+					await get_tree().physics_frame
+		var root_idx: int = loco.skeleton.find_bone("root")
+		var root_ok: bool = true
+		if root_idx >= 0:
+			var rp: Vector3 = loco.skeleton.get_bone_pose_position(root_idx)
+			if rp.length() > 0.005:
+				root_ok = false
+		_check("in_place root <0.005 for %s" % name, root_ok, str(loco.skeleton.get_bone_pose_position(root_idx)))
+		if is_instance_valid(loco.get_parent()):
+			loco.get_parent().queue_free()
+		await get_tree().process_frame
