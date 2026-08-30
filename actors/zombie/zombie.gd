@@ -125,7 +125,11 @@ func _ready() -> void:
 	_locomotion.name = "Locomotion"
 	add_child(_locomotion)
 	SkeletonFactory.attach_model(_skeleton, _model_root)
-	_locomotion.setup(_skeleton, _model_root, {"shamble": true, "id": str(zombie_id)})
+	# Deferred setup to silence Skeleton3D track warnings
+	if _skeleton != null and is_instance_valid(_skeleton):
+		_locomotion.call_deferred("setup", _skeleton, _model_root, {"shamble": true, "id": str(zombie_id)})
+	else:
+		_locomotion.setup(_skeleton, _model_root, {"shamble": true, "id": str(zombie_id)})
 	if _skeleton != null:
 		_animator.set_process(false)
 
@@ -206,6 +210,33 @@ func _physics_process(delta: float) -> void:
 		var strafe_val: float = 0.0
 		if move_dir.length_squared() > 0.001:
 			strafe_val = clamp(move_dir.dot(right), -1.0, 1.0)
+		# P-C2: zombie vault low rails when blocked (shamble vault, never mantle/hang)
+		var vault_probe: Dictionary = {}
+		var mantle_probe: Dictionary = {}
+		var ledge_probe: Dictionary = {}
+		# If zombie wants to move but is stuck (speed low but move_dir non-zero), synthesize vault probe
+		if is_on_floor() and move_dir.length() > 0.1 and xz_speed < 0.25:
+			# Check if we have a pending target causing stuck (wander/chase)
+			var wants_move: bool = false
+			if state == State.WANDER and (_wander_target - global_position).length() > 0.5:
+				wants_move = true
+			elif state == State.CHASE and target != null:
+				wants_move = true
+			elif state == State.INVESTIGATE:
+				wants_move = true
+			if wants_move:
+				# Simple forward ray check for low obstacle (reuse space query if available)
+				var feet_y: float = global_position.y
+				var probe_origin: Vector3 = global_position + facing_vec * 0.9
+				var space := get_world_3d().direct_space_state
+				var hit := {}
+				# Knee height check
+				var q := PhysicsRayQueryParameters3D.create(Vector3(probe_origin.x, feet_y + 0.5, probe_origin.z), Vector3(probe_origin.x, feet_y + 0.5, probe_origin.z) + facing_vec * 0.4)
+				q.exclude = [self]
+				q.collide_with_areas = false
+				hit = space.intersect_ray(q)
+				if not hit.is_empty():
+					vault_probe = {"height": 0.75, "distance": 0.9, "has_hit": true}
 		_locomotion.update({
 			"speed": xz_speed,
 			"strafe": strafe_val,
@@ -213,7 +244,12 @@ func _physics_process(delta: float) -> void:
 			"yaw_delta": 0.0,
 			"is_airborne": not is_on_floor(),
 			"move_dir": move_dir,
-			"facing": facing_vec
+			"facing": facing_vec,
+			"stamina": 100.0,
+			"vault_probe": vault_probe,
+			"mantle_probe": mantle_probe,
+			"ledge_probe": ledge_probe,
+			"jump_pressed": false
 		}, delta)
 		if _skeleton != null and is_instance_valid(_skeleton):
 			var rid: int = _skeleton.find_bone("root")

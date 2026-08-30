@@ -13,6 +13,10 @@ static func build_library() -> AnimationLibrary:
 	lib.add_animation("TurnL90", _build_turn_l90())
 	lib.add_animation("TurnR90", _build_turn_r90())
 	lib.add_animation("Turn180", _build_turn_180())
+	lib.add_animation("Vault", _build_vault())
+	lib.add_animation("Mantle", _build_mantle())
+	lib.add_animation("LedgeHang", _build_ledge_hang())
+	lib.add_animation("ClimbUp", _build_climb_up())
 	return lib
 
 static func _track_path(bone: String) -> StringName:
@@ -272,4 +276,215 @@ static func _build_turn_180() -> Animation:
 	])
 	_add_rotation_track(anim, "l_shin", [[0.0, Quaternion.IDENTITY], [0.80, Quaternion.IDENTITY]])
 	_add_rotation_track(anim, "r_shin", [[0.0, Quaternion.IDENTITY], [0.80, Quaternion.IDENTITY]])
+	return anim
+
+static func _build_vault() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.55
+	anim.loop_mode = Animation.LOOP_NONE
+	# Vault: hips rise, torso lean forward, legs tuck, arms brace
+	_add_rotation_track(anim, "hips", [
+		[0.0, Quaternion.IDENTITY],
+		[0.15, _quat_from_euler_deg(-12, 0, 0)],
+		[0.35, _quat_from_euler_deg(8, 0, 0)],
+		[0.55, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(4, 0, 0)],
+		[0.18, _quat_from_euler_deg(22, 0, 0)],
+		[0.35, _quat_from_euler_deg(-6, 0, 0)],
+		[0.55, _quat_from_euler_deg(4, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(18, 0, 0)],
+		[0.15, _quat_from_euler_deg(42, 0, 0)],
+		[0.30, _quat_from_euler_deg(-18, 0, 0)],
+		[0.55, _quat_from_euler_deg(18, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(-18, 0, 0)],
+		[0.15, _quat_from_euler_deg(-42, 0, 0)],
+		[0.30, _quat_from_euler_deg(18, 0, 0)],
+		[0.55, _quat_from_euler_deg(-18, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(10, 0, 0)],
+		[0.15, _quat_from_euler_deg(52, 0, 0)],
+		[0.30, _quat_from_euler_deg(-8, 0, 0)],
+		[0.55, _quat_from_euler_deg(10, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(-5, 0, 0)],
+		[0.15, _quat_from_euler_deg(-52, 0, 0)],
+		[0.30, _quat_from_euler_deg(8, 0, 0)],
+		[0.55, _quat_from_euler_deg(-5, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(-18, 0, 0)],
+		[0.15, _quat_from_euler_deg(-68, 0, 0)],
+		[0.35, _quat_from_euler_deg(22, 0, 0)],
+		[0.55, _quat_from_euler_deg(-18, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(18, 0, 0)],
+		[0.15, _quat_from_euler_deg(68, 0, 0)],
+		[0.35, _quat_from_euler_deg(-22, 0, 0)],
+		[0.55, _quat_from_euler_deg(18, 0, 0)],
+	])
+	return anim
+
+static func _build_mantle() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.85
+	anim.loop_mode = Animation.LOOP_NONE
+	# Mantle: hands reach, hip to 0.95 then plant, chest over wall
+	_add_rotation_track(anim, "hips", [
+		[0.0, Quaternion.IDENTITY],
+		[0.25, _quat_from_euler_deg(-18, 0, 0)],
+		[0.55, _quat_from_euler_deg(12, 0, 0)],
+		[0.85, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(6, 0, 0)],
+		[0.25, _quat_from_euler_deg(28, 0, 0)],
+		[0.55, _quat_from_euler_deg(-8, 0, 0)],
+		[0.85, _quat_from_euler_deg(6, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(22, 0, 0)],
+		[0.25, _quat_from_euler_deg(48, 0, 0)],
+		[0.55, _quat_from_euler_deg(-22, 0, 0)],
+		[0.85, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(-22, 0, 0)],
+		[0.25, _quat_from_euler_deg(-42, 0, 0)],
+		[0.55, _quat_from_euler_deg(22, 0, 0)],
+		[0.85, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.25, _quat_from_euler_deg(58, 0, 0)],
+		[0.55, _quat_from_euler_deg(-10, 0, 0)],
+		[0.85, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(-8, 0, 0)],
+		[0.25, _quat_from_euler_deg(-58, 0, 0)],
+		[0.55, _quat_from_euler_deg(10, 0, 0)],
+		[0.85, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(-24, 0, 0)],
+		[0.20, _quat_from_euler_deg(-112, 0, 0)],
+		[0.55, _quat_from_euler_deg(-42, 0, 0)],
+		[0.85, _quat_from_euler_deg(-24, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(24, 0, 0)],
+		[0.20, _quat_from_euler_deg(112, 0, 0)],
+		[0.55, _quat_from_euler_deg(42, 0, 0)],
+		[0.85, _quat_from_euler_deg(24, 0, 0)],
+	])
+	return anim
+
+static func _build_ledge_hang() -> Animation:
+	var anim := Animation.new()
+	anim.length = 1.2
+	anim.loop_mode = Animation.LOOP_LINEAR
+	# Hang idle: arms overhead gripping ledge, slight sway, legs dangling
+	_add_rotation_track(anim, "hips", [
+		[0.0, Quaternion.IDENTITY],
+		[0.6, _quat_from_euler_deg(2, 0, 1.5)],
+		[1.2, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(-4, 0, 0)],
+		[0.6, _quat_from_euler_deg(-6, 0, 0)],
+		[1.2, _quat_from_euler_deg(-4, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.6, _quat_from_euler_deg(14, 0, 0)],
+		[1.2, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(12, 0, 0)],
+		[0.6, _quat_from_euler_deg(10, 0, 0)],
+		[1.2, _quat_from_euler_deg(12, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.6, _quat_from_euler_deg(10, 0, 0)],
+		[1.2, _quat_from_euler_deg(8, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(8, 0, 0)],
+		[0.6, _quat_from_euler_deg(6, 0, 0)],
+		[1.2, _quat_from_euler_deg(8, 0, 0)],
+	])
+	# Arms overhead: ~ -120 deg X (up)
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(-118, 0, -8)],
+		[0.6, _quat_from_euler_deg(-122, 0, -8)],
+		[1.2, _quat_from_euler_deg(-118, 0, -8)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(-118, 0, 8)],
+		[0.6, _quat_from_euler_deg(-122, 0, 8)],
+		[1.2, _quat_from_euler_deg(-118, 0, 8)],
+	])
+	return anim
+
+static func _build_climb_up() -> Animation:
+	var anim := Animation.new()
+	anim.length = 0.70
+	anim.loop_mode = Animation.LOOP_NONE
+	# ClimbUp: pull from hang to stand, hips rise, arms pull
+	_add_rotation_track(anim, "hips", [
+		[0.0, _quat_from_euler_deg(-6, 0, 0)],
+		[0.25, _quat_from_euler_deg(-22, 0, 0)],
+		[0.50, _quat_from_euler_deg(10, 0, 0)],
+		[0.70, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "spine_upper", [
+		[0.0, _quat_from_euler_deg(-8, 0, 0)],
+		[0.25, _quat_from_euler_deg(-26, 0, 0)],
+		[0.50, _quat_from_euler_deg(12, 0, 0)],
+		[0.70, _quat_from_euler_deg(4, 0, 0)],
+	])
+	_add_rotation_track(anim, "l_thigh", [
+		[0.0, _quat_from_euler_deg(14, 0, 0)],
+		[0.20, _quat_from_euler_deg(42, 0, 0)],
+		[0.40, _quat_from_euler_deg(-20, 0, 0)],
+		[0.70, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_thigh", [
+		[0.0, _quat_from_euler_deg(14, 0, 0)],
+		[0.20, _quat_from_euler_deg(-38, 0, 0)],
+		[0.40, _quat_from_euler_deg(24, 0, 0)],
+		[0.70, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_shin", [
+		[0.0, _quat_from_euler_deg(10, 0, 0)],
+		[0.25, _quat_from_euler_deg(42, 0, 0)],
+		[0.70, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "r_shin", [
+		[0.0, _quat_from_euler_deg(10, 0, 0)],
+		[0.25, _quat_from_euler_deg(-42, 0, 0)],
+		[0.70, Quaternion.IDENTITY],
+	])
+	_add_rotation_track(anim, "l_upper_arm", [
+		[0.0, _quat_from_euler_deg(-122, 0, -8)],
+		[0.20, _quat_from_euler_deg(-78, 0, -8)],
+		[0.40, _quat_from_euler_deg(18, 0, 0)],
+		[0.70, _quat_from_euler_deg(-8, 0, 0)],
+	])
+	_add_rotation_track(anim, "r_upper_arm", [
+		[0.0, _quat_from_euler_deg(-122, 0, 8)],
+		[0.20, _quat_from_euler_deg(-78, 0, 8)],
+		[0.40, _quat_from_euler_deg(18, 0, 0)],
+		[0.70, _quat_from_euler_deg(-8, 0, 0)],
+	])
 	return anim

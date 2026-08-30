@@ -61,6 +61,15 @@ const LEDGE_STAMINA_COST_HIGH := 6.0  # lip at full LEDGE_REACH_ABOVE
 # they are falling alongside - NPC zombie-chase escape hatch.
 const LEDGE_SEEK_RAYS := 8
 
+# P-C2 vault/mantle/hang geometry (ACTIVE-only, reuse balcony/awning/cornice/parapet boxes)
+const P2_VAULT_MIN := 0.6
+const P2_VAULT_MAX := 0.95
+const P2_MANTLE_MIN := 0.9
+const P2_MANTLE_MAX := 1.2
+const P2_LEDGE_MIN := 1.6
+const P2_LEDGE_MAX := 2.2
+const P2_HAND_SNAP := 0.04
+
 # Climb follow-through (Phase F): after a grab, briefly steer horizontal
 # velocity toward the wall so the body lands ON the ledge, not back at its base.
 const CLIMB_FOLLOW_TIME := 0.6         # seconds of assisted drive after a grab
@@ -82,6 +91,9 @@ var last_grab_was_building := false    # HUD/test readout of the latest grab
 var last_grab_was_awning := false      # latest grab hit a feature-tagged awning
 var awning_grabs := 0                  # lifetime counter of awning grabs
 var last_stamina_cost := 0.0           # stamina charged by the latest grab
+var _vault_probe: Dictionary = {}
+var _mantle_probe: Dictionary = {}
+var _ledge_probe: Dictionary = {}
 var _ledge_cooldown := 0.0
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
 var _climb_dir := Vector3.ZERO
@@ -128,6 +140,11 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 	var feet_y := _survivor.global_position.y
 	var origin_base := _survivor.global_position + _survivor.facing * PROBE_FORWARD_DIST
 
+	# Clear previous P-C2 probes
+	_vault_probe = {}
+	_mantle_probe = {}
+	_ledge_probe = {}
+
 	# Three horizontal ray casts at knee, waist, head heights
 	var hit_knee: Dictionary
 	var hit_waist: Dictionary
@@ -145,15 +162,46 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 		else:
 			hit_head = hit
 
-	# V VAULT: knee blocked, waist clear -> hop up and forward
+	# Determine if survivor has new locomotion (P-C2 state lock) - if so, store probes instead of instant boost
+	var has_locomotion: bool = false
+	if _survivor.has_method("get_locomotion"):
+		var loco = _survivor.get_locomotion()
+		if loco != null and is_instance_valid(loco):
+			has_locomotion = true
+
+	# V VAULT: knee blocked, waist clear -> P-C2 probe or legacy boost
 	if not hit_knee.is_empty() and hit_waist.is_empty():
-		_survivor.velocity.y = VAULT_UPWARD_BOOST
-		_survivor.velocity.x *= VAULT_FORWARD_BOOST
-		_survivor.velocity.z *= VAULT_FORWARD_BOOST
+		# Estimate vault height as ~0.75 mid of vault range; refine via hit position if available
+		var vault_h: float = 0.75
+		if not hit_knee.is_empty():
+			vault_h = clamp(float(hit_knee.position.y) - feet_y + 0.25, P2_VAULT_MIN, P2_VAULT_MAX)
+			if vault_h < P2_VAULT_MIN:
+				vault_h = 0.75
+		_vault_probe = {"height": vault_h, "distance": PROBE_FORWARD_DIST, "has_hit": true, "hit_knee": hit_knee, "hit_waist": hit_waist}
+		# Capsule sweep for arc: ensure no penetration (simplified - assume clear if no head hit)
+		var sweep_ok: bool = hit_head.is_empty()
+		if has_locomotion and sweep_ok:
+			return
+		if not has_locomotion:
+			_survivor.velocity.y = VAULT_UPWARD_BOOST
+			_survivor.velocity.x *= VAULT_FORWARD_BOOST
+			_survivor.velocity.z *= VAULT_FORWARD_BOOST
 		return
 
 	# MANTLE: knee + waist blocked, head clear -> climb up
 	if not hit_knee.is_empty() and not hit_waist.is_empty() and hit_head.is_empty():
+		var mantle_h: float = 1.1
+		if not hit_waist.is_empty():
+			mantle_h = clamp(float(hit_waist.position.y) - feet_y + 0.1, P2_MANTLE_MIN, P2_MANTLE_MAX)
+			if mantle_h < P2_MANTLE_MIN:
+				mantle_h = 1.1
+		# Also try to find ledge pos for mantle top
+		var ledge_at: Vector3 = Vector3.ZERO
+		if not hit_waist.is_empty():
+			ledge_at = hit_waist.position + Vector3(0, 0.15, 0)
+		_mantle_probe = {"height": mantle_h, "distance": PROBE_FORWARD_DIST, "has_hit": true, "ledge_pos": ledge_at, "ledge_normal": -_survivor.facing}
+		if has_locomotion:
+			return
 		_survivor.velocity.y = MANTLE_UPWARD_BOOST
 		_survivor.velocity.x *= MANTLE_FORWARD_BOOST
 		_survivor.velocity.z *= MANTLE_FORWARD_BOOST
@@ -175,6 +223,12 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 	primary = primary.normalized()
 	if primary.length_squared() < 0.5:
 		return
+	# P-C2: check if has locomotion to store ledge probe instead of instant grab
+	var has_locomotion: bool = false
+	if _survivor.has_method("get_locomotion"):
+		var loco = _survivor.get_locomotion()
+		if loco != null and is_instance_valid(loco):
+			has_locomotion = true
 	# Phase F slice 2: intended direction first (unchanged behaviour for
 	# intentional grabs), then evenly spaced fallback rays around the body.
 	var dirs: Array[Vector3] = [primary]
@@ -185,6 +239,20 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 		var probe := _probe_ledge(d)
 		if probe.is_empty():
 			continue
+		# P-C2: store ledge probe for locomotion HANG
+		var wall: Dictionary = probe["wall"]
+		var rise: float = float(probe["rise"])
+		# Build ledge_probe dict for locomotion
+		var lip_pos: Vector3 = Vector3.ZERO
+		var lip_norm: Vector3 = Vector3(0,1,0)
+		if wall.has("position"):
+			# Use wall hit position plus small offset for lip
+			lip_pos = wall.position as Vector3
+			# Try to get lip height from rise
+			lip_pos.y = _survivor.global_position.y + rise
+		if wall.has("normal"):
+			lip_norm = -d
+		_ledge_probe = {"rise": rise, "ledge_pos": lip_pos, "ledge_normal": lip_norm, "has_hit": true, "wall": wall, "dir": d}
 		if _commit_grab(d, probe["wall"], probe["rise"]):
 			return
 
@@ -312,6 +380,22 @@ func _hit_meta(hit: Dictionary, meta: String) -> StringName:
 	if shape_node == null:
 		return &""
 	return StringName(shape_node.get_meta(meta, &""))
+
+
+# P-C2 probe accessors for CharacterLocomotion
+func get_vault_probe() -> Dictionary:
+	return _vault_probe
+
+func get_mantle_probe() -> Dictionary:
+	return _mantle_probe
+
+func get_ledge_probe() -> Dictionary:
+	return _ledge_probe
+
+func clear_probes() -> void:
+	_vault_probe = {}
+	_mantle_probe = {}
+	_ledge_probe = {}
 
 
 ## Phase F follow-through: for a short window after a grab, steer horizontal

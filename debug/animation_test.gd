@@ -22,7 +22,7 @@ func _run_all() -> void:
 	_check("skeleton_factory builds 10 bones", skel_check.get_bone_count() >= 9, str(skel_check.get_bone_count()))
 	skel_check.queue_free()
 	var lib := LocomotionLibrary.build_library()
-	_check("locomotion_library has 7 clips", lib.get_animation_list().size() == 7, str(lib.get_animation_list()))
+	_check("locomotion_library has 7 clips", lib.get_animation_list().size() == 11, str(lib.get_animation_list()))
 	# RED for P-C2: expect 11 clips (7+4 vault/mantle/hang/climb) — currently 7 so this FAILS until Phase1
 	_check("locomotion_library has 11 clips (7+4 vault/mantle/hang/climb)", lib.get_animation_list().size() == 11, str(lib.get_animation_list()))
 	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp"]:

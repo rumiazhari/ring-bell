@@ -192,8 +192,11 @@ func _setup_body() -> void:
 	_visual_root.add_child(_animator)
 	_animator.add_child(_model_root)
 	_animator.configure(_model_root.get_meta("anim_limbs"))
-	# Wire locomotion after skeleton is in tree
-	_locomotion.setup(_skeleton, _model_root)
+	# Wire locomotion after skeleton is in tree (deferred to silence Skeleton3D track warnings)
+	if _skeleton != null and is_instance_valid(_skeleton):
+		_locomotion.call_deferred("setup", _skeleton, _model_root)
+	else:
+		_locomotion.setup(_skeleton, _model_root)
 	# Gate animator: when skeleton exists, locomotion is authoritative
 	if _skeleton != null:
 		_animator.set_process(false)
@@ -241,12 +244,27 @@ func _physics_process(delta: float) -> void:
 
 	needs.exerting = sprinting
 
+	# P-C2: respect parkour state lock - queue move but don't apply while vault/mantle/hang/climb/turn locked
+	var is_locked: bool = false
+	if _locomotion != null and is_instance_valid(_locomotion):
+		var ls: int = int(_locomotion.state)
+		if ls == CharacterLocomotion.State.VAULT or ls == CharacterLocomotion.State.MANTLE or ls == CharacterLocomotion.State.HANG or ls == CharacterLocomotion.State.CLIMB_UP or ls == CharacterLocomotion.State.TURN_L90 or ls == CharacterLocomotion.State.TURN_R90 or ls == CharacterLocomotion.State.TURN_180:
+			is_locked = true
+	# HANG freezes xz (capsule holds, gravity still applies but is_on_floor false keeps hang)
+	if is_locked and _locomotion != null and is_instance_valid(_locomotion) and _locomotion.state == CharacterLocomotion.State.HANG:
+		velocity.x = 0.0
+		velocity.z = 0.0
+
 	var target_speed := RUN_SPEED if sprinting else WALK_SPEED
 	target_speed *= needs.speed_multiplier()
 	var target_velocity := _move_dir * target_speed if moving else Vector3.ZERO
 	var blend := 1.0 - exp(-ACCELERATION * delta)
-	velocity.x = lerpf(velocity.x, target_velocity.x, blend)
-	velocity.z = lerpf(velocity.z, target_velocity.z, blend)
+	if not is_locked:
+		velocity.x = lerpf(velocity.x, target_velocity.x, blend)
+		velocity.z = lerpf(velocity.z, target_velocity.z, blend)
+	else:
+		# During vault/mantle/climb, keep current xz but allow HANG already zeroed
+		pass
 	# Gravity: knockback can lift the body airborne, so the arc must come
 	# back down instead of drifting away forever.
 	if not is_on_floor():
@@ -303,6 +321,20 @@ func _physics_process(delta: float) -> void:
 		# Deadzone to avoid jitter
 		if abs(yaw_delta) < deg_to_rad(15.0):
 			yaw_delta = 0.0
+		# P-C2: gather vault/mantle/ledge probes and stamina for locomotion
+		var vault_probe: Dictionary = {}
+		var mantle_probe: Dictionary = {}
+		var ledge_probe: Dictionary = {}
+		if parkour != null and is_instance_valid(parkour):
+			if parkour.has_method("get_vault_probe"):
+				vault_probe = parkour.get_vault_probe()
+			if parkour.has_method("get_mantle_probe"):
+				mantle_probe = parkour.get_mantle_probe()
+			if parkour.has_method("get_ledge_probe"):
+				ledge_probe = parkour.get_ledge_probe()
+		var jump_pressed: bool = false
+		if InputMap.has_action("jump"):
+			jump_pressed = Input.is_action_just_pressed("jump")
 		_locomotion.update({
 			"speed": xz_speed,
 			"strafe": strafe_val,
@@ -310,8 +342,17 @@ func _physics_process(delta: float) -> void:
 			"yaw_delta": yaw_delta,
 			"is_airborne": not is_on_floor(),
 			"move_dir": _move_dir,
-			"facing": facing
+			"facing": facing,
+			"stamina": stamina,
+			"vault_probe": vault_probe,
+			"mantle_probe": mantle_probe,
+			"ledge_probe": ledge_probe,
+			"jump_pressed": jump_pressed
 		}, delta)
+		# While HANG, freeze xz and ensure hand_snap
+		if _locomotion.state == CharacterLocomotion.State.HANG:
+			velocity.x = 0.0
+			velocity.z = 0.0
 		# In-place guarantee: root bone must stay <0.005
 		if _skeleton != null and is_instance_valid(_skeleton):
 			var rid: int = _skeleton.find_bone("root")
@@ -531,6 +572,10 @@ func get_locomotion_state() -> String:
 			CharacterLocomotion.State.TURN_L90: return "TURN_L90"
 			CharacterLocomotion.State.TURN_R90: return "TURN_R90"
 			CharacterLocomotion.State.TURN_180: return "TURN_180"
+			CharacterLocomotion.State.VAULT: return "VAULT"
+			CharacterLocomotion.State.MANTLE: return "MANTLE"
+			CharacterLocomotion.State.HANG: return "HANG"
+			CharacterLocomotion.State.CLIMB_UP: return "CLIMB_UP"
 	return "IDLE"
 
 func get_locomotion_blend() -> float:
@@ -542,6 +587,24 @@ func get_foot_slide() -> float:
 	if _locomotion != null and is_instance_valid(_locomotion):
 		return _locomotion.foot_slide
 	return 0.0
+
+func get_hand_snap() -> float:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.hand_snap
+	return 0.0
+
+func get_stamina() -> float:
+	return stamina
+
+func get_vault_state() -> String:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		match _locomotion.state:
+			CharacterLocomotion.State.VAULT: return "VAULT"
+			CharacterLocomotion.State.MANTLE: return "MANTLE"
+			CharacterLocomotion.State.HANG: return "HANG"
+			CharacterLocomotion.State.CLIMB_UP: return "CLIMB_UP"
+			_: return "NONE"
+	return "NONE"
 
 func get_skeleton() -> Skeleton3D:
 	return _skeleton
@@ -589,3 +652,12 @@ func load_state(data: Dictionary) -> void:
 		_locomotion.strafe = 0.0
 		_locomotion.slope_deg = 0.0
 		_locomotion.foot_slide = 0.0
+		_locomotion.hand_snap = 0.0
+		_locomotion.stamina = stamina
+		_locomotion.ledge_pos = Vector3.ZERO
+		_locomotion.ledge_normal = Vector3.ZERO
+		_locomotion._vault_timer = 0.0
+		_locomotion._mantle_timer = 0.0
+		_locomotion._climb_timer = 0.0
+		_locomotion._hang_timer = 0.0
+		_locomotion._turn_timer = 0.0
