@@ -75,6 +75,7 @@ var _rural_hearths_total := 0
 var _rural_stoves_total := 0
 var _rural_beds_total := 0
 var _rural_workbenches_total := 0
+var _rural_granaries_total := 0
 var _rural_mat_ms_total := 0.0
 
 var _player: Node3D
@@ -169,6 +170,7 @@ func reset_stream() -> void:
 	_rural_stoves_total = 0
 	_rural_beds_total = 0
 	_rural_workbenches_total = 0
+	_rural_granaries_total = 0
 	_rural_mat_ms_total = 0.0
 	_total_rural_gen_ms = 0.0
 	for c: Vector2i in _chunks:
@@ -633,6 +635,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				var f_deltas2: Dictionary = deltas2.get("forage", {}) as Dictionary
 				if not w_deltas2.is_empty() or not f_deltas2.is_empty():
 					_apply_rural_well_forage_states(chunk_node_ru, coord, w_deltas2, f_deltas2)
+				var g_deltas2: Dictionary = deltas2.get("granaries", {}) as Dictionary
+				if not g_deltas2.is_empty():
+					_apply_granary_states(chunk_node_ru, coord, g_deltas2)
 			# ACTIVE-only rural physics: disable warm rural colliders (visual retained) and crate/well/forage/hearth interactability
 			if not include_collision:
 				var rub := chunk_node_ru.get_node_or_null(NodePath("Rural_%d_%d/RuralBody" % [coord.x, coord.y]))
@@ -643,12 +648,14 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				_set_rural_forage_enabled(chunk_node_ru, coord, false)
 				_set_rural_hearth_enabled(chunk_node_ru, coord, false)
 				_set_rural_workbench_enabled(chunk_node_ru, coord, false)
+				_set_rural_granary_enabled(chunk_node_ru, coord, false)
 			else:
 				_set_rural_crates_enabled(chunk_node_ru, coord, true)
 				_set_rural_wells_enabled(chunk_node_ru, coord, true)
 				_set_rural_forage_enabled(chunk_node_ru, coord, true)
 				_set_rural_hearth_enabled(chunk_node_ru, coord, true)
 				_set_rural_workbench_enabled(chunk_node_ru, coord, true)
+				_set_rural_granary_enabled(chunk_node_ru, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -695,6 +702,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var rural_stoves := int(rustats.get("rural_stoves", 0))
 	var rural_beds := int(rustats.get("rural_beds", 0))
 	var rural_workbenches := int(rustats.get("rural_workbenches", rustats.get("workbenches", 0)))
+	var rural_granaries := int(rustats.get("rural_granaries", rustats.get("granaries", 0)))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -753,6 +761,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_beds": rural_beds,
 		"rural_workbenches": rural_workbenches,
 		"rural_workbenches_active": rural_workbenches if include_collision else 0,
+		"rural_granaries": rural_granaries,
+		"rural_granaries_active": rural_granaries if include_collision else 0,
 		"rural_crates_active": rural_crates if include_collision else 0,
 		"rural_wells_active": rural_wells if include_collision else 0,
 		"rural_forage_active": rural_forage if include_collision else 0,
@@ -820,6 +830,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_rural_stoves_total += rural_stoves
 	_rural_beds_total += rural_beds
 	_rural_workbenches_total += rural_workbenches
+	_rural_granaries_total += rural_granaries
 	_rural_mat_ms_total += float(rustats.get("rural_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
@@ -897,6 +908,7 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_rural_stoves_total -= int(rec.get("rural_stoves", 0))
 		_rural_beds_total -= int(rec.get("rural_beds", 0))
 		_rural_workbenches_total -= int(rec.get("rural_workbenches", rec.get("workbenches", 0)))
+		_rural_granaries_total -= int(rec.get("rural_granaries", rec.get("granaries", 0)))
 		_rural_mat_ms_total -= float(rec.get("rural_mat_ms", 0.0))
 		_total_rural_gen_ms -= float(rec.get("rural_gen_ms", 0.0))
 		_chunks.erase(c)
@@ -968,6 +980,7 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_forage_enabled(rural_node_active, coord, true)
 					_set_rural_hearth_enabled(rural_node_active, coord, true)
 					_set_rural_workbench_enabled(rural_node_active, coord, true)
+					_set_rural_granary_enabled(rural_node_active, coord, true)
 				var biome_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if biome_node_active != null:
 					_set_field_crops_enabled(biome_node_active, coord, true)
@@ -980,6 +993,7 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_forage_enabled(rural_node_warm, coord, false)
 					_set_rural_hearth_enabled(rural_node_warm, coord, false)
 					_set_rural_workbench_enabled(rural_node_warm, coord, false)
+					_set_rural_granary_enabled(rural_node_warm, coord, false)
 				var biome_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if biome_node_warm != null:
 					_set_field_crops_enabled(biome_node_warm, coord, false)
@@ -1326,6 +1340,41 @@ func rural_workbenches_active_count() -> int:
 func rural_workbenches_total_count() -> int:
 	return _rural_workbenches_total
 
+func rural_granaries_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("rural_granaries_active", v.get("rural_granaries", 0)))
+	return n
+
+func rural_granaries_total_count() -> int:
+	return _rural_granaries_total
+
+func _set_rural_granary_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	var rural: Node = null
+	if String(parent.name).begins_with("Rural_"):
+		rural = parent
+	else:
+		rural = parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+	if rural == null or not is_instance_valid(rural):
+		return
+	var children: Array = rural.get_children().duplicate()
+	for child: Variant in children:
+		if String(child.name).begins_with("rural_granary_"):
+			if not is_instance_valid(child):
+				continue
+			if child.is_queued_for_deletion() or not child.is_inside_tree():
+				continue
+			if child.has_method("set_active_enabled"):
+				child.call("set_active_enabled", enabled)
+			else:
+				child.monitorable = enabled
+				var inter = child.get("interactable")
+				if inter != null and is_instance_valid(inter):
+					inter.enabled = enabled
+
 func debug_lines() -> Array[String]:
 	var lines: Array[String] = []
 	lines.append("chunk %s | active %d | warm %d | queued %d | loads %d/unloads %d"
@@ -1344,8 +1393,8 @@ func debug_lines() -> Array[String]:
 			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, _field_parcels_total, _field_crops_total, _orchard_parcels_total, _fruit_patches_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
 	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
-	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | workbenches %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
-			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
+	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | workbenches %d | granaries %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
+			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, _rural_granaries_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
@@ -1735,6 +1784,42 @@ func _collect_wells_forage_recursive(n: Node, coord: Vector2i) -> void:
 		if child.get_child_count() > 0:
 			_collect_wells_forage_recursive(child, coord)
 
+func _apply_granary_states(parent: Node, coord: Vector2i, granaries: Dictionary) -> void:
+	var rural_node: Node = parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+	if rural_node == null:
+		if parent.name.begins_with("Rural_"):
+			rural_node = parent
+		else:
+			return
+	for child in rural_node.get_children():
+		if String(child.name).begins_with("rural_granary_"):
+			var gid: String = String(child.name)
+			if granaries.has(gid):
+				child.call("load_state", granaries[gid] as Dictionary)
+
+func _record_granary(coord: Vector2i, granary_id: String, state: Dictionary) -> void:
+	if granary_id == "":
+		return
+	note_discovered(coord)
+	var granaries: Dictionary = _records[coord]["deltas"].get("granaries", {})
+	granaries[granary_id] = state.duplicate()
+	_records[coord]["deltas"]["granaries"] = granaries
+
+func _snapshot_resident_granaries() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_granaries_recursive(node, c)
+
+func _collect_granaries_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if String(child.name).begins_with("rural_granary_") and not child.is_queued_for_deletion():
+			var st: Dictionary = child.call("save_state") as Dictionary
+			_record_granary(coord, String(child.name), st)
+		if child.get_child_count() > 0:
+			_collect_granaries_recursive(child, coord)
+
 func _record_crate(coord: Vector2i, crate_id: String, state: Dictionary) -> void:
 	if crate_id == "":
 		return
@@ -1779,6 +1864,7 @@ func save_state() -> Dictionary:
 	_snapshot_resident_wells_forage()
 	_snapshot_resident_field_crops()
 	_snapshot_resident_fruit_patches()
+	_snapshot_resident_granaries()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]

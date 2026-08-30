@@ -101,6 +101,7 @@ const RURAL_RESOURCE_DOMAINS: Array[StringName] = [&"rural_well", &"rural_well_r
 const FIELD_PARCEL_DOMAINS: Array[StringName] = [&"field_parcel", &"field_parcel_density", &"field_parcel_crop", &"field_parcel_yaw"]
 const ORCHARD_PARCEL_DOMAINS: Array[StringName] = [&"orchard_parcel", &"orchard_parcel_density", &"orchard_parcel_fruit", &"orchard_parcel_yaw"]
 const RURAL_WORKBENCH_DOMAINS: Array[StringName] = [&"rural_workbench", &"rural_workbench_hamlet_roll"]
+const RURAL_GRANARY_DOMAINS: Array[StringName] = [&"rural_granary", &"rural_granary_hamlet_roll"]
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation

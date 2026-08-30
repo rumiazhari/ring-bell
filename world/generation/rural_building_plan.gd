@@ -24,8 +24,12 @@ var _workbenches: Array[Dictionary] = []
 var _workbenches_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
 var _workbenches_by_id: Dictionary = {} # workbench.id -> Dictionary
 var _workbench_by_building: Dictionary = {} # building.id -> Dictionary
+var _granaries: Array[Dictionary] = []
+var _granaries_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
+var _granaries_by_id: Dictionary = {} # granary.id -> Dictionary
+var _granary_by_building: Dictionary = {} # building.id -> Dictionary
 
-static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary, workbenches: Array, workbenches_by_settlement: Dictionary, workbenches_by_id: Dictionary, workbench_by_building: Dictionary}
+static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary, workbenches: Array, workbenches_by_settlement: Dictionary, workbenches_by_id: Dictionary, workbench_by_building: Dictionary, granaries: Array, granaries_by_settlement: Dictionary, granaries_by_id: Dictionary, granary_by_building: Dictionary}
 
 static func _unit_float_with_seed(purpose: String, parts: Array, seed: int) -> float:
 	return float(WorldSeed.combine([seed, WorldSeed.str_hash(purpose)] + parts) % 1000003) / 1000003.0
@@ -64,6 +68,13 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 			_workbenches_by_settlement[k] = (wbs2[k] as Array[Dictionary]).duplicate()
 		_workbenches_by_id = (cached.get("workbenches_by_id", {}) as Dictionary).duplicate()
 		_workbench_by_building = (cached.get("workbench_by_building", {}) as Dictionary).duplicate()
+		_granaries = (cached.get("granaries", []) as Array[Dictionary]).duplicate()
+		var gbs: Dictionary = cached.get("granaries_by_settlement", {}) as Dictionary
+		_granaries_by_settlement = {}
+		for k in gbs.keys():
+			_granaries_by_settlement[k] = (gbs[k] as Array[Dictionary]).duplicate()
+		_granaries_by_id = (cached.get("granaries_by_id", {}) as Dictionary).duplicate()
+		_granary_by_building = (cached.get("granary_by_building", {}) as Dictionary).duplicate()
 		# Invalidate stale cache without hearth (SPEC-C008): hearth derived from furniture must exist
 		var stale := false
 		if _buildings.size() > 0:
@@ -83,6 +94,16 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 				if has_village_barn:
 					stale = true
 		if not stale:
+			# also invalidate if granaries missing for existing village barns (P5.4)
+			if _granaries.is_empty() and _buildings.size() > 0:
+				var has_village_barn2 := false
+				for b in _buildings:
+					if String(b.get("settlement_kind", "")) == "village" and (String(b.get("kind","")) == "barn" or String(b.get("kind","")) == "stable"):
+						has_village_barn2 = true
+						break
+				if has_village_barn2:
+					stale = true
+		if not stale:
 			return
 		# stale: fall through to regeneration
 		_cache.erase(seed_used)
@@ -97,7 +118,10 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 	var wbs_copy2 := {}
 	for k in _workbenches_by_settlement.keys():
 		wbs_copy2[k] = (_workbenches_by_settlement[k] as Array[Dictionary]).duplicate()
-	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate()}
+	var gbs_copy := {}
+	for k in _granaries_by_settlement.keys():
+		gbs_copy[k] = (_granaries_by_settlement[k] as Array[Dictionary]).duplicate()
+	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate(), "granaries": _granaries.duplicate(), "granaries_by_settlement": gbs_copy, "granaries_by_id": _granaries_by_id.duplicate(), "granary_by_building": _granary_by_building.duplicate()}
 
 func _hash_id(s: String) -> int:
 	return WorldSeed.str_hash(s)
@@ -1261,6 +1285,10 @@ func _generate() -> void:
 	_workbenches_by_settlement.clear()
 	_workbenches_by_id.clear()
 	_workbench_by_building.clear()
+	_granaries.clear()
+	_granaries_by_settlement.clear()
+	_granaries_by_id.clear()
+	_granary_by_building.clear()
 	var anchors: Array[Dictionary] = settlement.settlement_anchors()
 	var gate_barns_used: Dictionary = {}
 	var gates: Array[Dictionary] = settlement.city_gates()
@@ -1691,6 +1719,7 @@ func _generate() -> void:
 	_generate_wells()
 	_generate_forage()
 	_generate_workbenches()
+	_generate_granaries()
 	# Sort buildings by id
 	_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -1728,25 +1757,13 @@ func _is_valid_workbench_position(p: Vector2, building: Dictionary, existing_wor
 	if d_road < WorldConstants.RURAL_WORKBENCH_ROAD_SETBACK - 1e-6:
 		return false
 	var wb_aabb := Rect2(p - Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z))
-	# building gap 8 (check against all buildings)
+	# Hardened P5.4: explicit aabb_gap <8 -> false without intersects gate; host building excluded (gap negative)
 	for b in _buildings:
 		if String(b["id"]) == String(building["id"]):
 			continue
 		var baabb: Rect2 = b["aabb"] as Rect2
-		var gap: float = _aabb_gap(wb_aabb, baabb)
-		if gap < 8.0 - 1e-6 and gap >= -1e-6:
-			# actually need >=8 from other workbenches/buildings, but our own host building aabb contains workbench, so gap to host will be negative (overlap) — skip host
-			# Check distance to host building edge: workbench must be inside host, so gap negative is expected for host; skip host building
-			pass
-		# Check against other buildings (except host) : need >=8 from building aabb
-		if String(b["id"]) != String(building["id"]):
-			if _aabb_gap(wb_aabb, baabb) < 8.0 - 1e-6 and _aabb_gap(wb_aabb, baabb) >= 0:
-				# if gap is negative means overlap, but workbench inside host already excluded; other building overlap not allowed
-				if wb_aabb.intersects(baabb):
-					return false
-				if wb_aabb.get_center().distance_to(Vector2(baabb.get_center())) < 8.0 - 1e-6:
-					# fallback distance check
-					pass
+		if _aabb_gap(wb_aabb, baabb) < 8.0 - 1e-6:
+			return false
 	# well gap 6
 	for w in _wells:
 		var wpos: Vector2 = w["pos"] as Vector2
@@ -1878,9 +1895,8 @@ func _generate_workbenches() -> void:
 		# pick first barn_by_hash
 		var host: Dictionary = barn_buildings[0]
 		var bid: String = String(host["id"])
-		# if urban suppression? host already not in urban unless gate barn
-		if Vector2(host["center"] as Vector2).length() < WorldConstants.URBAN_INNER_M - 0.5 and not bool(host.get("allow_gate_barn", false)):
-			continue
+		# Hardened P5.4: urban suppression via wb_pos.length() not host center; host already outside 350 except gate barn, but wb_pos check is atomic in _is_valid_workbench_position
+		# (removed host.center.length() gate; rely on candidate p.length() <350 in _is_valid_workbench_position)
 		# try 4 attempts with jitter 1.2 as spec
 		var found := false
 		var wb_pos: Vector2 = Vector2.ZERO
@@ -1889,6 +1905,9 @@ func _generate_workbenches() -> void:
 		var final_pos: Vector2 = Vector2.ZERO
 		for attempt in 4:
 			var cand: Vector2 = _workbench_pos_for_building(host, attempt)
+			# Hardened P5.4: urban check via wb_pos.length() <350, not host.center
+			if cand.length() < WorldConstants.URBAN_INNER_M - 0.5:
+				continue
 			# apply jitter 1.2 * unit_float for attempt>0
 			if attempt > 0:
 				var jx: float = _unit_float_with_seed("rural_workbench", [_hash_id(bid), attempt], seed_used)
@@ -1969,6 +1988,253 @@ func _generate_workbenches() -> void:
 		var arr: Array[Dictionary] = _workbenches_by_settlement[sid] as Array[Dictionary]
 		arr.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
 		_workbenches_by_settlement[sid] = arr
+
+func _is_valid_granary_position(p: Vector2, building: Dictionary, existing_granaries: Array[Dictionary]) -> bool:
+	var tclass: StringName = terrain.terrain_class_at(p)
+	if tclass == &"cliff":
+		return false
+	var slope: float = terrain.slope_at(p)
+	if slope >= WorldConstants.BUILDABLE_MAX_SLOPE_DEG - 1e-6:
+		if slope >= 22.0 - 1e-6:
+			return false
+	if hydrology.water_body_at(p) != &"":
+		return false
+	if hydrology.is_floodplain(p):
+		return false
+	if hydrology.distance_to_water(p) <= WorldConstants.BANK_W + 2.0 + 1e-6:
+		return false
+	if p.length() < WorldConstants.URBAN_INNER_M - 0.5:
+		return false
+	var d_road: float = road_network.distance_to_road(p) if road_network != null else INF
+	if d_road < WorldConstants.RURAL_GRANARY_ROAD_SETBACK - 1e-6:
+		return false
+	var g_aabb := Rect2(p - Vector2(WorldConstants.RURAL_GRANARY_SIZE.x, WorldConstants.RURAL_GRANARY_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_GRANARY_SIZE.x, WorldConstants.RURAL_GRANARY_SIZE.z))
+	# Hardened: explicit aabb_gap <8 -> false without intersects gate
+	for b in _buildings:
+		if String(b["id"]) == String(building["id"]):
+			continue
+		var baabb: Rect2 = b["aabb"] as Rect2
+		if _aabb_gap(g_aabb, baabb) < 8.0 - 1e-6:
+			return false
+	for w in _wells:
+		var wpos: Vector2 = w["pos"] as Vector2
+		if p.distance_to(wpos) < WorldConstants.RURAL_GRANARY_WELL_GAP_MIN - 1e-6:
+			return false
+		var waabb := Rect2(wpos - Vector2(0.9,0.9), Vector2(1.8,1.8))
+		if _aabb_gap(g_aabb, waabb) < 6.0 - 1e-6 and _aabb_gap(g_aabb, waabb) >= 0:
+			return false
+	for f in _forage:
+		var fpos: Vector2 = f["pos"] as Vector2
+		if p.distance_to(fpos) < WorldConstants.RURAL_GRANARY_FORAGE_GAP_MIN - 1e-6:
+			return false
+	for wb in _workbenches:
+		var opos: Vector2 = wb["pos"] as Vector2
+		if p.distance_to(opos) < WorldConstants.RURAL_GRANARY_WORKBENCH_GAP_MIN - 1e-6:
+			return false
+		var oaabb: Rect2 = wb["aabb"] as Rect2
+		if _aabb_gap(g_aabb, oaabb) < WorldConstants.RURAL_GRANARY_WORKBENCH_GAP_MIN - 1e-6:
+			return false
+	for gr in existing_granaries:
+		var opos: Vector2 = gr["pos"] as Vector2
+		if p.distance_to(opos) < WorldConstants.RURAL_GRANARY_SPACING_MIN - 1e-6:
+			return false
+		var oaabb: Rect2 = gr["aabb"] as Rect2
+		if _aabb_gap(g_aabb, oaabb) < WorldConstants.RURAL_GRANARY_SPACING_MIN - 1e-6:
+			return false
+	if road_network != null:
+		var rect2 := Rect2(p - Vector2(30,30), Vector2(60,60))
+		var segs: Array[Dictionary] = road_network.road_segments_in(rect2)
+		for seg in segs:
+			if bool(seg.get("is_bridge", false)):
+				var poly: PackedVector2Array = seg["polyline"] as PackedVector2Array
+				for i in range(poly.size()-1):
+					var a2: Vector2 = poly[i]
+					var b2: Vector2 = poly[i+1]
+					var ab2 := b2 - a2
+					var len2b := ab2.length_squared()
+					if len2b < 1e-6:
+						continue
+					var t2 := (p - a2).dot(ab2) / len2b
+					t2 = clampf(t2, 0.0, 1.0)
+					var proj2 := a2 + ab2 * t2
+					var w_road: float = float(seg.get("width", WorldConstants.ROAD_WIDTH_TRACK))
+					if p.distance_to(proj2) < w_road * 0.5 + 2.0 and hydrology.water_body_at(proj2) != &"":
+						return false
+	var hb_x: float = WorldConstants.RURAL_GRANARY_SIZE.x *0.5
+	var hb_z: float = WorldConstants.RURAL_GRANARY_SIZE.z *0.5
+	var corners: Array[Vector2] = [p+Vector2(hb_x,hb_z), p+Vector2(-hb_x,hb_z), p+Vector2(-hb_x,-hb_z), p+Vector2(hb_x,-hb_z)]
+	var h0: float = terrain.height_at(corners[0])
+	var h1: float = terrain.height_at(corners[1])
+	var h2: float = terrain.height_at(corners[2])
+	var h3: float = terrain.height_at(corners[3])
+	var h_min := minf(minf(h0,h1), minf(h2,h3))
+	var h_max := maxf(maxf(h0,h1), maxf(h2,h3))
+	if h_max - h_min > 0.8 + 1e-6:
+		return false
+	return true
+
+func _granary_pos_for_building(building: Dictionary, attempt: int) -> Vector2:
+	var footprint: Vector2 = building["footprint"] as Vector2
+	var yaw: float = float(building["yaw"])
+	var center: Vector2 = building["center"] as Vector2
+	var interior: Dictionary = building.get("interior", {}) as Dictionary
+	var furniture: Array = interior.get("furniture", []) as Array
+	# Try reuse second furniture anchor (table/shelf not occupied by workbench)
+	var wb: Dictionary = _workbench_by_building.get(String(building["id"]), {}) as Dictionary
+	var wb_pos: Vector2 = wb.get("pos", Vector2.INF) as Vector2
+	for f in furniture:
+		var fk: StringName = f.get("kind", &"") as StringName
+		if fk == &"table" or fk == &"shelf":
+			var fpos: Vector2 = f.get("pos", Vector2.ZERO) as Vector2
+			if wb_pos != Vector2.INF and fpos.distance_to(wb_pos) < 0.1:
+				continue
+			if attempt == 0:
+				return fpos
+	# fallback inset
+	var hx: float = footprint.x *0.5
+	var hz: float = footprint.y *0.5
+	var bid_hash: int = _hash_id(String(building["id"]))
+	var r_off: float = _unit_float_with_seed("rural_granary", [bid_hash, attempt], seed_used)
+	var r_off2: float = _unit_float_with_seed("rural_granary", [bid_hash, attempt+10], seed_used)
+	var inset := 0.7 + WorldConstants.RURAL_GRANARY_SIZE.x*0.5 + 0.15
+	var inset_z := 0.7 + WorldConstants.RURAL_GRANARY_SIZE.z*0.5 + 0.15
+	var local_x: float = lerpf(-hx + inset, hx - inset, r_off)
+	var local_z: float = lerpf(-hz + inset_z, hz - inset_z, r_off2)
+	local_x = clampf(local_x, -hx + inset, hx - inset)
+	local_z = clampf(local_z, -hz + inset_z, hz - inset_z)
+	var local := Vector2(local_x, local_z)
+	return _local_to_world(center, yaw, local)
+
+func _generate_granaries() -> void:
+	_granaries.clear()
+	_granaries_by_settlement.clear()
+	_granaries_by_id.clear()
+	_granary_by_building.clear()
+	var anchors: Array[Dictionary] = settlement.settlement_anchors()
+	var global_gr: Array[Dictionary] = []
+	for s in anchors:
+		var sid: String = String(s["id"])
+		var skind: StringName = s["kind"] as StringName
+		var id_hash: int = _hash_id(sid)
+		var buildings: Array[Dictionary] = _by_settlement.get(sid, []) as Array[Dictionary]
+		if buildings.is_empty():
+			continue
+		var barn_buildings: Array[Dictionary] = []
+		for b in buildings:
+			var k: StringName = b["kind"] as StringName
+			if k == &"barn" or k == &"stable":
+				barn_buildings.append(b)
+		if barn_buildings.is_empty():
+			continue
+		barn_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _hash_id(String(a["id"])) < _hash_id(String(b["id"])))
+		var target := 0
+		if skind == &"village":
+			target = 1
+		elif skind == &"hamlet":
+			var roll: float = _unit_float_with_seed("rural_granary_hamlet_roll", [id_hash], seed_used)
+			target = 1 if roll > 0.70 else 0
+		else:
+			target = 0
+		if target == 0:
+			continue
+		var host: Dictionary = {}
+		if skind == &"village" and barn_buildings.size() >= 2:
+			host = barn_buildings[1]
+		else:
+			host = barn_buildings[0]
+		var bid: String = String(host["id"])
+		var found := false
+		var g_pos: Vector2 = Vector2.ZERO
+		var g_aabb: Rect2 = Rect2()
+		var g_yaw: float = float(host["yaw"])
+		for attempt in 4:
+			var cand: Vector2 = _granary_pos_for_building(host, attempt)
+			if attempt > 0:
+				var jx: float = _unit_float_with_seed("rural_granary", [_hash_id(bid), attempt], seed_used)
+				var jy: float = _unit_float_with_seed("rural_granary", [_hash_id(bid), attempt+100], seed_used)
+				cand += Vector2((jx-0.5)*1.2, (jy-0.5)*1.2)
+			if cand.length() < WorldConstants.URBAN_INNER_M - 0.5:
+				continue
+			var building_aabb: Rect2 = host["aabb"] as Rect2
+			var inset_aabb := Rect2(building_aabb.position + Vector2(0.5,0.5), building_aabb.size - Vector2(1.0,1.0))
+			var cand_aabb := Rect2(cand - Vector2(WorldConstants.RURAL_GRANARY_SIZE.x, WorldConstants.RURAL_GRANARY_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_GRANARY_SIZE.x, WorldConstants.RURAL_GRANARY_SIZE.z))
+			if not inset_aabb.has_point(cand_aabb.position) or not inset_aabb.has_point(cand_aabb.end):
+				continue
+			var interior: Dictionary = host.get("interior", {}) as Dictionary
+			var furn: Array = interior.get("furniture", []) as Array
+			var ok_furn := true
+			for f in furn:
+				var fpos: Vector2 = f.get("pos", Vector2.ZERO) as Vector2
+				var fsize: Vector3 = f.get("size", Vector3(1,1,1)) as Vector3
+				var faabb: Rect2 = f.get("aabb", Rect2(fpos - Vector2(fsize.x,fsize.z)*0.5, Vector2(fsize.x,fsize.z))) as Rect2
+				if cand.distance_to(fpos) < 0.1:
+					continue
+				var gap: float = _aabb_gap(cand_aabb, faabb)
+				if gap < WorldConstants.RURAL_GRANARY_FURNITURE_GAP_MIN - 1e-6:
+					ok_furn = false
+					break
+			if not ok_furn:
+				continue
+			var door_pos: Vector2 = host["door_pos"] as Vector2
+			if cand.distance_to(door_pos) < WorldConstants.RURAL_GRANARY_DOOR_SWING_GAP + maxf(WorldConstants.RURAL_GRANARY_SIZE.x, WorldConstants.RURAL_GRANARY_SIZE.z)*0.5:
+				var door_rect := Rect2(door_pos - Vector2(1.0,1.0), Vector2(2.0,2.0))
+				if cand_aabb.intersects(door_rect):
+					continue
+				if cand.distance_to(door_pos) < WorldConstants.RURAL_GRANARY_DOOR_SWING_GAP:
+					continue
+			# workbench aabb gap >=0.9 and >=1.0 from workbench
+			var wb: Dictionary = _workbench_by_building.get(bid, {}) as Dictionary
+			if not wb.is_empty():
+				var wpos: Vector2 = wb.get("pos", Vector2.INF) as Vector2
+				if cand.distance_to(wpos) < WorldConstants.RURAL_GRANARY_WORKBENCH_GAP_MIN - 1e-6:
+					continue
+				var waabb: Rect2 = wb.get("aabb", Rect2()) as Rect2
+				if not waabb.has_area():
+					waabb = Rect2(wpos - Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z))
+				if _aabb_gap(cand_aabb, waabb) < WorldConstants.RURAL_GRANARY_WORKBENCH_GAP_MIN - 1e-6:
+					continue
+			if not _is_valid_granary_position(cand, host, global_gr):
+				continue
+			g_pos = cand
+			g_aabb = cand_aabb
+			found = true
+			break
+		if not found:
+			continue
+		var gid: String = "rural_granary_%s" % sid
+		var sid_count: int = int(_granaries_by_settlement.get(sid, [] as Array[Dictionary]).size())
+		if sid_count > 0:
+			gid = "rural_granary_%s_%d" % [sid, sid_count]
+		var terrain_h: float = terrain.height_at(g_pos) + WorldConstants.GRANARY_LIFT_M
+		var pos3 := Vector3(g_pos.x, terrain_h, g_pos.y)
+		var g_dict: Dictionary = {
+			"id": gid,
+			"granary_id": gid,
+			"center": g_pos,
+			"pos": g_pos,
+			"position": pos3,
+			"pos3": pos3,
+			"aabb": g_aabb,
+			"building_id": bid,
+			"settlement_id": sid,
+			"settlement_kind": skind,
+			"building_kind": host["kind"] as StringName,
+			"yaw": g_yaw,
+			"size": WorldConstants.RURAL_GRANARY_SIZE,
+			"capacity": WorldConstants.RURAL_GRANARY_CAPACITY,
+		}
+		_granaries.append(g_dict)
+		if not _granaries_by_settlement.has(sid):
+			_granaries_by_settlement[sid] = [] as Array[Dictionary]
+		(_granaries_by_settlement[sid] as Array[Dictionary]).append(g_dict)
+		_granaries_by_id[gid] = g_dict
+		_granary_by_building[bid] = g_dict
+		global_gr.append(g_dict)
+	_granaries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	for sid in _granaries_by_settlement.keys():
+		var arr: Array[Dictionary] = _granaries_by_settlement[sid] as Array[Dictionary]
+		arr.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		_granaries_by_settlement[sid] = arr
 
 func _build_hearth(furniture: Array[Dictionary], building: Dictionary) -> Dictionary:
 	# Deterministic hearth reusing furniture anchors where kind==stove/bed (SPEC-C008 §1)
@@ -2239,6 +2505,44 @@ func workbench_for_building(building_id: String) -> Dictionary:
 func workbenches_for_settlement(settlement_id: String) -> Array[Dictionary]:
 	if _workbenches_by_settlement.has(settlement_id):
 		return (_workbenches_by_settlement[settlement_id] as Array[Dictionary]).duplicate()
+	return [] as Array[Dictionary]
+
+func rural_granaries() -> Array[Dictionary]:
+	return _granaries.duplicate()
+
+func rural_granaries_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for g in _granaries:
+		var c: Vector2 = g["center"] as Vector2
+		if rect.has_point(c):
+			out.append(g)
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	return out
+
+func nearest_rural_granary(p: Vector2) -> Dictionary:
+	if _granaries.is_empty():
+		return {}
+	var best: Dictionary = _granaries[0]
+	var best_d2: float = p.distance_squared_to(best["center"] as Vector2)
+	for i in range(1, _granaries.size()):
+		var g: Dictionary = _granaries[i]
+		var d2: float = p.distance_squared_to(g["center"] as Vector2)
+		if d2 < best_d2 - 1e-6:
+			best_d2 = d2
+			best = g
+		elif is_equal_approx(d2, best_d2):
+			if String(g["id"]) < String(best["id"]):
+				best = g
+	return best
+
+func granary_for_building(building_id: String) -> Dictionary:
+	if _granary_by_building.has(building_id):
+		return _granary_by_building[building_id] as Dictionary
+	return {}
+
+func granaries_for_settlement(settlement_id: String) -> Array[Dictionary]:
+	if _granaries_by_settlement.has(settlement_id):
+		return (_granaries_by_settlement[settlement_id] as Array[Dictionary]).duplicate()
 	return [] as Array[Dictionary]
 
 func hearths_for_settlement(settlement_id: String) -> Array[Dictionary]:

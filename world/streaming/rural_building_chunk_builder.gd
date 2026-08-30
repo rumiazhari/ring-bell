@@ -377,8 +377,53 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		workbench_manifests = workbench_manifests.slice(0, WorldConstants.RURAL_WORKBENCH_MAX_PER_CHUNK)
 	workbench_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
 	var has_workbench: bool = workbench_manifests.size() > 0
+	# Granary manifests (village barn cache, hamlet 0-1 30% via plan, clipped center ownership)
+	var granary_manifests: Array[Dictionary] = []
+	if not suppress:
+		var raw_gr: Array[Dictionary] = world_plan.rural_granaries_in(rect)
+		for g in raw_gr:
+			var gpos: Vector2 = g["pos"] as Vector2
+			if not rect.has_point(gpos):
+				continue
+			if gpos.length() < WorldConstants.URBAN_INNER_M - 0.5:
+				var is_gate_gr := false
+				var gates_gr: Array[Dictionary] = world_plan.city_gates()
+				for gg in gates_gr:
+					var gc: Vector2 = gg["center"] as Vector2
+					if gpos.distance_to(gc) < 140.0:
+						is_gate_gr = true
+						break
+				if not is_gate_gr:
+					continue
+			var ground_gr: float = world_plan.terrain_height_at(gpos) + WorldConstants.GRANARY_LIFT_M
+			var pos3gr: Vector3 = Vector3(gpos.x, ground_gr + WorldConstants.RURAL_GRANARY_SIZE.y*0.5, gpos.y)
+			var gpos3: Vector3 = g.get("pos3", pos3gr) as Vector3
+			if gpos3 == Vector3.ZERO:
+				gpos3 = pos3gr
+			var gm: Dictionary = {
+				"id": g["id"],
+				"granary_id": g.get("granary_id", g["id"]),
+				"building_id": g["building_id"],
+				"settlement_id": g["settlement_id"],
+				"settlement_kind": g.get("settlement_kind", &"village"),
+				"building_kind": g.get("building_kind", &"barn"),
+				"pos": gpos,
+				"position": gpos3,
+				"pos3": gpos3,
+				"aabb": g.get("aabb", Rect2(gpos - Vector2(0.6,0.4), Vector2(1.2,0.8))),
+				"center": g.get("center", gpos),
+				"yaw": float(g.get("yaw", 0.0)),
+				"size": g.get("size", WorldConstants.RURAL_GRANARY_SIZE),
+				"capacity": int(g.get("capacity", WorldConstants.RURAL_GRANARY_CAPACITY)),
+			}
+			granary_manifests.append(gm)
+	if granary_manifests.size() > WorldConstants.RURAL_GRANARY_MAX_PER_CHUNK:
+		granary_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		granary_manifests = granary_manifests.slice(0, WorldConstants.RURAL_GRANARY_MAX_PER_CHUNK)
+	granary_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	var has_granary: bool = granary_manifests.size() > 0
 	# has_rural now true if buildings or wells/forage present (well gives collider, forage alone still visual but we treat as rural for mesh, collider only for building/well)
-	var has_any_visual: bool = has_rural or has_well or has_forage or has_workbench
+	var has_any_visual: bool = has_rural or has_well or has_forage or has_workbench or has_granary
 	var has_collider: bool = has_rural or has_well
 	# Generate batched mesh geometry
 	var verts := PackedVector3Array()
@@ -557,6 +602,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var rural_stoves: int = stove_manifests.size()
 	var rural_beds: int = bed_manifests.size()
 	var rural_workbenches: int = workbench_manifests.size()
+	var rural_granaries: int = granary_manifests.size()
 	var gen_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
 	door_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -596,8 +642,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"rural_stoves": rural_stoves,
 		"rural_beds": rural_beds,
 		"rural_workbenches": rural_workbenches,
+		"rural_granaries": rural_granaries,
 		"workbench_manifests": workbench_manifests,
 		"workbenches": rural_workbenches,
+		"granary_manifests": granary_manifests,
+		"granaries": rural_granaries,
 		"well_vertices": well_vertices,
 		"well_triangles": well_triangles,
 		"forage_vertices": forage_vertices,
@@ -611,6 +660,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"has_stove": has_stove,
 		"has_bed": has_bed,
 		"has_workbench": has_workbench,
+		"has_granary": has_granary,
 		"rural_gen_ms": gen_ms,
 		"rural_mat_ms": 0.0,
 		"aabbs": aabbs,
@@ -630,7 +680,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var has_forage: bool = bool(manifest.get("has_forage", false))
 	var has_hearth: bool = bool(manifest.get("has_hearth", false))
 	var has_workbench: bool = bool(manifest.get("has_workbench", false))
-	var has_any: bool = has_rural or has_well or has_forage or has_hearth or has_workbench
+	var has_granary: bool = bool(manifest.get("has_granary", false))
+	var has_any: bool = has_rural or has_well or has_forage or has_hearth or has_workbench or has_granary
 	var existing := parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
 		parent.remove_child(existing)
@@ -650,6 +701,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			"rural_stoves": 0,
 			"rural_beds": 0,
 			"rural_workbenches": 0,
+			"rural_granaries": 0,
 			"rural_buildings": 0,
 			"has_rural": false,
 			"rural_gen_ms": float(manifest.get("rural_gen_ms", 0.0)),
@@ -669,6 +721,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var stove_manifests: Array = manifest.get("stove_manifests", []) as Array
 	var bed_manifests: Array = manifest.get("bed_manifests", []) as Array
 	var workbench_manifests: Array = manifest.get("workbench_manifests", manifest.get("workbenches", [])) as Array
+	var granary_manifests: Array = manifest.get("granary_manifests", manifest.get("granaries", [])) as Array
 	var rural_node := Node3D.new()
 	rural_node.name = "Rural_%d_%d" % [coord.x, coord.y]
 	parent.add_child(rural_node)
@@ -856,6 +909,24 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		if wb.has_method("_update_prompt"):
 			wb.call("_update_prompt", null)
 		workbench_count += 1
+	var granary_count := 0
+	for gm in granary_manifests:
+		var g: Dictionary = gm as Dictionary
+		var pos3g: Vector3 = g.get("position", g.get("pos3", Vector3.ZERO)) as Vector3
+		if pos3g == Vector3.ZERO:
+			var p2: Vector2 = g.get("pos", Vector2.ZERO) as Vector2
+			pos3g = Vector3(p2.x, pos3g.y, p2.y)
+		var gc = load("res://world/granary_chest.gd").new()
+		gc.name = String(g["id"])
+		gc.position = pos3g
+		gc.rotation.y = float(g.get("yaw", 0.0))
+		gc.granary_id = String(g["id"])
+		gc.building_id = String(g.get("building_id", ""))
+		gc.settlement_id = String(g.get("settlement_id", ""))
+		rural_node.add_child(gc)
+		if gc.has_method("_update_prompt"):
+			gc.call("_update_prompt", null)
+		granary_count += 1
 	var mat_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
 	var has_collider_flag: bool = has_rural or has_well
 	return {
@@ -870,8 +941,11 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"rural_stoves": stove_count,
 		"rural_beds": bed_count,
 		"rural_workbenches": workbench_count,
+		"rural_granaries": granary_count,
 		"workbenches": workbench_count,
 		"workbench_manifests": workbench_count,
+		"granaries": granary_count,
+		"granary_manifests": granary_count,
 		"rural_furniture": int(manifest.get("rural_furniture", 0)),
 		"rural_buildings": int((manifest.get("rural_buildings", []) as Array).size()),
 		"has_rural": true,

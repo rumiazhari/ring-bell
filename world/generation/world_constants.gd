@@ -302,7 +302,7 @@ const MAX_ORCHARD_INSTANCES_PER_CHUNK := 12
 const ORCHARD_TRUNK_SIZE := Vector3(0.35, 1.8, 0.35)
 const ORCHARD_CANOPY_SIZE := Vector3(1.4, 1.0, 1.4)
 
-# --- Rural Workbench Economy (P5.3) authoritative numerics ---
+# --- Rural Workbench Economy (P5.3) authoritative numerics -- hardened P5.4 aabb_gap explicit ---
 const RURAL_WORKBENCH_MAX_PER_CHUNK := 2
 const RURAL_WORKBENCH_MAX_PER_VILLAGE := 1
 const RURAL_WORKBENCH_MAX_PER_HAMLET := 1
@@ -315,6 +315,24 @@ const WORKBENCH_LIFT_M := 0.04
 const RURAL_WORKBENCH_WELL_GAP_MIN := 6.0
 const RURAL_WORKBENCH_FORAGE_GAP_MIN := 6.0
 const RURAL_WORKBENCH_ROAD_SETBACK := 3.0
+
+# --- Rural Granary & Provisioning Cache (P5.4) authoritative numerics ---
+const RURAL_GRANARY_MAX_PER_CHUNK := 2
+const RURAL_GRANARY_MAX_PER_VILLAGE := 1
+const RURAL_GRANARY_MAX_PER_HAMLET := 1
+const RURAL_GRANARY_MAX_PER_FARMSTEAD := 0
+const RURAL_GRANARY_SPACING_MIN := 8.0
+const RURAL_GRANARY_BUILDING_GAP_MIN := 8.0
+const RURAL_GRANARY_SIZE := Vector3(1.2, 0.6, 0.8)
+const COL_GRANARY := Color("6b4a3a")
+const GRANARY_LIFT_M := 0.04
+const RURAL_GRANARY_CAPACITY := 8
+const RURAL_GRANARY_WELL_GAP_MIN := 6.0
+const RURAL_GRANARY_FORAGE_GAP_MIN := 6.0
+const RURAL_GRANARY_WORKBENCH_GAP_MIN := 1.0
+const RURAL_GRANARY_ROAD_SETBACK := 3.0
+const RURAL_GRANARY_FURNITURE_GAP_MIN := 0.9
+const RURAL_GRANARY_DOOR_SWING_GAP := 1.0
 
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]

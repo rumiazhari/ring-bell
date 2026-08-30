@@ -248,3 +248,15 @@ func nearest_rural_workbench(p: Vector2) -> Dictionary:
 
 func workbench_for_building(building_id: String) -> Dictionary:
 	return rural_building.workbench_for_building(building_id)
+
+func rural_granaries() -> Array[Dictionary]:
+	return rural_building.rural_granaries()
+
+func rural_granaries_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_granaries_in(rect)
+
+func nearest_rural_granary(p: Vector2) -> Dictionary:
+	return rural_building.nearest_rural_granary(p)
+
+func granary_for_building(building_id: String) -> Dictionary:
+	return rural_building.granary_for_building(building_id)
