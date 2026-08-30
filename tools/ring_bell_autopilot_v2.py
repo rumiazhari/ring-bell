@@ -41,47 +41,37 @@ def format_notification(message: str, board: str = "ring-bell-v2", prefix: str =
     if text.startswith("architect task created:"):
         tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
         return (
-            f"{prefix} 🧠 Architect started
-"
-            f"✅ Done: New design task {tid} created — Geo architect is drafting the next milestone from GRAND_PLAN.md.
-"
-            f"➡️ Next: Architect will authorize a bounded spec for builder to implement."
+            f"{prefix} 🧠 Architect started\n"
+            f"✅ Done: New design task {tid} created — Geo architect drafting next milestone from GRAND_PLAN.md.\n"
+            f"➡️ Next: Architect will authorize a bounded spec for builder."
         )
     if text.startswith("architect decision applied:"):
         name = text.split(":", 1)[1].strip().split()[0] if ":" in text else "spec"
         return (
-            f"{prefix} 📐 Spec approved
-"
-            f"✅ Done: Architect authorized {name} — one focused milestone with clear acceptance criteria.
-"
-            f"➡️ Next: Builder (Muse Spark 1.2) starts implementation with TDD and full test gates."
+            f"{prefix} 📐 Spec approved\n"
+            f"✅ Done: Architect authorized {name} — one focused milestone.\n"
+            f"➡️ Next: Builder (Muse Spark 1.2) starts TDD implementation."
         )
     if text.startswith("builder task created:"):
         tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
         return (
-            f"{prefix} 🔨 Builder started
-"
-            f"✅ Done: Build task {tid} created — builder is implementing the approved spec.
-"
-            f"➡️ Next: Builder will verify with Godot headless tests, commit, push to GitHub, and request review."
+            f"{prefix} 🔨 Builder started\n"
+            f"✅ Done: Build task {tid} created — implementing approved spec.\n"
+            f"➡️ Next: Builder verifies with Godot tests, commits, pushes to GitHub, requests review."
         )
     if text.startswith("builder handoff recorded:"):
         tid = text.split(":", 1)[1].strip() if ":" in text else ""
         return (
-            f"{prefix} ✅ Build complete
-"
-            f"✅ Done: Builder finished {tid} — code is committed and pushed to rumiazhari/ring-bell.
-"
-            f"➡️ Next: Geo architect will review the implementation against the spec."
+            f"{prefix} ✅ Build complete\n"
+            f"✅ Done: Builder finished {tid} — committed & pushed to rumiazhari/ring-bell.\n"
+            f"➡️ Next: Geo architect will review against spec."
         )
     if text.startswith("review task created:"):
         tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
         return (
-            f"{prefix} 🔍 Review started
-"
-            f"✅ Done: Review task {tid} created — architect is inspecting commits, tests, and gameplay.
-"
-            f"➡️ Next: Verdict will be applied (accept / revise / recovery)."
+            f"{prefix} 🔍 Review started\n"
+            f"✅ Done: Review task {tid} created — architect inspecting commits & tests.\n"
+            f"➡️ Next: Verdict (accept / revise / recovery) will be applied."
         )
     if text.startswith("review decision applied:"):
         verdict = ""
@@ -90,46 +80,34 @@ def format_notification(message: str, board: str = "ring-bell-v2", prefix: str =
         name = text.split()[3] if len(text.split()) >= 4 else ""
         if verdict == "accept":
             return (
-                f"{prefix} 🎉 Milestone accepted
-"
-                f"✅ Done: {name} accepted — implementation meets all acceptance criteria.
-"
-                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).
-"
-                f"➡️ Next: Architect will design the next Geo milestone from GRAND_PLAN."
+                f"{prefix} 🎉 Milestone accepted\n"
+                f"✅ Done: {name} accepted — all criteria met.\n"
+                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).\n"
+                f"➡️ Next: Architect designs next Geo milestone."
             )
         if verdict == "accept_with_deferred":
             return (
-                f"{prefix} 🎉 Milestone accepted (with notes)
-"
-                f"✅ Done: {name} accepted — core goals met, minor findings deferred to next design.
-"
-                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).
-"
-                f"➡️ Next: Architect will roll deferred notes into the next milestone."
+                f"{prefix} 🎉 Milestone accepted (with notes)\n"
+                f"✅ Done: {name} accepted — core met, minor notes deferred.\n"
+                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).\n"
+                f"➡️ Next: Architect rolls notes into next milestone."
             )
         if verdict == "revise":
             return (
-                f"{prefix} 🧾 Revision needed
-"
-                f"✅ Done: {name} flagged a principal issue — bounded fix required.
-"
-                f"➡️ Next: Builder will apply the revision spec (max 2 rounds)."
+                f"{prefix} 🧾 Revision needed\n"
+                f"✅ Done: {name} flagged a principal issue — bounded fix required.\n"
+                f"➡️ Next: Builder will apply revision (max 2 rounds)."
             )
         if verdict == "recovery_required":
             return (
-                f"{prefix} 🛟 Recovery mode
-"
-                f"✅ Done: {name} closed the repair loop — fresh recovery cycle needed.
-"
-                f"➡️ Next: Architect will design a recovery milestone instead of patching."
+                f"{prefix} 🛟 Recovery mode\n"
+                f"✅ Done: {name} closed repair loop — fresh recovery needed.\n"
+                f"➡️ Next: Architect designs recovery milestone."
             )
     return (
-        f"{prefix} ℹ️ Ring Bell update
-"
-        f"✅ Done: {text[:120]}
-"
-        f"➡️ Next: Controller will continue on next tick."
+        f"{prefix} ℹ️ Ring Bell update\n"
+        f"✅ Done: {text[:120]}\n"
+        f"➡️ Next: Controller continues next tick."
     )
 
 
