@@ -58,6 +58,8 @@ var _rural_doors_total := 0
 var _rural_buildings_total := 0
 var _rural_crates_total := 0
 var _rural_furniture_total := 0
+var _rural_wells_total := 0
+var _rural_forage_total := 0
 var _rural_mat_ms_total := 0.0
 
 var _player: Node3D
@@ -135,6 +137,8 @@ func reset_stream() -> void:
 	_rural_buildings_total = 0
 	_rural_crates_total = 0
 	_rural_furniture_total = 0
+	_rural_wells_total = 0
+	_rural_forage_total = 0
 	_rural_mat_ms_total = 0.0
 	_total_rural_gen_ms = 0.0
 	for c: Vector2i in _chunks:
@@ -453,17 +457,65 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 					cd["contents"] = new_contents
 				patched.append(cd)
 			rural_manifest["crate_manifests"] = patched
+		# Apply wells/forage deltas before materialize and handle refill/regrow via GameClock
+		if _records.has(coord):
+			var deltas: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+			# Wells deltas: {well_id: {depleted, depleted_at_day}}
+			var w_deltas: Dictionary = deltas.get("wells", {}) as Dictionary
+			var f_deltas: Dictionary = deltas.get("forage", {}) as Dictionary
+			# Wells refill check: if depleted_at_day *1440+240 <= GameClock.total_minutes, clear depleted
+			var cur_total: float = GameClock.total_minutes if GameClock != null else 0.0
+			var cur_day: int = GameClock.get_day() if GameClock != null else 1
+			if not w_deltas.is_empty():
+				var patched_w := {}
+				for wid in w_deltas.keys():
+					var ws: Dictionary = w_deltas[wid] as Dictionary
+					var dep: bool = bool(ws.get("depleted", false))
+					var dep_day: int = int(ws.get("depleted_at_day", -1))
+					if dep:
+						var refill_min: float = float(dep_day * 1440 + 240)
+						if cur_total >= refill_min:
+							# refilled, skip persisting depleted
+							continue
+					patched_w[wid] = ws
+				# update record if some refilled
+				if patched_w.size() != w_deltas.size():
+					deltas["wells"] = patched_w
+					_records[coord]["deltas"] = deltas
+			if not f_deltas.is_empty():
+				var patched_f := {}
+				for fid in f_deltas.keys():
+					var fs: Dictionary = f_deltas[fid] as Dictionary
+					var dep_f: bool = bool(fs.get("depleted", false))
+					var dep_day_f: int = int(fs.get("depleted_at_day", -1))
+					if dep_f and cur_day >= dep_day_f + 2:
+						continue
+					patched_f[fid] = fs
+				if patched_f.size() != f_deltas.size():
+					deltas["forage"] = patched_f
+					_records[coord]["deltas"] = deltas
 		var chunk_node_ru := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
 		if chunk_node_ru != null:
 			rustats = RuralBuildingChunkBuilder.materialize(chunk_node_ru, rural_manifest)
-			# ACTIVE-only rural physics: disable warm rural colliders (visual retained) and crate interactability
+			# Apply well/forage depleted states after materialize (re-apply deltas before interactability)
+			if _records.has(coord):
+				var deltas2: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+				var w_deltas2: Dictionary = deltas2.get("wells", {}) as Dictionary
+				var f_deltas2: Dictionary = deltas2.get("forage", {}) as Dictionary
+				if not w_deltas2.is_empty() or not f_deltas2.is_empty():
+					_apply_rural_well_forage_states(chunk_node_ru, coord, w_deltas2, f_deltas2)
+			# ACTIVE-only rural physics: disable warm rural colliders (visual retained) and crate/well/forage interactability
 			if not include_collision:
 				var rub := chunk_node_ru.get_node_or_null(NodePath("Rural_%d_%d/RuralBody" % [coord.x, coord.y]))
 				if rub != null and is_instance_valid(rub):
 					(rub as StaticBody3D).collision_layer = 0
 				_set_rural_crates_enabled(chunk_node_ru, coord, false)
+				_set_rural_wells_enabled(chunk_node_ru, coord, false)
+				_set_rural_forage_enabled(chunk_node_ru, coord, false)
 			else:
 				_set_rural_crates_enabled(chunk_node_ru, coord, true)
+				_set_rural_wells_enabled(chunk_node_ru, coord, true)
+				_set_rural_forage_enabled(chunk_node_ru, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -493,6 +545,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var rural_buildings := int(rustats.get("rural_buildings", 0))
 	var rural_crates := int(rustats.get("rural_crates", 0))
 	var rural_furniture := int(rustats.get("rural_furniture", 0))
+	var rural_wells := int(rustats.get("rural_wells", 0))
+	var rural_forage := int(rustats.get("rural_forage", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -529,7 +583,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_buildings": rural_buildings,
 		"rural_crates": rural_crates,
 		"rural_furniture": rural_furniture,
+		"rural_wells": rural_wells,
+		"rural_forage": rural_forage,
 		"rural_crates_active": rural_crates if include_collision else 0,
+		"rural_wells_active": rural_wells if include_collision else 0,
+		"rural_forage_active": rural_forage if include_collision else 0,
 		"rural_manifest": rural_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
@@ -574,6 +632,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_rural_buildings_total += rural_buildings
 	_rural_crates_total += rural_crates
 	_rural_furniture_total += rural_furniture
+	_rural_wells_total += rural_wells
+	_rural_forage_total += rural_forage
 	_rural_mat_ms_total += float(rustats.get("rural_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
@@ -634,6 +694,8 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_rural_buildings_total -= int(rec.get("rural_buildings", 0))
 		_rural_crates_total -= int(rec.get("rural_crates", 0))
 		_rural_furniture_total -= int(rec.get("rural_furniture", 0))
+		_rural_wells_total -= int(rec.get("rural_wells", 0))
+		_rural_forage_total -= int(rec.get("rural_forage", 0))
 		_rural_mat_ms_total -= float(rec.get("rural_mat_ms", 0.0))
 		_total_rural_gen_ms -= float(rec.get("rural_gen_ms", 0.0))
 		_chunks.erase(c)
@@ -696,15 +758,19 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					(rural_body as StaticBody3D).collision_layer = 1
 				elif previous_state == &"active":
 					(rural_body as StaticBody3D).collision_layer = 0
-			# Rural crates ACTIVE-only
+			# Rural crates/wells/forage ACTIVE-only
 			if desired_state == &"active" and previous_state != &"active":
 				var rural_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_active != null:
 					_set_rural_crates_enabled(rural_node_active, coord, true)
+					_set_rural_wells_enabled(rural_node_active, coord, true)
+					_set_rural_forage_enabled(rural_node_active, coord, true)
 			elif desired_state != &"active" and previous_state == &"active":
 				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_warm != null:
 					_set_rural_crates_enabled(rural_node_warm, coord, false)
+					_set_rural_wells_enabled(rural_node_warm, coord, false)
+					_set_rural_forage_enabled(rural_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -1033,8 +1099,8 @@ func debug_lines() -> Array[String]:
 			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
 	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
-	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
-			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
+	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
+			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
 	return lines
 
 func terrain_active_count() -> int:
@@ -1122,6 +1188,10 @@ func _set_rural_crates_enabled(rural_parent: Node, coord: Vector2i, enabled: boo
 				var inter = crate.get("_interactable")
 				if inter != null and is_instance_valid(inter):
 					inter.enabled = enabled and not crate.is_empty()
+				else:
+					var inter2 = crate.get("interactable")
+					if inter2 != null and is_instance_valid(inter2):
+						inter2.enabled = enabled and not crate.is_empty()
 				for sub in crate.get_children():
 					if sub is CollisionShape3D:
 						var sb := sub.get_parent()
@@ -1135,6 +1205,103 @@ func _set_rural_crates_enabled(rural_parent: Node, coord: Vector2i, enabled: boo
 				var crate2: FoodCrate = sub as FoodCrate
 				if is_instance_valid(crate2):
 					crate2.collision_layer = 1 if enabled else 0
+
+func _set_rural_wells_enabled(rural_parent: Node, coord: Vector2i, enabled: bool) -> void:
+	var rural_node: Node = rural_parent
+	if rural_parent.name.begins_with("Chunk_"):
+		rural_node = rural_parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+		if rural_node == null:
+			return
+	for child in rural_node.get_children():
+		if child is Well:
+			var well: Well = child as Well
+			if is_instance_valid(well):
+				if is_instance_valid(well.get_node_or_null(NodePath("CollisionShape3D"))):
+					# well body layer handled via itself
+					well.collision_layer = 1 if enabled else 0
+				var inter = well.get("interactable")
+				if inter != null and is_instance_valid(inter):
+					# need to check depleted state: if depleted, keep disabled even when active
+					var dep: bool = well.depleted if "depleted" in well else false
+					# _try_refill will be called via _update_prompt
+					if well.has_method("_try_refill"):
+						well.call("_try_refill")
+						dep = well.depleted
+					inter.enabled = enabled and not dep
+
+func _set_rural_forage_enabled(rural_parent: Node, coord: Vector2i, enabled: bool) -> void:
+	var rural_node: Node = rural_parent
+	if rural_parent.name.begins_with("Chunk_"):
+		rural_node = rural_parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+		if rural_node == null:
+			return
+	for child in rural_node.get_children():
+		if child is ForagePatch:
+			var patch: ForagePatch = child as ForagePatch
+			if is_instance_valid(patch):
+				var inter = patch.get("interactable")
+				var dep: bool = patch.depleted if "depleted" in patch else false
+				if patch.has_method("_try_regrow"):
+					patch.call("_try_regrow")
+					dep = patch.depleted
+				if inter != null and is_instance_valid(inter):
+					inter.enabled = enabled and not dep
+				patch.monitorable = enabled and not dep
+
+func _apply_rural_well_forage_states(parent: Node, coord: Vector2i, wells: Dictionary, forage: Dictionary) -> void:
+	# parent is Chunk_X_Y, need to find Rural node
+	var rural_node: Node = parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
+	if rural_node == null:
+		# maybe parent is already Rural node
+		if parent.name.begins_with("Rural_"):
+			rural_node = parent
+		else:
+			return
+	for child in rural_node.get_children():
+		if child is Well:
+			var wid: String = String(child.name)
+			if wells.has(wid):
+				(child as Well).load_state(wells[wid] as Dictionary)
+		elif child is ForagePatch:
+			var fid: String = String(child.name)
+			if forage.has(fid):
+				(child as ForagePatch).load_state(forage[fid] as Dictionary)
+
+func _record_well(coord: Vector2i, well_id: String, state: Dictionary) -> void:
+	if well_id == "":
+		return
+	note_discovered(coord)
+	var wells: Dictionary = _records[coord]["deltas"].get("wells", {})
+	wells[well_id] = state.duplicate()
+	_records[coord]["deltas"]["wells"] = wells
+
+func _record_forage(coord: Vector2i, forage_id: String, state: Dictionary) -> void:
+	if forage_id == "":
+		return
+	note_discovered(coord)
+	var forage: Dictionary = _records[coord]["deltas"].get("forage", {})
+	forage[forage_id] = state.duplicate()
+	_records[coord]["deltas"]["forage"] = forage
+
+func _snapshot_resident_wells_forage() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_wells_forage_recursive(node, c)
+
+func _collect_wells_forage_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if child is Well and not (child as Well).is_queued_for_deletion():
+			if String(child.name).begins_with("rural_well_"):
+				var st: Dictionary = (child as Well).save_state()
+				_record_well(coord, String(child.name), st)
+		elif child is ForagePatch and not (child as ForagePatch).is_queued_for_deletion():
+			if String(child.name).begins_with("rural_forage_"):
+				var st: Dictionary = (child as ForagePatch).save_state()
+				_record_forage(coord, String(child.name), st)
+		if child.get_child_count() > 0:
+			_collect_wells_forage_recursive(child, coord)
 
 func _record_crate(coord: Vector2i, crate_id: String, state: Dictionary) -> void:
 	if crate_id == "":
@@ -1177,6 +1344,7 @@ func _restore_crates_recursive(n: Node, cstates: Dictionary) -> void:
 func save_state() -> Dictionary:
 	_snapshot_resident_doors()
 	_snapshot_resident_crates()
+	_snapshot_resident_wells_forage()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]

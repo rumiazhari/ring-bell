@@ -15,8 +15,13 @@ var road_network: RoadNetworkPlan
 var _buildings: Array[Dictionary] = []
 var _by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
 var _by_id: Dictionary = {} # building.id -> Dictionary
+var _wells: Array[Dictionary] = []
+var _wells_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
+var _wells_by_id: Dictionary = {}
+var _forage: Array[Dictionary] = []
+var _forage_by_id: Dictionary = {}
 
-static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary}
+static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary}
 
 static func _unit_float_with_seed(purpose: String, parts: Array, seed: int) -> float:
 	return float(WorldSeed.combine([seed, WorldSeed.str_hash(purpose)] + parts) % 1000003) / 1000003.0
@@ -40,13 +45,24 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 		for k in bs.keys():
 			_by_settlement[k] = (bs[k] as Array[Dictionary]).duplicate()
 		_by_id = (cached.get("by_id", {}) as Dictionary).duplicate()
+		_wells = (cached.get("wells", []) as Array[Dictionary]).duplicate()
+		var wbs: Dictionary = cached.get("wells_by_settlement", {}) as Dictionary
+		_wells_by_settlement = {}
+		for k in wbs.keys():
+			_wells_by_settlement[k] = (wbs[k] as Array[Dictionary]).duplicate()
+		_wells_by_id = (cached.get("wells_by_id", {}) as Dictionary).duplicate()
+		_forage = (cached.get("forage", []) as Array[Dictionary]).duplicate()
+		_forage_by_id = (cached.get("forage_by_id", {}) as Dictionary).duplicate()
 		return
 	_generate()
 	# deep copy into cache
 	var bs_copy := {}
 	for k in _by_settlement.keys():
 		bs_copy[k] = (_by_settlement[k] as Array[Dictionary]).duplicate()
-	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate()}
+	var wbs_copy := {}
+	for k in _wells_by_settlement.keys():
+		wbs_copy[k] = (_wells_by_settlement[k] as Array[Dictionary]).duplicate()
+	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate()}
 
 func _hash_id(s: String) -> int:
 	return WorldSeed.str_hash(s)
@@ -832,10 +848,383 @@ func _generate_crate_for_building(building: Dictionary, walls: Array[Dictionary]
 	}
 	return crate_dict
 
+func _target_well_count(skind: StringName, id_hash: int) -> int:
+	match skind:
+		&"village":
+			var r: float = _unit_float_with_seed("rural_well", [id_hash, 0], seed_used)
+			return 1 if r < 0.6 else 2
+		&"hamlet":
+			return 1
+		&"farmstead":
+			var r2: float = _unit_float_with_seed("rural_well", [id_hash, 0], seed_used)
+			return 1 if r2 > 0.45 else 0
+		&"isolated_farm":
+			var r3: float = _unit_float_with_seed("rural_well", [id_hash, 0], seed_used)
+			return 1 if r3 > 0.65 else 0
+		_:
+			var r4: float = _unit_float_with_seed("rural_well", [id_hash, 0], seed_used)
+			return 1 if r4 < 0.6 else 2
+
+func _is_valid_well_position(p: Vector2, settlement_kind: StringName, existing_wells: Array[Dictionary], settlement_buildings: Array[Dictionary]) -> bool:
+	var tclass: StringName = terrain.terrain_class_at(p)
+	if tclass == &"cliff":
+		return false
+	var slope: float = terrain.slope_at(p)
+	if settlement_kind == &"village":
+		if slope >= 14.0 - 1e-6:
+			return false
+	else:
+		if slope >= WorldConstants.BUILDABLE_MAX_SLOPE_DEG - 1e-6:
+			return false
+	if hydrology.water_body_at(p) != &"":
+		return false
+	if hydrology.is_floodplain(p):
+		return false
+	if hydrology.distance_to_water(p) <= WorldConstants.BANK_W + 2.0 + 1e-6:
+		return false
+	var d_road: float = road_network.distance_to_road(p) if road_network != null else INF
+	if d_road < WorldConstants.RURAL_WELL_ROAD_SETBACK - 1e-6:
+		return false
+	if p.length() < WorldConstants.URBAN_INNER_M - 0.5:
+		# allow gate well exception later, but base gate check
+		var gates: Array[Dictionary] = settlement.city_gates()
+		var is_gate_well := false
+		for g in gates:
+			var gc: Vector2 = g["center"] as Vector2
+			if p.distance_to(gc) < 140.0 and p.length() >= WorldConstants.URBAN_INNER_M - 20.0 and p.length() < WorldConstants.URBAN_INNER_M + 70.0:
+				is_gate_well = true
+				break
+		if not is_gate_well:
+			return false
+	# building gap 8
+	var well_aabb := Rect2(p - Vector2(WorldConstants.RURAL_WELL_RADIUS, WorldConstants.RURAL_WELL_RADIUS), Vector2(WorldConstants.RURAL_WELL_RADIUS*2, WorldConstants.RURAL_WELL_RADIUS*2))
+	for b in settlement_buildings:
+		var baabb: Rect2 = b["aabb"] as Rect2
+		var gap: float = _aabb_gap(well_aabb, baabb)
+		if gap < WorldConstants.RURAL_WELL_BUILDING_GAP_MIN - 1e-6:
+			return false
+	# also check all buildings globally for safety? spec says >=8 from any rural building of that settlement, we do that; but spec also says >=8 from any building generally. We'll check settlement buildings only for perf; global check will happen in forage vs building but well vs building globally also? Use settlement buildings.
+	# well-well spacing 6
+	for w in existing_wells:
+		var wpos: Vector2 = w["pos"] as Vector2
+		if p.distance_to(wpos) < WorldConstants.RURAL_WELL_SPACING_MIN - 1e-6:
+			return false
+	# is_bridge check
+	if road_network != null:
+		var rect2 := Rect2(p - Vector2(30,30), Vector2(60,60))
+		var segs: Array[Dictionary] = road_network.road_segments_in(rect2)
+		for seg in segs:
+			if bool(seg.get("is_bridge", false)):
+				var poly: PackedVector2Array = seg["polyline"] as PackedVector2Array
+				for i in range(poly.size()-1):
+					var a2: Vector2 = poly[i]
+					var b2: Vector2 = poly[i+1]
+					var ab2 := b2 - a2
+					var len2b := ab2.length_squared()
+					if len2b < 1e-6:
+						continue
+					var t2 := (p - a2).dot(ab2) / len2b
+					t2 = clampf(t2, 0.0, 1.0)
+					var proj2 := a2 + ab2 * t2
+					var w_road: float = float(seg.get("width", WorldConstants.ROAD_WIDTH_TRACK))
+					if p.distance_to(proj2) < w_road * 0.5 + 2.0 and hydrology.water_body_at(proj2) != &"":
+						return false
+	return true
+
+func _generate_wells() -> void:
+	_wells.clear()
+	_wells_by_settlement.clear()
+	_wells_by_id.clear()
+	var anchors: Array[Dictionary] = settlement.settlement_anchors()
+	var gates: Array[Dictionary] = settlement.city_gates()
+	var gate_wells_used: Dictionary = {}
+	for s in anchors:
+		var sid: String = String(s["id"])
+		var skind: StringName = s["kind"] as StringName
+		var s_center: Vector2 = s["center"] as Vector2
+		var s_radius: float = float(s["radius"])
+		var id_hash: int = _hash_id(sid)
+		var target: int = _target_well_count(skind, id_hash)
+		if not _wells_by_settlement.has(sid):
+			_wells_by_settlement[sid] = [] as Array[Dictionary]
+		var settlement_buildings: Array[Dictionary] = _by_settlement.get(sid, []) as Array[Dictionary]
+		var placed_wells: Array[Dictionary] = []
+		for k in target:
+			var wid: String = "rural_well_%s_%d" % [sid, k]
+			var w_hash: int = _hash_id(wid)
+			var found := false
+			var well_dict: Dictionary = {}
+			for attempt in 12:
+				var r_rad: float = _unit_float_with_seed("rural_well_radius", [id_hash, k, attempt], seed_used)
+				var rad: float = lerpf(0.35, 0.65, r_rad) * s_radius
+				var r_ang: float = _unit_float_with_seed("rural_well_angle", [id_hash, k, attempt], seed_used)
+				var ang: float = r_ang * TAU
+				if attempt > 0:
+					var nudge_r: float = _unit_float_with_seed("rural_well_nudge", [id_hash, k, attempt], seed_used)
+					var nudge_a: float = _unit_float_with_seed("rural_well_nudge", [id_hash, k, attempt+10], seed_used)
+					rad += (nudge_r - 0.5) * 10.0
+					ang += (nudge_a - 0.5) * 0.6
+					rad = clampf(rad, 8.0, s_radius * 0.95)
+				var cand: Vector2 = s_center + Vector2(cos(ang), sin(ang)) * rad
+				# gate exception
+				var is_inside_urban: bool = cand.length() < WorldConstants.URBAN_INNER_M - 0.5
+				if is_inside_urban:
+					var nearest_gate_dist := INF
+					var nearest_gate_id := ""
+					for g in gates:
+						var gc: Vector2 = g["center"] as Vector2
+						var d := cand.distance_to(gc)
+						if d < nearest_gate_dist:
+							nearest_gate_dist = d
+							nearest_gate_id = String(g["id"])
+					if nearest_gate_dist < 140.0 and not gate_wells_used.has(nearest_gate_id) and cand.length() >= WorldConstants.URBAN_INNER_M - 20.0 and cand.length() < WorldConstants.URBAN_INNER_M + 70.0:
+						# allow gate well
+						pass
+					else:
+						continue
+				if not _is_valid_well_position(cand, skind, placed_wells, settlement_buildings):
+					continue
+				well_dict = {
+					"id": wid,
+					"kind": &"village_well",
+					"center": cand,
+					"pos": cand,
+					"position": Vector3(cand.x, terrain.height_at(cand)+0.01, cand.y),
+					"yaw": 0.0,
+					"settlement_id": sid,
+					"settlement_kind": skind,
+					"radius": WorldConstants.RURAL_WELL_RADIUS,
+					"height": WorldConstants.RURAL_WELL_HEIGHT,
+					"color": WorldConstants.RURAL_WELL_COLOR_WALL,
+					"roof_color": WorldConstants.RURAL_WELL_COLOR_WATER,
+				}
+				found = true
+				break
+			if found:
+				_wells.append(well_dict)
+				(_wells_by_settlement[sid] as Array[Dictionary]).append(well_dict)
+				_wells_by_id[wid] = well_dict
+				placed_wells.append(well_dict)
+				# gate tracking
+				if well_dict["pos"] is Vector2 and Vector2(well_dict["pos"]).length() < WorldConstants.URBAN_INNER_M + 70.0:
+					for g in gates:
+						var gc: Vector2 = g["center"] as Vector2
+						if Vector2(well_dict["pos"]).distance_to(gc) < 140.0:
+							gate_wells_used[String(g["id"])] = true
+							break
+			else:
+				# hamlet strict guarantee fallback at settlement_center + (8,0) vetted 12 attempts with wider search
+				if skind == &"hamlet" and placed_wells.size() == 0:
+					for att2 in 12:
+						var fb: Vector2
+						if att2 == 0:
+							fb = s_center + Vector2(12, 0)
+						elif att2 == 1:
+							fb = s_center + Vector2(-12, 0)
+						elif att2 == 2:
+							fb = s_center + Vector2(0, 12)
+						elif att2 == 3:
+							fb = s_center + Vector2(0, -12)
+						else:
+							var nr: float = _unit_float_with_seed("rural_well_nudge", [id_hash, k, 100+att2], seed_used)
+							var na: float = _unit_float_with_seed("rural_well_nudge", [id_hash, k, 110+att2], seed_used)
+							var rad2: float = lerpf(10.0, s_radius * 0.85, nr)
+							var ang2: float = na * TAU
+							fb = s_center + Vector2(cos(ang2), sin(ang2)) * rad2
+						if _is_valid_well_position(fb, skind, placed_wells, settlement_buildings):
+							var wid2: String = "rural_well_%s_%d" % [sid, k]
+							var wd2: Dictionary = {
+								"id": wid2,
+								"kind": &"village_well",
+								"center": fb,
+								"pos": fb,
+								"position": Vector3(fb.x, terrain.height_at(fb)+0.01, fb.y),
+								"yaw": 0.0,
+								"settlement_id": sid,
+								"settlement_kind": skind,
+								"radius": WorldConstants.RURAL_WELL_RADIUS,
+								"height": WorldConstants.RURAL_WELL_HEIGHT,
+								"color": WorldConstants.RURAL_WELL_COLOR_WALL,
+								"roof_color": WorldConstants.RURAL_WELL_COLOR_WATER,
+							}
+							_wells.append(wd2)
+							(_wells_by_settlement[sid] as Array[Dictionary]).append(wd2)
+							_wells_by_id[wid2] = wd2
+							placed_wells.append(wd2)
+							break
+
+func _forage_target_count(skind: StringName, id_hash: int) -> int:
+	match skind:
+		&"village":
+			var r: float = _unit_float_with_seed("rural_forage", [id_hash, 0], seed_used)
+			if r < 0.33:
+				return 3
+			elif r < 0.66:
+				return 4
+			else:
+				return 5
+		&"hamlet":
+			var r2: float = _unit_float_with_seed("rural_forage", [id_hash, 0], seed_used)
+			return 2 if r2 < 0.5 else 3
+		&"farmstead":
+			var r3: float = _unit_float_with_seed("rural_forage", [id_hash, 0], seed_used)
+			return 1 if r3 < 0.5 else 2
+		&"isolated_farm":
+			return 1
+		_:
+			var r4: float = _unit_float_with_seed("rural_forage", [id_hash, 0], seed_used)
+			return 2 if r4 < 0.5 else 3
+
+func _is_valid_forage_position(p: Vector2, existing_forage: Array[Dictionary]) -> bool:
+	var tclass: StringName = terrain.terrain_class_at(p)
+	if tclass == &"cliff":
+		return false
+	var b: StringName = biome.biome_at(p)
+	if not WorldConstants.RURAL_FORAGE_ALLOW_BIOMES.has(b):
+		return false
+	var slope: float = terrain.slope_at(p)
+	if b == &"arable_field" or b == &"pasture" or b == &"pasture_orchard":
+		if slope >= WorldConstants.PASTURE_MAX_SLOPE_DEG - 1e-6:
+			return false
+	else:
+		if slope >= WorldConstants.BUILDABLE_MAX_SLOPE_DEG - 1e-6:
+			return false
+	if hydrology.water_body_at(p) != &"":
+		return false
+	if hydrology.is_floodplain(p):
+		return false
+	if hydrology.distance_to_water(p) <= WorldConstants.BANK_W + 2.0 + 1e-6:
+		return false
+	var d_road: float = road_network.distance_to_road(p) if road_network != null else INF
+	if d_road < WorldConstants.RURAL_FORAGE_ROAD_SETBACK - 1e-6:
+		return false
+	if p.length() < WorldConstants.URBAN_INNER_M - 0.5:
+		return false
+	# building gap 6
+	for bld in _buildings:
+		var baabb: Rect2 = bld["aabb"] as Rect2
+		var forage_aabb := Rect2(p - Vector2(0.4,0.4), Vector2(0.8,0.8))
+		var gap: float = _aabb_gap(forage_aabb, baabb)
+		if gap < WorldConstants.RURAL_FORAGE_BUILDING_GAP_MIN - 1e-6:
+			return false
+	# well gap 6
+	for w in _wells:
+		var wpos: Vector2 = w["pos"] as Vector2
+		if p.distance_to(wpos) < WorldConstants.RURAL_FORAGE_WELL_GAP_MIN - 1e-6:
+			return false
+	# forage-forage 4 within existing settlement vicinity? we check global existing forage 4
+	for f in existing_forage:
+		var fpos: Vector2 = f["pos"] as Vector2
+		if p.distance_to(fpos) < WorldConstants.RURAL_FORAGE_SPACING_MIN - 1e-6:
+			return false
+	# is_bridge
+	if road_network != null:
+		var rect2 := Rect2(p - Vector2(30,30), Vector2(60,60))
+		var segs: Array[Dictionary] = road_network.road_segments_in(rect2)
+		for seg in segs:
+			if bool(seg.get("is_bridge", false)):
+				var poly: PackedVector2Array = seg["polyline"] as PackedVector2Array
+				for i in range(poly.size()-1):
+					var a2: Vector2 = poly[i]
+					var b2: Vector2 = poly[i+1]
+					var ab2 := b2 - a2
+					var len2b := ab2.length_squared()
+					if len2b < 1e-6:
+						continue
+					var t2 := (p - a2).dot(ab2) / len2b
+					t2 = clampf(t2, 0.0, 1.0)
+					var proj2 := a2 + ab2 * t2
+					var w_road: float = float(seg.get("width", WorldConstants.ROAD_WIDTH_TRACK))
+					if p.distance_to(proj2) < w_road * 0.5 + 2.0 and hydrology.water_body_at(proj2) != &"":
+						return false
+	return true
+
+func _generate_forage() -> void:
+	_forage.clear()
+	_forage_by_id.clear()
+	var anchors: Array[Dictionary] = settlement.settlement_anchors()
+	var global_forage: Array[Dictionary] = []
+	for s in anchors:
+		var sid: String = String(s["id"])
+		var skind: StringName = s["kind"] as StringName
+		var s_center: Vector2 = s["center"] as Vector2
+		var id_hash: int = _hash_id(sid)
+		var target: int = _forage_target_count(skind, id_hash)
+		# cap per vicinity already target 2-5, but also spec per hamlet 2-3 etc handled
+		var placed: Array[Dictionary] = []
+		var attempts_total := 0
+		var k := 0
+		while k < target and attempts_total < target * 12:
+			attempts_total += 1
+			var r_ang: float = _unit_float_with_seed("rural_forage", [id_hash, k, attempts_total], seed_used)
+			var ang: float = r_ang * TAU
+			var r_rad: float = _unit_float_with_seed("rural_forage", [id_hash, k, attempts_total+100], seed_used)
+			var rad: float = lerpf(12.0, WorldConstants.RURAL_FORAGE_VICINITY_M, r_rad)
+			var cand: Vector2 = s_center + Vector2(cos(ang), sin(ang)) * rad
+			# jitter +-3
+			var jx: float = _unit_float_with_seed("rural_forage", [id_hash, k, attempts_total+200], seed_used)
+			var jy: float = _unit_float_with_seed("rural_forage", [id_hash, k, attempts_total+300], seed_used)
+			cand += Vector2((jx-0.5)*6.0, (jy-0.5)*6.0)
+			if not _is_valid_forage_position(cand, global_forage):
+				continue
+			# also check per settlement vicinity cap not needed because target already capped; but enforce 4 per chunk later at manifest
+			var fid: String = "rural_forage_%s_%d" % [sid, k]
+			# ensure unique if duplicate
+			if _forage_by_id.has(fid):
+				fid = "%s_%d" % [fid, attempts_total]
+			var r_kind: float = _unit_float_with_seed("rural_forage_kind", [id_hash, k], seed_used)
+			var kind_idx: int = 0
+			var kind: StringName = WorldConstants.RURAL_FORAGE_VOCAB[0]
+			# Weighted? Use same 40/25/20/15 for vocab? But spec says bush 40/mush 25/herb 20/15? We'll map 0-0.4 bush, 0.4-0.65 mush, 0.65-0.85 herb? But we have only 3 kinds, pool weighted across items not kinds? For patch kind, use equal? We'll use sequential mapping.
+			if r_kind < 0.40:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[0]
+			elif r_kind < 0.65:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[1] if WorldConstants.RURAL_FORAGE_VOCAB.size() >1 else WorldConstants.RURAL_FORAGE_VOCAB[0]
+			elif r_kind < 0.85:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[2] if WorldConstants.RURAL_FORAGE_VOCAB.size()>2 else WorldConstants.RURAL_FORAGE_VOCAB[0]
+			else:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[0]
+			# contents weighted ItemDB
+			var r_item: float = _unit_float_with_seed("rural_forage_kind", [id_hash, k, 99], seed_used)
+			var item_id: StringName
+			if r_item < 0.40:
+				item_id = &"canned_food"
+			elif r_item < 0.65:
+				item_id = &"water_bottle"
+			elif r_item < 0.85:
+				item_id = &"bandage"
+			else:
+				item_id = &"antibiotics"
+			var contents: Dictionary = {item_id: 1}
+			var dict: Dictionary = {
+				"id": fid,
+				"pos": cand,
+				"center": cand,
+				"position": Vector3(cand.x, terrain.height_at(cand)+0.01, cand.y),
+				"yaw": 0.0,
+				"kind": kind,
+				"settlement_id": sid,
+				"settlement_kind": skind,
+				"distance_to_settlement": cand.distance_to(s_center),
+				"contents": contents,
+			}
+			_forage.append(dict)
+			_forage_by_id[fid] = dict
+			global_forage.append(dict)
+			placed.append(dict)
+			k += 1
+	# Sort forage by id
+	_forage.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+
 func _generate() -> void:
 	_buildings.clear()
 	_by_settlement.clear()
 	_by_id.clear()
+	_wells.clear()
+	_wells_by_settlement.clear()
+	_wells_by_id.clear()
+	_forage.clear()
+	_forage_by_id.clear()
 	var anchors: Array[Dictionary] = settlement.settlement_anchors()
 	var gate_barns_used: Dictionary = {}
 	var gates: Array[Dictionary] = settlement.city_gates()
@@ -1256,6 +1645,9 @@ func _generate() -> void:
 						break
 				placed_arr[i]=b
 			_by_settlement[sid]=placed_arr
+	# Generate wells and forage after buildings (deterministic, additive)
+	_generate_wells()
+	_generate_forage()
 	# Sort buildings by id
 	_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -1369,3 +1761,69 @@ func crate_for(building_id: String) -> Dictionary:
 		if b.has("interior"):
 			return (b["interior"] as Dictionary).get("crate", {}) as Dictionary
 	return {}
+
+func rural_wells() -> Array[Dictionary]:
+	return _wells.duplicate()
+
+func rural_wells_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for w in _wells:
+		var c: Vector2 = w["center"] as Vector2
+		if rect.has_point(c):
+			out.append(w)
+	return out
+
+func nearest_rural_well(p: Vector2) -> Dictionary:
+	if _wells.is_empty():
+		return {}
+	var best: Dictionary = _wells[0]
+	var best_d2: float = p.distance_squared_to(best["center"] as Vector2)
+	for i in range(1, _wells.size()):
+		var w: Dictionary = _wells[i]
+		var d2: float = p.distance_squared_to(w["center"] as Vector2)
+		if d2 < best_d2 - 1e-6:
+			best_d2 = d2
+			best = w
+		elif is_equal_approx(d2, best_d2):
+			if String(w["id"]) < String(best["id"]):
+				best = w
+	return best
+
+func rural_forage_patches() -> Array[Dictionary]:
+	return _forage.duplicate()
+
+func rural_forage_patches_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for f in _forage:
+		var c: Vector2 = f["pos"] as Vector2
+		if rect.has_point(c):
+			out.append(f)
+	return out
+
+func nearest_rural_forage(p: Vector2) -> Dictionary:
+	if _forage.is_empty():
+		return {}
+	var best: Dictionary = _forage[0]
+	var best_d2: float = p.distance_squared_to(best["pos"] as Vector2)
+	for i in range(1, _forage.size()):
+		var f: Dictionary = _forage[i]
+		var d2: float = p.distance_squared_to(f["pos"] as Vector2)
+		if d2 < best_d2 - 1e-6:
+			best_d2 = d2
+			best = f
+		elif is_equal_approx(d2, best_d2):
+			if String(f["id"]) < String(best["id"]):
+				best = f
+	return best
+
+func wells_for_settlement(settlement_id: String) -> Array[Dictionary]:
+	if _wells_by_settlement.has(settlement_id):
+		return (_wells_by_settlement[settlement_id] as Array[Dictionary]).duplicate()
+	return [] as Array[Dictionary]
+
+func forage_for_settlement(settlement_id: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for f in _forage:
+		if String(f.get("settlement_id","")) == settlement_id:
+			out.append(f)
+	return out

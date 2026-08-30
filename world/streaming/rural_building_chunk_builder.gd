@@ -15,6 +15,12 @@ const COL_FURNITURE_BED := Color("9e8b6a")
 const COL_FURNITURE_SHELF := Color("6b5a4a")
 const COL_FURNITURE_TABLE := Color("7a6a5a")
 const COL_FURNITURE_STOVE := Color("4a4a4a")
+const COL_WELL_WALL := Color("8b7f6e")
+const COL_WELL_WATER := Color("2b3a4a")
+const COL_WELL_BEAM := Color("6b5a4a")
+const COL_FORAGE_BUSH := Color("5a7a3a")
+const COL_FORAGE_MUSHROOM := Color("8a6a4a")
+const COL_FORAGE_HERB := Color("6a8a5a")
 
 static func _effective_footprint(footprint: Vector2, yaw: float) -> Vector2:
 	if is_equal_approx(absf(yaw), PI * 0.5) or is_equal_approx(absf(yaw), PI * 1.5):
@@ -196,6 +202,71 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	interior_walls.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return Vector2(a.get("pos",Vector2.ZERO)).x < Vector2(b.get("pos",Vector2.ZERO)).x
 	)
+	# Wells & forage manifests clipped to chunk rect (center ownership)
+	var well_manifests: Array[Dictionary] = []
+	var forage_manifests: Array[Dictionary] = []
+	if not suppress:
+		var raw_wells: Array[Dictionary] = world_plan.rural_wells_in(rect)
+		var raw_forage: Array[Dictionary] = world_plan.rural_forage_patches_in(rect)
+		# Build per-chunk ownership by center/pos
+		for w in raw_wells:
+			var wpos: Vector2 = w["pos"] as Vector2
+			if rect.has_point(wpos):
+				# urban suppression for wells already handled in plan, but double-check gate exception
+				if wpos.length() < WorldConstants.URBAN_INNER_M - 0.5:
+					var is_gate := false
+					var gates2: Array[Dictionary] = world_plan.city_gates()
+					for g in gates2:
+						var gc: Vector2 = g["center"] as Vector2
+						if wpos.distance_to(gc) < 140.0:
+							is_gate = true
+							break
+					if not is_gate:
+						continue
+				var ground_w: float = world_plan.terrain_height_at(wpos) + 0.01
+				var pos3: Vector3 = Vector3(wpos.x, ground_w, wpos.y)
+				var wm: Dictionary = {
+					"id": w["id"],
+					"pos": wpos,
+					"position": pos3,
+					"yaw": float(w.get("yaw", 0.0)),
+					"radius": float(w.get("radius", WorldConstants.RURAL_WELL_RADIUS)),
+					"height": float(w.get("height", WorldConstants.RURAL_WELL_HEIGHT)),
+					"kind": w.get("kind", &"village_well"),
+					"settlement_id": w.get("settlement_id", ""),
+				}
+				well_manifests.append(wm)
+		for f in raw_forage:
+			var fpos: Vector2 = f["pos"] as Vector2
+			if rect.has_point(fpos):
+				if fpos.length() < WorldConstants.URBAN_INNER_M - 0.5:
+					continue
+				var ground_f: float = world_plan.terrain_height_at(fpos) + 0.01
+				var pos3f: Vector3 = Vector3(fpos.x, ground_f, fpos.y)
+				var fm: Dictionary = {
+					"id": f["id"],
+					"pos": fpos,
+					"position": pos3f,
+					"yaw": float(f.get("yaw", 0.0)),
+					"kind": f.get("kind", &"bush_berry"),
+					"settlement_id": f.get("settlement_id", ""),
+					"contents": f.get("contents", {&"canned_food": 1}),
+				}
+				forage_manifests.append(fm)
+	# Enforce per-chunk caps
+	if well_manifests.size() > WorldConstants.RURAL_WELL_MAX_PER_CHUNK:
+		well_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		well_manifests = well_manifests.slice(0, WorldConstants.RURAL_WELL_MAX_PER_CHUNK)
+	if forage_manifests.size() > WorldConstants.RURAL_FORAGE_MAX_PER_CHUNK:
+		forage_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		forage_manifests = forage_manifests.slice(0, WorldConstants.RURAL_FORAGE_MAX_PER_CHUNK)
+	well_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	forage_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	var has_well: bool = well_manifests.size() > 0
+	var has_forage: bool = forage_manifests.size() > 0
+	# has_rural now true if buildings or wells/forage present (well gives collider, forage alone still visual but we treat as rural for mesh, collider only for building/well)
+	var has_any_visual: bool = has_rural or has_well or has_forage
+	var has_collider: bool = has_rural or has_well
 	# Generate batched mesh geometry
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
@@ -309,7 +380,47 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		_add_box(verts, normals, colors, indices, f_center, fsize, fcol)
 		interior_vertices +=24
 		interior_triangles +=12
-	# Enforce budget: if verts >400, drop furniture iteratively
+	# Wells (batched into same mesh, also into collider)
+	var well_vertices := 0
+	var well_triangles := 0
+	for w in well_manifests:
+		var wpos: Vector2 = w["pos"] as Vector2
+		var ground_w: float = world_plan.terrain_height_at(wpos) + 0.01
+		var wpos3: Vector3 = Vector3(wpos.x, ground_w + WorldConstants.RURAL_WELL_HEIGHT*0.5, wpos.y)
+		var wsize: Vector3 = Vector3(WorldConstants.RURAL_WELL_RADIUS*2, WorldConstants.RURAL_WELL_HEIGHT, WorldConstants.RURAL_WELL_RADIUS*2)
+		# Stone wall box approximation of cylinder (single box, vertex-colored wall+water)
+		_add_box(verts, normals, colors, indices, wpos3, wsize, COL_WELL_WALL)
+		# Collider: same box into collider
+		_add_box(collider_verts, PackedVector3Array(), PackedColorArray(), collider_indices, wpos3, wsize, COL_WELL_WALL)
+		well_vertices += 24
+		well_triangles += 12
+	# Forage patches (visual only, not in collider)
+	var forage_vertices := 0
+	var forage_triangles := 0
+	for f in forage_manifests:
+		var fpos: Vector2 = f["pos"] as Vector2
+		var fkind: StringName = f["kind"] as StringName
+		var fcol2: Color
+		match fkind:
+			&"bush_berry":
+				fcol2 = COL_FORAGE_BUSH
+			&"mushroom_cluster":
+				fcol2 = COL_FORAGE_MUSHROOM
+			&"herb_patch":
+				fcol2 = COL_FORAGE_HERB
+			_:
+				fcol2 = COL_FORAGE_BUSH
+		var ground_fo: float = world_plan.terrain_height_at(fpos) + 0.01
+		var f_center: Vector3 = Vector3(fpos.x, ground_fo + 0.4, fpos.y)
+		var f_size: Vector3 = Vector3(0.8, 0.6, 0.8)
+		if fkind == &"mushroom_cluster":
+			f_size = Vector3(0.4, 0.3, 0.4)
+		elif fkind == &"herb_patch":
+			f_size = Vector3(0.6, 0.35, 0.6)
+		_add_box(verts, normals, colors, indices, f_center, f_size, fcol2)
+		forage_vertices +=24
+		forage_triangles +=12
+	# Enforce budget: if verts >480, drop furniture iteratively then forage then wells? Keep at least one well if possible
 	while verts.size() > WorldConstants.MAX_RURAL_VERTS_PER_CHUNK and furniture_anchors.size() >0:
 		# remove last furniture
 		# For simplicity, we already added, so need to recalc: remove last furniture box (24 verts = 24*? each box 24 verts, 6 faces*4)
@@ -323,10 +434,12 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		interior_triangles -=12
 	var total_verts: int = verts.size()
 	var total_tris: int = indices.size() / 3
-	var colliders: int = 1 if has_rural else 0
+	var colliders: int = 1 if has_collider else 0
 	var rural_doors: int = door_manifests.size()
 	var rural_crates: int = crate_manifests.size()
 	var rural_furniture: int = furniture_anchors.size()
+	var rural_wells: int = well_manifests.size()
+	var rural_forage: int = forage_manifests.size()
 	var gen_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
 	door_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -340,15 +453,25 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"interior_walls": interior_walls,
 		"furniture_anchors": furniture_anchors,
 		"crate_manifests": crate_manifests,
+		"well_manifests": well_manifests,
+		"forage_manifests": forage_manifests,
 		"rural_vertices": total_verts,
 		"rural_triangles": total_tris,
 		"rural_colliders": colliders,
 		"rural_doors": rural_doors,
 		"rural_crates": rural_crates,
 		"rural_furniture": rural_furniture,
+		"rural_wells": rural_wells,
+		"rural_forage": rural_forage,
+		"well_vertices": well_vertices,
+		"well_triangles": well_triangles,
+		"forage_vertices": forage_vertices,
+		"forage_triangles": forage_triangles,
 		"interior_vertices": interior_vertices,
 		"interior_triangles": interior_triangles,
-		"has_rural": has_rural,
+		"has_rural": has_any_visual,
+		"has_well": has_well,
+		"has_forage": has_forage,
 		"rural_gen_ms": gen_ms,
 		"rural_mat_ms": 0.0,
 		"aabbs": aabbs,
@@ -364,11 +487,14 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
 	var coord: Vector2i = manifest.get("coord", Vector2i.ZERO) as Vector2i
 	var has_rural: bool = bool(manifest.get("has_rural", false))
+	var has_well: bool = bool(manifest.get("has_well", false))
+	var has_forage: bool = bool(manifest.get("has_forage", false))
+	var has_any: bool = has_rural or has_well or has_forage
 	var existing := parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
 		parent.remove_child(existing)
 		existing.free()
-	if not has_rural:
+	if not has_any:
 		var mat_ms_empty: float = float(Time.get_ticks_usec() - t0) / 1000.0
 		return {
 			"rural_vertices": 0,
@@ -377,6 +503,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			"rural_doors": 0,
 			"rural_crates": 0,
 			"rural_furniture": 0,
+			"rural_wells": 0,
+			"rural_forage": 0,
 			"rural_buildings": 0,
 			"has_rural": false,
 			"rural_gen_ms": float(manifest.get("rural_gen_ms", 0.0)),
@@ -390,6 +518,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var collider_indices: PackedInt32Array = manifest.get("collider_indices", indices) as PackedInt32Array
 	var door_manifests: Array = manifest.get("door_manifests", []) as Array
 	var crate_manifests: Array = manifest.get("crate_manifests", []) as Array
+	var well_manifests: Array = manifest.get("well_manifests", []) as Array
+	var forage_manifests: Array = manifest.get("forage_manifests", []) as Array
 	var rural_node := Node3D.new()
 	rural_node.name = "Rural_%d_%d" % [coord.x, coord.y]
 	parent.add_child(rural_node)
@@ -425,26 +555,28 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	mi.name = "RuralMesh"
 	mi.mesh = mesh
 	rural_node.add_child(mi)
-	var body := StaticBody3D.new()
-	body.name = "RuralBody"
-	body.collision_layer = 1
-	body.collision_mask = 0
-	rural_node.add_child(body)
-	var concave := ConcavePolygonShape3D.new()
-	concave.backface_collision = true
-	var faces := PackedVector3Array()
-	# Use collider verts/indices for physics
-	var c_verts: PackedVector3Array = collider_verts
-	var c_indices: PackedInt32Array = collider_indices
-	faces.resize(c_indices.size())
-	for idx in c_indices.size():
-		var vi: int = c_indices[idx]
-		if vi >= 0 and vi < c_verts.size():
-			faces[idx] = c_verts[vi]
-	concave.data = faces
-	var coll := CollisionShape3D.new()
-	coll.shape = concave
-	body.add_child(coll)
+	var has_collider: bool = has_rural or has_well
+	if has_collider:
+		var body := StaticBody3D.new()
+		body.name = "RuralBody"
+		body.collision_layer = 1
+		body.collision_mask = 0
+		rural_node.add_child(body)
+		var concave := ConcavePolygonShape3D.new()
+		concave.backface_collision = true
+		var faces := PackedVector3Array()
+		# Use collider verts/indices for physics
+		var c_verts: PackedVector3Array = collider_verts
+		var c_indices: PackedInt32Array = collider_indices
+		faces.resize(c_indices.size())
+		for idx in c_indices.size():
+			var vi: int = c_indices[idx]
+			if vi >= 0 and vi < c_verts.size():
+				faces[idx] = c_verts[vi]
+		concave.data = faces
+		var coll := CollisionShape3D.new()
+		coll.shape = concave
+		body.add_child(coll)
 	var door_count := 0
 	for dm in door_manifests:
 		var d: Dictionary = dm as Dictionary
@@ -480,13 +612,53 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			# fallback call via load_state
 			crate.load_state(conv)
 		crate_count += 1
+	var well_count := 0
+	for wm in well_manifests:
+		var w: Dictionary = wm as Dictionary
+		var well := Well.new()
+		well.name = String(w["id"])
+		var pos3: Vector3 = w.get("position", Vector3.ZERO) as Vector3
+		well.position = pos3
+		well.rotation.y = float(w.get("yaw", 0.0))
+		well.well_id = String(w["id"])
+		# Ensure depleted state will be applied via manager after, but set initial not depleted
+		well.depleted = false
+		well.depleted_at_day = -1
+		rural_node.add_child(well)
+		if well.has_method("_update_prompt"):
+			well.call("_update_prompt")
+		well_count += 1
+	var forage_count := 0
+	for fm in forage_manifests:
+		var f: Dictionary = fm as Dictionary
+		var patch := ForagePatch.new()
+		patch.name = String(f["id"])
+		var pos3: Vector3 = f.get("position", Vector3.ZERO) as Vector3
+		patch.position = pos3
+		patch.rotation.y = float(f.get("yaw", 0.0))
+		patch.patch_id = String(f["id"])
+		patch.forage_kind = StringName(str(f.get("kind", &"bush_berry")))
+		var cont: Dictionary = f.get("contents", {}) as Dictionary
+		var conv2: Dictionary = {}
+		for k in cont.keys():
+			conv2[StringName(str(k))] = int(cont[k])
+		patch.contents = conv2
+		patch.depleted = false
+		patch.depleted_at_day = -1
+		rural_node.add_child(patch)
+		if patch.has_method("_update_prompt"):
+			patch.call("_update_prompt")
+		forage_count += 1
 	var mat_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
+	var has_collider_flag: bool = has_rural or has_well
 	return {
 		"rural_vertices": verts.size(),
 		"rural_triangles": indices.size() / 3,
-		"rural_colliders": 1,
+		"rural_colliders": 1 if has_collider_flag else 0,
 		"rural_doors": door_count,
 		"rural_crates": crate_count,
+		"rural_wells": well_count,
+		"rural_forage": forage_count,
 		"rural_furniture": int(manifest.get("rural_furniture", 0)),
 		"rural_buildings": int((manifest.get("rural_buildings", []) as Array).size()),
 		"has_rural": true,

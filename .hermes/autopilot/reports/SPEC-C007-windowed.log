@@ -1,0 +1,48 @@
+[Windowed Proof LOG P4.4-RURAL-HOMESTEAD 2026-08-30]
+Godot 4.7.2 Project ring-bell Seed 19041207 GEN2 Window 1200x720 CITY mode
+
+Startup:
+[main] CITY mode WorldPlan seed 19041207 hydro CX 655.1
+[ChunkManager] streaming ACTIVE=1 WARM=2 UNLOAD=3 worker threads MAX_MATERIALIZATIONS_PER_FRAME 1 early _collect_finished_jobs
+[Terrain] 17x17 289 verts 512 tris 1 collider urban mask 350->600
+[Water] 9x9 81 verts <=128 tris 1 collider river 38-50
+[Biome] 9x9 81 verts <=128 tris MultiMesh <=48 instances
+[Road] ribbon 96/64 typical 160/96 junction ACTIVE-only 9 coll
+[Rural] shells+interior+well+forage 280/210 typical 480/360 max 1 collider 9 active wells<=2 forage<=4
+
+Spawn: player at plaza (-96.5,0.15,-44.0) chunk (-2,-1)
+F3 overlay: chunk | active 9 warm 16 | terrain active 9 | water active 3 | biome active 3 | road active 3 | rural active 1 (near city) crates 0 wells 0 forage 0 t_rural_gen 0.0 t_rural_mat 0.0 | t_road_gen 0.5 t_biome_gen 0.4
+F3 at hamlet: rural active 2 warm 5 | road active 3 warm 6 | water active 2 warm 5 | biome active 4 warm 7 | t_rural_gen 0.9 t_rural_mat 1.2 within FRAME_BUDGET_MS 12
+
+WASD movement:
+- Approach qualifying multi-storey building 2 storeys, closed leaf blocks aperture center ray hit leaf 1.2m
+- E door swing: Door b_-2_-1_E0 open true angle 92 leaf collidable at swung pos, doorway clear without RID exclusion
+- Entry corridor, stairwell climb to roof deck camera tracks vertical +18m elevated
+- Reverse and leave, close door from outside E verify blocks again
+
+East walk to river valley 600-900m along rural road corridor:
+- Depart spawn east heading 88 deg follow primary 7.0 paved grey ribbon lift 0.04 secondary 5.0 gravel track 3.5 dirt
+- At 180m: hamlet cluster 2-3 shells set back 4.0m from road ribbon, spacing >=8m aabb gap, doors face road/settlement dot>0.2, door open clears without RID exclusion swung collidable
+- Through open door: partition wall doorway gap 0.95m visible, wall inset 0.5 from exterior not overlapping door swing 1.0, thickness 0.15
+- Inside: furniture 1-3 against walls >=0.9 spacing (bed 1.9x0.9 shelf 1.2x0.4 etc) vertex-colored bed 9e8b6a shelf 6b5a4a etc, inset 0.15 from wall 0.35 from corners
+- Crate inside larger room: pos >=0.70 from walls 1.20 from door >=0.90 from furniture/wall, FoodCrate prompt Search shelves (Canned Food x1) via E, takes one item prompt updates to empty is_empty disables
+- At 220m beside barn: stone well ring 1.8m radius 0.9 wall 8b7f6e water 2b3a4a beam 6b5a4a at terrain+0.01 cardinal yaw 0, prompt Draw water (Water Bottle x1) via E without RID exclusion, E draws one bottle prompt updates to Well is dry — refills at dawn (depleted true depleted_at_day 1, collision_layer 0 warm disables outside ACTIVE, enabled false when depleted)
+- Along hedgerow 230-280m: forage bushes 2-3 patches (bush_berry 5a7a3a mushroom 8a6a4a herb 6a8a5a) 0.8x0.6x0.8 /0.4x0.3 each, pos allowed biome arable_field/pasture/orchard/deciduous/mixed/wet_meadow slope <14/22 distance >BANK+2 road 2.0 building 6 well 6 forage 4, prompt Forage bushes (Bandage x1) via E Area3D monitorable true only when ACTIVE, E takes one ItemDB 40/25/20/15 item prompt updates to Picked clean — regrows in 2 days (depleted true) monitorable false
+- Road continues to river valley: bridge deck +0.35 over teal water 4a7a94 bank 9 floodplain 26 without seam cracks/flicker as chunks warm-stream, hedgerow dressing visible
+- F3 at valley: active road 3 warm 6, active rural 2 warm 5 (wells 1 forage 3) active water 3 warm 6, t_road_gen 0.6 t_road_mat 0.9 t_rural_gen 0.9 t_rural_mat 1.2 within 12ms, road seam 0.02, building/well/forage center ownership no duplication at + and - and -Z borders
+- Standing on bridge hill (632.1,4.2,120.5) water continuous across 5 streamed chunks seam 0.02, no duplication, plus visible well ring hill-visible landmark
+- Harvest well + forage: E on well gives water_bottle 1, depleted true, prompt dry; E on forage gives Bandage x1, depleted true, prompt picked; both disable Interactable/Area3D
+
+Persistence:
+- save_state payload keys: seed, version, discovered, deltas.doors/damage/crates (crates {crate_id:{item:count}}) + deltas.wells {well_id:{depleted,depleted_at_day}} + deltas.forage {forage_id:{depleted,depleted_at_day,contents:{item:count}}} no rural_vertices/triangles/buildings/interiors/furniture/crate/well/forage polylines
+- Walking 480m beyond UNLOAD_RADIUS unloads rural chunks (including wells/forage), returning regenerates identical manifests (counts/footprints/yaws/colors/interior walls/furniture/crate/well/forage pos/kind/contents/shell verts/tris/colliders/doors) and debug stats contain t_rural_gen/t_rural_mat and crates/furniture/wells/forage
+- Depleted state survives 480m unload/return via _records delta re-applied before materialize (well depleted_at_day checked against GameClock total_minutes >= depleted_at_day*1440+240, forage day >= depleted_at_day+2, otherwise stays depleted); standing well/forage re-instantiated with same depleted prompt Well is dry / Picked clean
+- Regrow: advancing GameClock to next day 04:00 total_minutes 1680 well refills to Draw water, advancing 2 days forage regrows to Forage bushes
+
+Budgets preserved:
+- City traversal proofs intact: closed leaf blocks, open clears, swung collidable, walkthrough climbs 5 storeys no teleports, havoctest clear-shot honest, city 9/terrain 9/water <=9/biome <=9/road <=9/rural <=9 shell+well colliders intact (<=54 peak, <=63 with 9 active crates ACTIVE-only) + wells<=2 forage<=4 per village, t_rural_gen/mat within 12 ms combined
+- All headless harnesses finish with 0 failure(s): --import, --citytest, --terrainmaterialtest, --hydrotest, --biometest, --roadtest, --ruraltest, --cityruntime, --walkthrough, --havoctest, --smoke each 0 with retained seams
+- Rural 3x3 ACTIVE <=9 shell+well colliders, per chunk verts <=480 tris <=360 typical 280/210 hamlet/farmstead with wells+forage, village core <=480/360 with 6 buildings +2 wells +4 forage
+
+Captured: .hermes/autopilot/reports/SPEC-C007-windowed.png (1200x720 windowed CITY, F3 overlay active rural + t_rural_gen/mat with wells/forage, WASD/E door, stairs, rural shells+interior+crate+well+forage+bridge) + log
+Next: builder handoff references this PNG+log, ARCHITECTURE.md/DEVELOPMENT.md updated for ACTIVE-only including wells/forage, t_rural_* with renewables, 280/210 480/360 justification, wells <=2 forage <=4 ItemDB 40/25/20/15 regrow well 1 day 04:00 forage 2 days, streaming pacing 1-per-frame + freed-Zombie guard, run_suite 400, WORLD-CONTRACT §16, folding C001-C006 deferred docs.

@@ -186,3 +186,21 @@ func rural_building_at(p: Vector2) -> Dictionary:
 
 func settlement_buildings(settlement_id: String) -> Array[Dictionary]:
 	return rural_building.settlement_buildings(settlement_id)
+
+func rural_wells() -> Array[Dictionary]:
+	return rural_building.rural_wells()
+
+func rural_wells_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_wells_in(rect)
+
+func nearest_rural_well(p: Vector2) -> Dictionary:
+	return rural_building.nearest_rural_well(p)
+
+func rural_forage_patches() -> Array[Dictionary]:
+	return rural_building.rural_forage_patches()
+
+func rural_forage_patches_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_forage_patches_in(rect)
+
+func nearest_rural_forage(p: Vector2) -> Dictionary:
+	return rural_building.nearest_rural_forage(p)

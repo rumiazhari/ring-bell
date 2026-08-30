@@ -179,7 +179,7 @@ func _run_all() -> void:
 		if skind == &"village":
 			_check("village %s 4-6" % sid, cnt >= 4 and cnt <= 6, str(cnt))
 		elif skind == &"hamlet":
-			_check("hamlet %s 2-3" % sid, cnt >= 1 and cnt <= 3, str(cnt))
+			_check("hamlet %s 2-3" % sid, cnt >= 2 and cnt <= 3, str(cnt))
 		elif skind == &"farmstead":
 			_check("farmstead %s 1-2" % sid, cnt >= 1 and cnt <= 2, str(cnt))
 		elif skind == &"isolated_farm":
@@ -200,8 +200,6 @@ func _run_all() -> void:
 			var k_part: String = bid_str.split("_")[-1]
 			var k_idx: int = int(k_part) if k_part.is_valid_int() else -1
 			var required_road: float = 4.0 - 0.5
-			if k_idx == 0:
-				required_road = 2.0
 			_check("road setback >=4 %s" % b["id"], d_road >= required_road or d_road == INF, "%.1f" % d_road)
 			var body: StringName = hp.water_body_at(p)
 			_check("no water %s" % b["id"], body == &"", str(body))
@@ -328,8 +326,6 @@ func _run_all() -> void:
 			var k_part2: String = bid_str2.split("_")[-1]
 			var k_idx2: int = int(k_part2) if k_part2.is_valid_int() else -1
 			var required2: float = 4.0 - 0.5
-			if k_idx2 == 0:
-				required2 = 2.0
 			_check("seed %d road setback >=4 %s" % [seed, b["id"]], d_road >= required2 or d_road == INF, "%.1f" % d_road)
 			# is_bridge check: if building over bridge deck, d_road small and over water -> already fails water check; but also check not on is_bridge
 			# Use road_network to check is_bridge via segments
@@ -666,6 +662,146 @@ func _run_all() -> void:
 	_check("save_state excludes rural_manifest", save_str.find("rural_manifest") == -1, save_str.substr(0, 500))
 	_check("save_state still no road_segments", save_str.find("road_segments") == -1, save_str.substr(0, 300))
 	_check("save_state still no water_manifest", save_str.find("water_manifest") == -1, save_str.substr(0, 300))
+	# --- Wells/forage renewables checks (P4.4) ---
+	# Determinism shuffled for wells/forage
+	var wp2 := WorldPlan.new(canonical)
+	var rur2: RuralBuildingPlan = wp2.rural_building
+	var rur_shuf := RuralBuildingPlan.new(canonical, wp2.terrain, wp2.hydrology, wp2.geology, wp2.biome, wp2.settlement, wp2.road_network)
+	var wells1: Array[Dictionary] = rur2.rural_wells()
+	var wells2: Array[Dictionary] = rur_shuf.rural_wells()
+	_check("well shuffled identical count", wells1.size() == wells2.size(), "%d vs %d" % [wells1.size(), wells2.size()])
+	var wells_eq := true
+	if wells1.size() == wells2.size():
+		for i in wells1.size():
+			if String(wells1[i]["id"]) != String(wells2[i]["id"]) or not Vector2(wells1[i]["pos"]).is_equal_approx(Vector2(wells2[i]["pos"])):
+				wells_eq = false
+				break
+	else:
+		wells_eq = false
+	_check("well shuffled identical pos", wells_eq, "")
+	var forage1: Array[Dictionary] = rur2.rural_forage_patches()
+	var forage2: Array[Dictionary] = rur_shuf.rural_forage_patches()
+	_check("forage shuffled identical count", forage1.size() == forage2.size(), "%d vs %d" % [forage1.size(), forage2.size()])
+	var forage_eq := true
+	if forage1.size() == forage2.size():
+		for i in forage1.size():
+			if String(forage1[i]["id"]) != String(forage2[i]["id"]) or not Vector2(forage1[i]["pos"]).is_equal_approx(Vector2(forage2[i]["pos"])):
+				forage_eq = false
+				break
+	else:
+		forage_eq = false
+	_check("forage shuffled identical pos", forage_eq, "")
+	# Well counts per settlement kind
+	for s in anchors:
+		var sid2: String = String(s["id"])
+		var skind2: StringName = s["kind"] as StringName
+		var warr: Array[Dictionary] = rur2.wells_for_settlement(sid2)
+		var cntw: int = warr.size()
+		if skind2 == &"village":
+			_check("village well 1-2 %s" % sid2, cntw >=1 and cntw <=2, str(cntw))
+		elif skind2 == &"hamlet":
+			_check("hamlet well 1 %s" % sid2, cntw ==1, str(cntw))
+		elif skind2 == &"farmstead":
+			_check("farmstead well 0-1 %s" % sid2, cntw >=0 and cntw <=1, str(cntw))
+		elif skind2 == &"isolated_farm":
+			_check("isolated_farm well 0-1 %s" % sid2, cntw >=0 and cntw <=1, str(cntw))
+		# forage counts per vicinity 2-5
+		var farr: Array[Dictionary] = rur2.forage_for_settlement(sid2)
+		var cntf: int = farr.size()
+		if skind2 == &"village":
+			_check("village forage 3-5 %s" % sid2, cntf >=3 and cntf <=5, str(cntf))
+		elif skind2 == &"hamlet":
+			_check("hamlet forage 2-3 %s" % sid2, cntf >=2 and cntf <=3, str(cntf))
+		elif skind2 == &"farmstead":
+			_check("farmstead forage 1-2 %s" % sid2, cntf >=1 and cntf <=2, str(cntf))
+		elif skind2 == &"isolated_farm":
+			_check("isolated_farm forage 1 %s" % sid2, cntf ==1, str(cntf))
+		# check well spacing and road setback for each well
+		for w in warr:
+			var p: Vector2 = w["pos"] as Vector2
+			var d_road_w: float = wp2.distance_to_road(p)
+			_check("well road 4.0 %s" % w["id"], d_road_w >= 4.0 -0.5 or d_road_w == INF, "%.1f" % d_road_w)
+			# building gap 8
+			var well_aabb := Rect2(p - Vector2(0.9,0.9), Vector2(1.8,1.8))
+			for b in rural.settlement_buildings(sid2):
+				var baabb: Rect2 = b["aabb"] as Rect2
+				var gap: float = rur2._aabb_gap(well_aabb, baabb) if rur2.has_method("_aabb_gap") else p.distance_to(b["center"] as Vector2) - 4.0
+				# fallback use center distance if _aabb_gap not accessible
+				if rur2.has_method("_aabb_gap"):
+					_check("well building gap 8 %s %s" % [w["id"], b["id"]], gap >= 8.0 -0.5, "%.1f" % gap)
+				else:
+					_check("well building distance >=8 %s %s" % [w["id"], b["id"]], p.distance_to(b["center"] as Vector2) >= 8.0 -0.5, "%.1f" % p.distance_to(b["center"] as Vector2))
+		# forage biome and spacing
+		for f in farr:
+			var p2: Vector2 = f["pos"] as Vector2
+			var b_at: StringName = wp2.biome_at(p2)
+			_check("forage biome allowed %s" % f["id"], WorldConstants.RURAL_FORAGE_ALLOW_BIOMES.has(b_at), str(b_at))
+			var d_road_f: float = wp2.distance_to_road(p2)
+			_check("forage road 2.0 %s" % f["id"], d_road_f >= 2.0 -0.5 or d_road_f == INF, "%.1f" % d_road_f)
+	# Per-chunk wells/forage caps and building/well/forage ownership no duplication
+	for c in coords:
+		var m: Dictionary = manifests_fwd[c]
+		var wc: int = int(m.get("rural_wells", 0))
+		var fc: int = int(m.get("rural_forage", 0))
+		_check("chunk %s wells <=2" % c, wc <=2, str(wc))
+		_check("chunk %s forage <=4" % c, fc <=4, str(fc))
+	# Well/forage ItemDB vocab and non-empty
+	var has_nonempty_well := false
+	for w in wells1:
+		has_nonempty_well = true
+		break
+	_check("has wells non-empty", has_nonempty_well, str(wells1.size()))
+	var has_nonempty_forage := false
+	for f in forage1:
+		if not Dictionary(f.get("contents", {})).is_empty():
+			has_nonempty_forage = true
+			var cont: Dictionary = f["contents"] as Dictionary
+			for k in cont.keys():
+				_check("forage ItemDB vocab %s" % f["id"], [&"canned_food", &"water_bottle", &"bandage", &"antibiotics"].has(StringName(str(k))), str(k))
+			break
+	_check("has forage non-empty", has_nonempty_forage, str(forage1.size()))
+	# Interactable contracts: Well and ForagePatch prompts
+	var dummy_well := Well.new()
+	dummy_well._ready()
+	_check("well prompt Draw water", dummy_well.interactable.prompt.find("Draw water") != -1, dummy_well.interactable.prompt)
+	# Simulate depleted well prompt
+	dummy_well.depleted = true
+	dummy_well._update_prompt()
+	_check("well prompt dry", dummy_well.interactable.prompt.find("dry") != -1 or dummy_well.interactable.prompt.find("Well is dry") != -1, dummy_well.interactable.prompt)
+	dummy_well.queue_free()
+	var dummy_forage := ForagePatch.new()
+	dummy_forage.contents = {&"canned_food": 1}
+	dummy_forage._ready()
+	_check("forage prompt Forage", dummy_forage.interactable.prompt.find("Forage") != -1, dummy_forage.interactable.prompt)
+	dummy_forage.depleted = true
+	dummy_forage._update_prompt()
+	_check("forage prompt picked", dummy_forage.interactable.prompt.find("Picked") != -1 or dummy_forage.interactable.prompt.find("Picked clean") != -1, dummy_forage.interactable.prompt)
+	dummy_forage.queue_free()
+	# Check -Z border no duplication for wells/forage
+	var mz_w0 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,0))
+	var mz_w1 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,-1))
+	var w0: Array = mz_w0.get("well_manifests", []) as Array
+	var w1: Array = mz_w1.get("well_manifests", []) as Array
+	var w_dup := false
+	var w_ids := {}
+	for w in w0:
+		w_ids[String(w["id"])] = true
+	for w in w1:
+		if w_ids.has(String(w["id"])):
+			w_dup = true
+			break
+	_check("-Z well no duplication", not w_dup, "")
+	var f0: Array = mz_w0.get("forage_manifests", []) as Array
+	var f1: Array = mz_w1.get("forage_manifests", []) as Array
+	var f_dup := false
+	var f_ids := {}
+	for f in f0:
+		f_ids[String(f["id"])] = true
+	for f in f1:
+		if f_ids.has(String(f["id"])):
+			f_dup = true
+			break
+	_check("-Z forage no duplication", not f_dup, "")
 	cm.queue_free()
 	fake_player.queue_free()
 	# Cleanup
