@@ -335,10 +335,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						hx = p_center.x
 						hz = p_center.y + (p_size.y * 0.5 - 0.2) * (1 if hi==0 else -1)
 						hed_yaw = p_yaw
-				var hedge_y: float = _masked_height(world_plan, Vector2(hx, hz)) + WorldConstants.HEDGEROW_HEIGHT * 0.5
-				var hedge_len: float = p_size.x if is_long_side and is_equal_approx(p_yaw, 0.0) else p_size.y if is_long_side else p_size.y if is_equal_approx(p_yaw,0.0) else p_size.x
-				# Use box length 2.0 scaled: we represent whole side as one instance scaled to length
-				var scale_v := Vector3(maxf(2.0, hedge_len * 0.9), WorldConstants.HEDGEROW_HEIGHT, 0.4)
+				var hedge_y: float = _masked_height(world_plan, Vector2(hx, hz)) + 0.0
+				var hedge_h: float = lerpf(WorldConstants.HEDGEROW_TRUE_HEIGHT_MIN, WorldConstants.HEDGEROW_TRUE_HEIGHT_MAX, float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("field_parcel"), WorldSeed.combine([int(hx), int(hz)]), hi]) % 1000003) / 1000003.0)
+				# True-mesh hedgerow BoxMesh 2.0x0.45-0.75x0.4 not stretched
+				var scale_v := Vector3(WorldConstants.HEDGEROW_TRUE_LENGTH, hedge_h, WorldConstants.HEDGEROW_TRUE_WIDTH)
+				hedge_y += hedge_h * 0.5
 				var basis := Basis(Vector3.UP, hed_yaw).scaled(scale_v)
 				var xf := Transform3D(basis, Vector3(hx, hedge_y, hz))
 				instances.append(xf)
@@ -360,6 +361,158 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			instance_count = instances.size()
 			hedgerow_added -= to_remove
 	var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+
+# --- Orchard parcel generation P5.2 ---
+	var orchard_parcels_raw: Array[Dictionary] = []
+	if not is_urban_core:
+		orchard_parcels_raw = world_plan.orchard_parcels_in(chunk_rect)
+	if orchard_parcels_raw.size() > WorldConstants.ORCHARD_PARCEL_MAX_PER_CHUNK:
+		orchard_parcels_raw.resize(WorldConstants.ORCHARD_PARCEL_MAX_PER_CHUNK)
+	var orchard_parcel_manifests: Array[Dictionary] = []
+	var orchard_vertices := 0
+	var orchard_triangles := 0
+	var fruit_patch_manifests: Array[Dictionary] = []
+	var orchard_hedgerow_added := 0
+	var orchard_instances_added := 0
+	var remaining_for_orchard := WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK - instance_count
+	var orchard_hedgerow_cap := mini(WorldConstants.ORCHARD_HEDGEROW_MAX_PER_CHUNK, maxi(0, remaining_for_orchard))
+	var orchard_canopy_cap := mini(WorldConstants.MAX_ORCHARD_INSTANCES_PER_CHUNK, maxi(0, remaining_for_orchard - orchard_hedgerow_cap))
+	for parc in orchard_parcels_raw:
+		var pid_o: String = String(parc.get("id", ""))
+		var p_center_o: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+		var p_aabb_o: Rect2 = parc.get("aabb", Rect2()) as Rect2
+		var p_fruit: StringName = parc.get("fruit_kind", &"apple") as StringName
+		var p_planted_o: int = int(parc.get("planted_day", 0))
+		var p_yaw_o: float = float(parc.get("yaw", 0.0))
+		var p_size_o: Vector2 = parc.get("size", Vector2(32,24)) as Vector2
+		var p_tree_instances: Array = parc.get("tree_instances", []) as Array
+		var cur_day_o: int = 1
+		if GameClock != null:
+			cur_day_o = GameClock.get_day()
+		var is_grown_o: bool = cur_day_o >= p_planted_o + WorldConstants.FRUIT_GROW_DAYS
+		var growth_stage_o: StringName = &"harvestable" if is_grown_o else (&"growing" if cur_day_o == p_planted_o + 1 else &"planted")
+		var contents_o: Dictionary = parc.get("contents", {}) as Dictionary
+		if contents_o.is_empty():
+			match p_fruit:
+				&"apple":
+					contents_o = {&"apple": 1}
+				&"plum":
+					contents_o = {&"plum": 1}
+				&"pear":
+					contents_o = {&"pear": 1}
+				&"cherry":
+					contents_o = {&"cherry": 1}
+				_:
+					contents_o = {&"apple": 1}
+		var orchard_manifest := {
+			"id": pid_o,
+			"parcel_id": pid_o,
+			"center": p_center_o,
+			"pos": p_center_o,
+			"aabb": p_aabb_o,
+			"biome": parc.get("biome", &"orchard"),
+			"fruit_kind": p_fruit,
+			"kind": p_fruit,
+			"size": p_size_o,
+			"yaw": p_yaw_o,
+			"planted_day": p_planted_o,
+			"growth_stage": growth_stage_o,
+			"is_grown": is_grown_o,
+			"contents": contents_o,
+			"landscape_cell": parc.get("landscape_cell", Vector2i.ZERO),
+			"macro_cell": parc.get("macro_cell", Vector2i.ZERO),
+			"settlement_id": parc.get("settlement_id", ""),
+			"tree_instances": p_tree_instances,
+			"tree_rows": parc.get("tree_rows", 3),
+			"trees_per_row": parc.get("trees_per_row", 3),
+		}
+		orchard_parcel_manifests.append(orchard_manifest)
+		var fruit_id_o: String = "fruit_%s" % pid_o
+		var h_fruit: float = _masked_height(world_plan, p_center_o) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 0.01
+		var fruit_pos := Vector3(p_center_o.x, h_fruit, p_center_o.y)
+		var fruit_manifest := {
+			"id": fruit_id_o,
+			"parcel_id": pid_o,
+			"pos": p_center_o,
+			"position": fruit_pos,
+			"aabb": p_aabb_o,
+			"fruit_kind": p_fruit,
+			"kind": p_fruit,
+			"contents": contents_o,
+			"planted_day": p_planted_o,
+			"yaw": p_yaw_o,
+			"is_grown": is_grown_o,
+			"growth_stage": growth_stage_o,
+		}
+		fruit_patch_manifests.append(fruit_manifest)
+		if orchard_hedgerow_added < orchard_hedgerow_cap:
+			var orch_hedges_to_add := mini(2, orchard_hedgerow_cap - orchard_hedgerow_added)
+			for hi in orch_hedges_to_add:
+				var is_long_o := hi % 2 == 0
+				var hx_o: float
+				var hz_o: float
+				var hed_yaw_o: float
+				if is_long_o:
+					if is_equal_approx(absf(p_yaw_o), PI*0.5):
+						hx_o = p_center_o.x
+						hz_o = p_center_o.y + (p_size_o.y * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hed_yaw_o = p_yaw_o
+					else:
+						hx_o = p_center_o.x + (p_size_o.x * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hz_o = p_center_o.y
+						hed_yaw_o = p_yaw_o
+				else:
+					if is_equal_approx(absf(p_yaw_o), PI*0.5):
+						hx_o = p_center_o.x + (p_size_o.x * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hz_o = p_center_o.y
+						hed_yaw_o = p_yaw_o
+					else:
+						hx_o = p_center_o.x
+						hz_o = p_center_o.y + (p_size_o.y * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hed_yaw_o = p_yaw_o
+				var hedge_h_o: float = lerpf(WorldConstants.HEDGEROW_TRUE_HEIGHT_MIN, WorldConstants.HEDGEROW_TRUE_HEIGHT_MAX, float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("orchard_parcel"), WorldSeed.combine([int(hx_o), int(hz_o)]), hi]) % 1000003) / 1000003.0)
+				var hedge_y_o: float = _masked_height(world_plan, Vector2(hx_o, hz_o)) + hedge_h_o * 0.5
+				var scale_v_o := Vector3(WorldConstants.HEDGEROW_TRUE_LENGTH, hedge_h_o, WorldConstants.HEDGEROW_TRUE_WIDTH)
+				var basis_o := Basis(Vector3.UP, hed_yaw_o).scaled(scale_v_o)
+				var xf_o := Transform3D(basis_o, Vector3(hx_o, hedge_y_o, hz_o))
+				instances.append(xf_o)
+				orchard_hedgerow_added += 1
+				instance_count += 1
+				if orchard_hedgerow_added >= orchard_hedgerow_cap:
+					break
+		if orchard_instances_added < orchard_canopy_cap:
+			var remaining_canopy := orchard_canopy_cap - orchard_instances_added
+			var trees_to_add := mini(int(p_tree_instances.size()), remaining_canopy)
+			for ti in trees_to_add:
+				var tpos: Vector3 = p_tree_instances[ti] as Vector3
+				var canopy_y: float = tpos.y + 1.4
+				var scale_canopy := Vector3(1.4, 1.0, 1.4)
+				var xf_c := Transform3D(Basis.IDENTITY.scaled(scale_canopy), Vector3(tpos.x, canopy_y, tpos.z))
+				instances.append(xf_c)
+				orchard_instances_added += 1
+				instance_count += 1
+				if orchard_instances_added >= orchard_canopy_cap:
+					break
+		if orchard_hedgerow_added >= orchard_hedgerow_cap and orchard_instances_added >= orchard_canopy_cap:
+			if orchard_parcel_manifests.size() >= orchard_parcels_raw.size():
+				break
+	if orchard_vertices > WorldConstants.MAX_ORCHARD_VERTS_PER_CHUNK:
+		orchard_vertices = WorldConstants.MAX_ORCHARD_VERTS_PER_CHUNK
+	if orchard_triangles > WorldConstants.MAX_ORCHARD_TRIS_PER_CHUNK:
+		orchard_triangles = WorldConstants.MAX_ORCHARD_TRIS_PER_CHUNK
+	if instance_count > WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
+		var overflow_o := instance_count - WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK
+		if overflow_o > 0:
+			var to_remove_o := mini(overflow_o, orchard_instances_added + orchard_hedgerow_added)
+			if to_remove_o > 0:
+				instances.resize(instances.size() - to_remove_o)
+				instance_count = instances.size()
+				if to_remove_o <= orchard_instances_added:
+					orchard_instances_added -= to_remove_o
+				else:
+					var rem := to_remove_o - orchard_instances_added
+					orchard_instances_added = 0
+					orchard_hedgerow_added = maxi(0, orchard_hedgerow_added - rem)
 	var density_avg := 0.0
 	var dens_sum := 0.0
 	var dens_cnt := 0
@@ -406,6 +559,18 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"field_triangles": field_triangles,
 		"field_hedgerow": hedgerow_added,
 		"field_hedgerow_count": hedgerow_added,
+		"orchard_parcels": orchard_parcel_manifests.size(),
+		"orchard_parcel_manifests": orchard_parcel_manifests,
+		"orchard_parcel_count": orchard_parcel_manifests.size(),
+		"fruit_patches": fruit_patch_manifests.size(),
+		"fruit_patch_manifests": fruit_patch_manifests,
+		"fruit_patch_count": fruit_patch_manifests.size(),
+		"orchard_vertices": orchard_vertices,
+		"orchard_triangles": orchard_triangles,
+		"orchard_hedgerow": orchard_hedgerow_added,
+		"orchard_hedgerow_count": orchard_hedgerow_added,
+		"orchard_instances": orchard_instances_added,
+		"orchard_instance_count": orchard_instances_added,
 	}
 
 static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
@@ -422,6 +587,10 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var field_crop_manifests: Array = manifest.get("field_crop_manifests", [])
 	var field_vertices: int = int(manifest.get("field_vertices", 0))
 	var field_triangles: int = int(manifest.get("field_triangles", 0))
+	var orchard_parcel_manifests: Array = manifest.get("orchard_parcel_manifests", [])
+	var fruit_patch_manifests: Array = manifest.get("fruit_patch_manifests", [])
+	var orchard_vertices: int = int(manifest.get("orchard_vertices", 0))
+	var orchard_triangles: int = int(manifest.get("orchard_triangles", 0))
 	var existing := parent.get_node_or_null(NodePath("Biome_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
 		parent.remove_child(existing)
@@ -526,8 +695,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		var box := BoxMesh.new()
 		box.size = Vector3(1, 1, 1)
 		var box_mat := StandardMaterial3D.new()
-		box_mat.vertex_color_use_as_albedo = false
-		box_mat.albedo_color = Color(0.3, 0.45, 0.25)
+		box_mat.vertex_color_use_as_albedo = true
+		box_mat.albedo_color = Color("5a7a3a")
 		box.material = box_mat
 		multimesh.mesh = box
 		for n in instance_count:
@@ -581,6 +750,27 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			patch.rotation.y = float(cd["yaw"])
 		# initial depleted false; will be patched by ChunkManager if saved
 		crops_created += 1
+	# FruitPatch Area3D leaves (ACTIVE-only monitorable, no collider counted)
+	var fruits_created := 0
+	for fdata in fruit_patch_manifests:
+		var fd: Dictionary = fdata as Dictionary
+		var fpatch := FruitPatch.new()
+		fpatch.name = String(fd.get("id", "fruit_unknown"))
+		fpatch.fruit_id = String(fd.get("id", ""))
+		fpatch.parcel_id = String(fd.get("parcel_id", ""))
+		var fk: StringName = StringName(str(fd.get("fruit_kind", fd.get("kind", "apple"))))
+		fpatch.fruit_kind = fk
+		fpatch.planted_day = int(fd.get("planted_day", 0))
+		var fcont: Dictionary = fd.get("contents", {}) as Dictionary
+		fpatch.contents.clear()
+		for kk in fcont.keys():
+			fpatch.contents[StringName(str(kk))] = int(fcont[kk])
+		var fpos3: Vector3 = fd.get("position", Vector3.ZERO) as Vector3
+		biome_node.add_child(fpatch)
+		fpatch.position = fpos3
+		if fd.has("yaw"):
+			fpatch.rotation.y = float(fd["yaw"])
+		fruits_created += 1
 	var mat_ms := float(Time.get_ticks_usec() - t0) / 1000.0
 	var verts_n := all_verts.size()
 	var tris_n := all_indices.size() / 3
@@ -598,4 +788,10 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"field_vertices": field_vertices,
 		"field_triangles": field_triangles,
 		"field_hedgerow": int(manifest.get("field_hedgerow", 0)),
+		"orchard_parcels": int(orchard_parcel_manifests.size()),
+		"fruit_patches": fruits_created,
+		"orchard_vertices": orchard_vertices,
+		"orchard_triangles": orchard_triangles,
+		"orchard_hedgerow": int(manifest.get("orchard_hedgerow", 0)),
+		"orchard_instances": int(manifest.get("orchard_instances", 0)),
 	}

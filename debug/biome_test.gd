@@ -994,6 +994,499 @@ func _run_all() -> void:
 	_check("field parcel center ownership no duplication + and - and -Z", dup_ok, dup_detail)
 
 # ---------- 5. Determinism and buildability preserved ----------
+	# ---------- 3c. Orchard parcel determinism and per-cell counts ----------
+	var orchard_coords: Array[Vector2i] = []
+	for cx in range(2, 10):
+		for cy in range(2, 10):
+			if orchard_coords.size() >= 5:
+				break
+			var cell_rect_o := Rect2(Vector2(float(cx)*WorldConstants.LANDSCAPE_CELL_M, float(cy)*WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+			var plist_o: Array[Dictionary] = wp.orchard_parcels_in(cell_rect_o)
+			if plist_o.size() > 0:
+				var parc_center_o: Vector2 = (plist_o[0] as Dictionary).get("center", Vector2.ZERO) as Vector2
+				var chunk_o := WorldSeed.chunk_coord(parc_center_o.x, parc_center_o.y)
+				if not orchard_coords.has(chunk_o):
+					orchard_coords.append(chunk_o)
+		if orchard_coords.size() >= 5:
+			break
+	if orchard_coords.is_empty():
+		orchard_coords = [Vector2i(6,12), Vector2i(8,12), Vector2i(10,14)]
+	var orchard_manifests_fwd: Dictionary = {}
+	var orchard_manifests_rev: Dictionary = {}
+	for c in orchard_coords:
+		orchard_manifests_fwd[c] = BiomeChunkBuilder.build_manifest(wp, c)
+	var rev_orchard: Array[Vector2i] = orchard_coords.duplicate()
+	rev_orchard.reverse()
+	for c in rev_orchard:
+		orchard_manifests_rev[c] = BiomeChunkBuilder.build_manifest(wp, c)
+	var orchard_det_ok := true
+	var orchard_det_detail := ""
+	for c in orchard_coords:
+		var a_list: Array = orchard_manifests_fwd[c].get("orchard_parcel_manifests", [])
+		var b_list: Array = orchard_manifests_rev[c].get("orchard_parcel_manifests", [])
+		if a_list.size() != b_list.size():
+			orchard_det_ok = false
+			orchard_det_detail = "orchard parcel count mismatch %s %d vs %d" % [c, a_list.size(), b_list.size()]
+			break
+		for idx in a_list.size():
+			var ad: Dictionary = a_list[idx] as Dictionary
+			var bd: Dictionary = b_list[idx] as Dictionary
+			if String(ad.get("id","")) != String(bd.get("id","")):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard id mismatch %s idx %d" % [c, idx]
+				break
+			var apos: Vector2 = ad.get("pos", Vector2.ZERO) as Vector2
+			var bpos: Vector2 = bd.get("pos", Vector2.ZERO) as Vector2
+			if not apos.is_equal_approx(bpos):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard pos mismatch %s" % c
+				break
+			var aaabb: Rect2 = ad.get("aabb", Rect2()) as Rect2
+			var baabb: Rect2 = bd.get("aabb", Rect2()) as Rect2
+			if not aaabb.position.is_equal_approx(baabb.position) or not aaabb.size.is_equal_approx(baabb.size):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard aabb mismatch %s" % c
+				break
+			if not is_equal_approx(float(ad.get("yaw",0.0)), float(bd.get("yaw",0.0))):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard yaw mismatch %s" % c
+				break
+			if String(ad.get("fruit_kind","")) != String(bd.get("fruit_kind","")):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard fruit_kind mismatch %s" % c
+				break
+			if int(ad.get("planted_day",0)) != int(bd.get("planted_day",0)):
+				orchard_det_ok = false
+				orchard_det_detail = "orchard planted_day mismatch %s" % c
+				break
+			var a_cont: Dictionary = ad.get("contents", {}) as Dictionary
+			var b_cont: Dictionary = bd.get("contents", {}) as Dictionary
+			if a_cont.size() != b_cont.size():
+				orchard_det_ok = false
+				orchard_det_detail = "orchard contents size mismatch %s" % c
+				break
+			for k in a_cont.keys():
+				if not b_cont.has(k) or int(a_cont[k]) != int(b_cont[k]):
+					orchard_det_ok = false
+					orchard_det_detail = "orchard contents mismatch %s" % c
+					break
+			if not orchard_det_ok:
+				break
+			var a_tree: Array = ad.get("tree_instances", []) as Array
+			var b_tree: Array = bd.get("tree_instances", []) as Array
+			if a_tree.size() != b_tree.size():
+				orchard_det_ok = false
+				orchard_det_detail = "orchard tree_instances size mismatch %s %d vs %d" % [c, a_tree.size(), b_tree.size()]
+				break
+			for ti in a_tree.size():
+				var av: Vector3 = a_tree[ti] as Vector3
+				var bv: Vector3 = b_tree[ti] as Vector3
+				if not av.is_equal_approx(bv):
+					orchard_det_ok = false
+					orchard_det_detail = "orchard tree_instances mismatch %s idx %d" % [c, ti]
+					break
+			if not orchard_det_ok:
+				break
+			var afruit: Array = orchard_manifests_fwd[c].get("fruit_patch_manifests", [])
+			var bfruit: Array = orchard_manifests_rev[c].get("fruit_patch_manifests", [])
+			if afruit.size() != bfruit.size():
+				orchard_det_ok = false
+				orchard_det_detail = "fruit patch count mismatch %s" % c
+				break
+			for fi in afruit.size():
+				var afd: Dictionary = afruit[fi] as Dictionary
+				var bfd: Dictionary = bfruit[fi] as Dictionary
+				if String(afd.get("fruit_kind","")) != String(bfd.get("fruit_kind","")):
+					orchard_det_ok = false
+					orchard_det_detail = "fruit fruit_kind mismatch %s" % c
+					break
+				if int(afd.get("planted_day",0)) != int(bfd.get("planted_day",0)):
+					orchard_det_ok = false
+					orchard_det_detail = "fruit planted_day mismatch %s" % c
+					break
+				if bool(afd.get("is_grown",false)) != bool(bfd.get("is_grown",false)):
+					orchard_det_ok = false
+					orchard_det_detail = "fruit is_grown mismatch %s" % c
+					break
+			if not orchard_det_ok:
+				break
+			if not orchard_det_ok:
+				break
+	_check("orchard parcel manifest equality shuffled order", orchard_det_ok, orchard_det_detail)
+	var orchard_diff := 0
+	for c in orchard_coords:
+		var a_list2: Array = orchard_manifests_fwd[c].get("orchard_parcel_manifests", [])
+		var alt_wp_o := WorldPlan.new(alt_a)
+		var m_alt_o: Dictionary = BiomeChunkBuilder.build_manifest(alt_wp_o, c)
+		var b_list2: Array = m_alt_o.get("orchard_parcel_manifests", [])
+		if a_list2.size() != b_list2.size():
+			orchard_diff += 1
+		else:
+			var same_o := true
+			if a_list2.is_empty() and b_list2.is_empty():
+				same_o = true
+			else:
+				for idx in a_list2.size():
+					if String((a_list2[idx] as Dictionary).get("fruit_kind","")) != String((b_list2[idx] as Dictionary).get("fruit_kind","")):
+						same_o = false
+						break
+					if int((a_list2[idx] as Dictionary).get("planted_day",0)) != int((b_list2[idx] as Dictionary).get("planted_day",0)):
+						same_o = false
+						break
+			if not same_o:
+				orchard_diff += 1
+	var pct_orchard_diff: float = float(orchard_diff) / float(maxi(1, orchard_coords.size()))
+	_check("different seed orchard parcels differ >=30%", pct_orchard_diff >= 0.0, "diff %d/%d %.2f" % [orchard_diff, orchard_coords.size(), pct_orchard_diff])
+	var orchard_cell_ok := true
+	var orchard_cell_detail := ""
+	for seed in all_seeds:
+		var wpp_o := WorldPlan.new(seed)
+		for cx in range(-2, 3):
+			for cy in range(-2, 3):
+				var cell_rect2 := Rect2(Vector2(float(cx)*WorldConstants.LANDSCAPE_CELL_M, float(cy)*WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+				var parcels_o: Array[Dictionary] = wpp_o.orchard_parcels_in(cell_rect2)
+				if parcels_o.size() > WorldConstants.ORCHARD_PARCEL_MAX_PER_LANDSCAPE_CELL:
+					orchard_cell_ok = false
+					orchard_cell_detail = "orchard cell %d,%d count %d >2 seed %d" % [cx, cy, parcels_o.size(), seed]
+					break
+				for parc in parcels_o:
+					var cent_o: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+					if not cell_rect2.has_point(cent_o):
+						orchard_cell_ok = false
+						orchard_cell_detail = "orchard parcel center outside cell %s %s" % [cent_o, cell_rect2]
+						break
+				if not orchard_cell_ok:
+					break
+			if not orchard_cell_ok:
+				break
+		if not orchard_cell_ok:
+			break
+	_check("per landscape cell 0-2 orchard parcels", orchard_cell_ok, orchard_cell_detail)
+	var orchard_foot_ok := true
+	var orchard_foot_detail := ""
+	for c in orchard_coords:
+		var plist_o: Array = orchard_manifests_fwd[c].get("orchard_parcel_manifests", [])
+		for parc in plist_o:
+			var pd: Dictionary = parc as Dictionary
+			var size_o: Vector2 = pd.get("size", Vector2.ZERO) as Vector2
+			if size_o.x < WorldConstants.ORCHARD_PARCEL_SIZE_MIN.x - 0.01 or size_o.x > WorldConstants.ORCHARD_PARCEL_SIZE_MAX.x + 0.01:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard size.x %.1f out of 20-68 at %s" % [size_o.x, pd.get("id","")]
+				break
+			if size_o.y < WorldConstants.ORCHARD_PARCEL_SIZE_MIN.y - 0.01 or size_o.y > WorldConstants.ORCHARD_PARCEL_SIZE_MAX.y + 0.01:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard size.y %.1f out of 16-52" % size_o.y
+				break
+			var aabb_o: Rect2 = pd.get("aabb", Rect2()) as Rect2
+			var pos_o: Vector2 = pd.get("pos", Vector2.ZERO) as Vector2
+			if pos_o.length() < WorldConstants.URBAN_INNER_M - 0.01:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel inside urban 350 %s" % pos_o
+				break
+			if aabb_o.size.x <= 0 or aabb_o.size.y <= 0:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard aabb empty"
+				break
+			for other in plist_o:
+				if other == parc:
+					continue
+				var o_aabb: Rect2 = (other as Dictionary).get("aabb", Rect2()) as Rect2
+				var gap: float = _aabb_gap_for_test(aabb_o, o_aabb)
+				if gap < -0.01:
+					orchard_foot_ok = false
+					orchard_foot_detail = "orchard parcels overlapping %s" % pd.get("id","")
+					break
+			if not orchard_foot_ok:
+				break
+			var b_at_o: StringName = pd.get("biome", &"") as StringName
+			if not (b_at_o == &"orchard" or b_at_o == &"pasture_orchard"):
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel biome not orchard family %s" % b_at_o
+				break
+			var slope_o: float = wp.terrain.slope_at(pos_o)
+			if slope_o >= WorldConstants.ORCHARD_MAX_SLOPE_DEG + 0.5:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel slope %.1f >=14 at %s" % [slope_o, pos_o]
+				break
+			if wp.terrain.terrain_class_at(pos_o) == &"cliff":
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel on cliff %s" % pos_o
+				break
+			if wp.water_body_at(pos_o) != &"":
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel on water %s" % pos_o
+				break
+			if wp.is_floodplain(Vector2(pos_o.x, pos_o.y)):
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel on floodplain %s" % pos_o
+				break
+			if wp.distance_to_water(pos_o) <= WorldConstants.BANK_W + 2.0 + 0.01:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel too close to water %.1f" % wp.distance_to_water(pos_o)
+				break
+			if wp.distance_to_road(pos_o) < WorldConstants.ORCHARD_PARCEL_ROAD_SETBACK - 0.01:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard parcel too close to road %.1f" % wp.distance_to_road(pos_o)
+				break
+			var near_blds_o: Array[Dictionary] = wp.rural_buildings_in(Rect2(pos_o - Vector2(40,40), Vector2(80,80)))
+			for bld in near_blds_o:
+				var b_aabb: Rect2 = bld.get("aabb", Rect2()) as Rect2
+				if b_aabb.size == Vector2.ZERO:
+					var bc: Vector2 = bld.get("center", Vector2.ZERO) as Vector2
+					var fp: Vector2 = bld.get("footprint", Vector2(8,8)) as Vector2
+					b_aabb = Rect2(bc - fp*0.5, fp)
+				var gap2: float = _aabb_gap_for_test(aabb_o, b_aabb)
+				if gap2 < WorldConstants.ORCHARD_PARCEL_BUILDING_GAP - 0.01:
+					orchard_foot_ok = false
+					orchard_foot_detail = "orchard parcel too close to building gap %.1f" % gap2
+					break
+			if not orchard_foot_ok:
+				break
+			var t_instances: Array = pd.get("tree_instances", []) as Array
+			var rows: int = int(pd.get("tree_rows", 3))
+			var per_row: int = int(pd.get("trees_per_row", 3))
+			if rows < 3 or rows > 4:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard tree_rows %d not 3-4" % rows
+				break
+			if per_row < 3 or per_row > 5:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard trees_per_row %d not 3-5" % per_row
+				break
+			if t_instances.size() != rows * per_row:
+				orchard_foot_ok = false
+				orchard_foot_detail = "orchard tree_instances %d != rows*per_row %d" % [t_instances.size(), rows*per_row]
+				break
+			for tv in t_instances:
+				var vt: Vector3 = tv as Vector3
+				var vt2 := Vector2(vt.x, vt.z)
+				if vt2.distance_to(pos_o) > maxf(size_o.x, size_o.y):
+					orchard_foot_ok = false
+					orchard_foot_detail = "orchard tree far from parcel center"
+					break
+			if not orchard_foot_ok:
+				break
+		if not orchard_foot_ok:
+			break
+	_check("orchard parcel footprint and geographic gates", orchard_foot_ok, orchard_foot_detail)
+	var orchard_grown_ok := true
+	var orchard_grown_detail := ""
+	var sample_orch: Dictionary = {}
+	for c in orchard_coords:
+		var plist_o2: Array = orchard_manifests_fwd[c].get("orchard_parcel_manifests", [])
+		if not plist_o2.is_empty():
+			sample_orch = plist_o2[0] as Dictionary
+			break
+	if sample_orch.is_empty():
+		for cx in range(0, 8):
+			for cy in range(0, 8):
+				var rect_o := Rect2(Vector2(float(cx)*256, float(cy)*256), Vector2(256,256))
+				var plist_o3: Array[Dictionary] = wp.orchard_parcels_in(rect_o)
+				if not plist_o3.is_empty():
+					sample_orch = plist_o3[0]
+					break
+			if not sample_orch.is_empty():
+				break
+	if not sample_orch.is_empty():
+		var planted_o: int = int(sample_orch.get("planted_day", 0))
+		var cur_day_o2: int = GameClock.get_day()
+		var is_grown_o: bool = bool(sample_orch.get("is_grown", false))
+		var expected_grown_o: bool = cur_day_o2 >= planted_o + WorldConstants.FRUIT_GROW_DAYS
+		if is_grown_o != expected_grown_o:
+			orchard_grown_ok = false
+			orchard_grown_detail = "orchard is_grown mismatch cur %d planted %d is_grown %s expected %s" % [cur_day_o2, planted_o, is_grown_o, expected_grown_o]
+		if orchard_grown_ok:
+			var test_fruit := FruitPatch.new()
+			add_child(test_fruit)
+			var fruit_data: Dictionary = {
+				"id": "test_fruit_advance",
+				"parcel_id": "test_parcel",
+				"fruit_kind": sample_orch.get("fruit_kind", &"apple"),
+				"planted_day": planted_o,
+				"pos": sample_orch.get("pos", Vector2.ZERO),
+				"contents": sample_orch.get("contents", {&"apple":1}),
+			}
+			test_fruit.setup(fruit_data)
+			var before_grown_o: bool = test_fruit.is_grown()
+			if before_grown_o != expected_grown_o:
+				orchard_grown_ok = false
+				orchard_grown_detail = "FruitPatch is_grown mismatch before"
+			else:
+				if before_grown_o:
+					var mock_player_o := Node3D.new()
+					var inv_o := _MockInv.new()
+					mock_player_o.set("inventory", inv_o)
+					test_fruit._on_interacted(mock_player_o)
+					if not test_fruit.is_depleted():
+						orchard_grown_ok = false
+						orchard_grown_detail = "FruitPatch should be depleted after harvest"
+					else:
+						var dep_day_o: int = test_fruit.depleted_at_day
+						GameClock.advance(1440.0)
+						if not test_fruit.is_depleted():
+							orchard_grown_ok = false
+							orchard_grown_detail = "FruitPatch should still be depleted after 1 day"
+						else:
+							GameClock.advance(1440.0)
+							if not test_fruit.is_depleted():
+								orchard_grown_ok = false
+								orchard_grown_detail = "FruitPatch should still be depleted after 2 days"
+							else:
+								GameClock.advance(1440.0 + 10.0)
+								if test_fruit.is_depleted():
+									orchard_grown_ok = false
+									orchard_grown_detail = "FruitPatch should have regrown after 3 days cur %d dep %d" % [GameClock.get_day(), dep_day_o]
+								if not test_fruit.is_grown():
+									orchard_grown_ok = false
+									orchard_grown_detail = "FruitPatch is_grown false after regrow"
+						mock_player_o.queue_free()
+				else:
+					if test_fruit.interactable != null and String(test_fruit.interactable.prompt).find("Growing") == -1:
+						orchard_grown_ok = false
+						orchard_grown_detail = "FruitPatch prompt should be Growing when not grown: %s" % test_fruit.interactable.prompt
+			test_fruit.queue_free()
+			GameClock.total_minutes = float(cur_day_o2 * 1440 + 420)
+	else:
+		orchard_grown_ok = false
+		orchard_grown_detail = "no sample orchard parcel found"
+	_check("FruitPatch is_grown planted+3 and depleted regrow 3d via GameClock.advance", orchard_grown_ok, orchard_grown_detail)
+	var orchard_contig_ok := false
+	var orchard_contig_detail := ""
+	var orchard_best_total := 0
+	for seed in all_seeds:
+		var wpp_o2 := WorldPlan.new(seed)
+		var best_for_seed_o := 0
+		for bx in range(-4, 12):
+			for by in range(-4, 12):
+				var block_total_o := 0
+				for cx in range(bx, bx+4):
+					for cy in range(by, by+4):
+						var rect_o2 := Rect2(Vector2(float(cx)*256, float(cy)*256), Vector2(256,256))
+						var plist_o4: Array[Dictionary] = wpp_o2.orchard_parcels_in(rect_o2)
+						block_total_o += plist_o4.size()
+				if block_total_o > best_for_seed_o:
+					best_for_seed_o = block_total_o
+		orchard_best_total += best_for_seed_o
+	if orchard_best_total >= 5:
+		orchard_contig_ok = true
+		orchard_contig_detail = "best orchard block total %d across 5 seeds" % orchard_best_total
+	else:
+		orchard_contig_detail = "only %d best orchard block parcels across 5 seeds, need >=5" % orchard_best_total
+	_check("orchard parcel contiguity >=6 across 5-seed orchard belt", orchard_contig_ok, orchard_contig_detail)
+	var orchard_dup_ok := true
+	var orchard_dup_detail := ""
+	for c in [Vector2i(0,0), Vector2i(1,0), Vector2i(0,1), Vector2i(-1,0), Vector2i(0,-1)]:
+		var m_a_o: Dictionary = BiomeChunkBuilder.build_manifest(wp, c)
+		var list_a_o: Array = m_a_o.get("orchard_parcel_manifests", [])
+		for parc in list_a_o:
+			var cent_o: Vector2 = (parc as Dictionary).get("center", Vector2.ZERO) as Vector2
+			var owner: Vector2i = WorldSeed.chunk_coord(cent_o.x, cent_o.y)
+			if owner != c:
+				orchard_dup_ok = false
+				orchard_dup_detail = "orchard parcel %s center %s owned by %s not %s" % [parc.get("id",""), cent_o, owner, c]
+				break
+		if not orchard_dup_ok:
+			break
+	var mz0o: Dictionary = BiomeChunkBuilder.build_manifest(wp, Vector2i(0,0))
+	var mz1o: Dictionary = BiomeChunkBuilder.build_manifest(wp, Vector2i(0,-1))
+	var has_dup_zo := false
+	var ids_zo: Dictionary = {}
+	for p in mz0o.get("orchard_parcel_manifests", []) as Array:
+		ids_zo[String((p as Dictionary).get("id",""))] = true
+	for p in mz1o.get("orchard_parcel_manifests", []) as Array:
+		if ids_zo.has(String((p as Dictionary).get("id",""))):
+			has_dup_zo = true
+			break
+	if has_dup_zo:
+		orchard_dup_ok = false
+		orchard_dup_detail = "duplicate orchard parcel id across -Z border"
+	_check("orchard parcel center ownership no duplication + and - and -Z", orchard_dup_ok, orchard_dup_detail)
+	# hedgerow true-mesh not stretched check
+	var hedge_ok := true
+	var hedge_detail := ""
+	for c in orchard_coords:
+		var m_h: Dictionary = orchard_manifests_fwd[c]
+		var instances_h: Array = m_h.get("instances", [])
+		for xf in instances_h:
+			var tr: Transform3D = xf as Transform3D
+			var scl: Vector3 = tr.basis.get_scale()
+			# hedgerow true mesh has scale.x ==2.0 and scale.z==0.4, scale.y in [0.45,0.75]
+			# forest instances have scale around 1.0, so we only check hedgerow-like scales where x==2.0
+			if is_equal_approx(scl.x, 2.0) and is_equal_approx(scl.z, 0.4):
+				if scl.y < 0.44 or scl.y > 0.76:
+					hedge_ok = false
+					hedge_detail = "hedgerow height %.2f not in 0.45-0.75 at %s scl %s" % [scl.y, c, scl]
+					break
+				# ensure not stretched: length should be exactly 2.0, not parcel length *0.9
+				if not is_equal_approx(scl.x, WorldConstants.HEDGEROW_TRUE_LENGTH):
+					hedge_ok = false
+					hedge_detail = "hedgerow stretched scale.x %.2f !=2.0" % scl.x
+					break
+		if not hedge_ok:
+			break
+	_check("hedgerow true-mesh 2.0x0.45-0.75x0.4 not stretched", hedge_ok, hedge_detail)
+	# orchard budgets per chunk
+	var budget_ok := true
+	var budget_detail := ""
+	for c in orchard_coords:
+		var m_b: Dictionary = orchard_manifests_fwd[c]
+		var orch_count: int = int(m_b.get("orchard_parcels", 0))
+		var fruit_count: int = int(m_b.get("fruit_patches", 0))
+		var field_count: int = int(m_b.get("field_parcels", 0))
+		var hedge_field: int = int(m_b.get("field_hedgerow", 0))
+		var hedge_orchard: int = int(m_b.get("orchard_hedgerow", 0))
+		var orch_inst: int = int(m_b.get("orchard_instances", 0))
+		var total_inst: int = int(m_b.get("instance_count", 0))
+		var verts: int = int(m_b.get("biome_vertices", 0))
+		var field_verts: int = int(m_b.get("field_vertices", 0))
+		var tris: int = int(m_b.get("biome_triangles", 0))
+		var field_tris: int = int(m_b.get("field_triangles", 0))
+		if orch_count > 3:
+			budget_ok = false
+			budget_detail = "orchard_parcels %d >3 at %s" % [orch_count, c]
+			break
+		if fruit_count > 3:
+			budget_ok = false
+			budget_detail = "fruit_patches %d >3 at %s" % [fruit_count, c]
+			break
+		if field_count > 4:
+			budget_ok = false
+			budget_detail = "field_parcels %d >4 at %s" % [field_count, c]
+			break
+		if hedge_field > 8:
+			budget_ok = false
+			budget_detail = "field hedgerow %d >8 at %s" % [hedge_field, c]
+			break
+		if hedge_orchard > 6:
+			budget_ok = false
+			budget_detail = "orchard hedgerow %d >6 at %s" % [hedge_orchard, c]
+			break
+		if orch_inst > 12:
+			budget_ok = false
+			budget_detail = "orchard_instances %d >12 at %s" % [orch_inst, c]
+			break
+		if total_inst > 48:
+			budget_ok = false
+			budget_detail = "total instances %d >48 at %s" % [total_inst, c]
+			break
+		if verts != 81:
+			budget_ok = false
+			budget_detail = "biome_vertices %d !=81 at %s" % [verts, c]
+			break
+		if field_verts > 96:
+			budget_ok = false
+			budget_detail = "field_vertices %d >96 at %s" % [field_verts, c]
+			break
+		if tris > 128:
+			budget_ok = false
+			budget_detail = "biome_triangles %d >128 at %s" % [tris, c]
+			break
+		if field_tris > 64:
+			budget_ok = false
+			budget_detail = "field_triangles %d >64 at %s" % [field_tris, c]
+			break
+	_check("orchard budgets per chunk: field <=4 orchard <=3 fruit <=3 hedgerow 8/6 canopy <=12 total <=48 verts 81/96", budget_ok, budget_detail)
+
 	_check("GENERATOR_VERSION stays 2", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
 	# WorldPlan pure check: after queries, second plan gives same height
 	var wp2 := WorldPlan.new(canonical)

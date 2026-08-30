@@ -141,6 +141,18 @@ func nearest_field_parcel(p: Vector2) -> Dictionary:
 func crop_patch_for_parcel(parcel_id: String) -> Dictionary:
 	return biome.crop_patch_for_parcel(parcel_id)
 
+func orchard_parcels_in(rect: Rect2) -> Array[Dictionary]:
+	return biome.orchard_parcels_in(rect)
+
+func orchard_parcels() -> Array[Dictionary]:
+	return biome.orchard_parcels()
+
+func nearest_orchard_parcel(p: Vector2) -> Dictionary:
+	return biome.nearest_orchard_parcel(p)
+
+func fruit_patch_for_parcel(parcel_id: String) -> Dictionary:
+	return biome.fruit_patch_for_parcel(parcel_id)
+
 # --- Settlement forwarding (pure, deterministic) ---
 
 func settlement_anchors() -> Array[Dictionary]:

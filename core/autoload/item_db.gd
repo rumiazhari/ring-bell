@@ -30,6 +30,26 @@ const ITEMS := {
 		"kind": KIND_MEDICAL,
 		"infection_reduction": 0.6,  # fraction of current infection removed
 	},
+	&"apple": {
+		"name": "Apple",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 18.0,
+	},
+	&"plum": {
+		"name": "Plum",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 16.0,
+	},
+	&"pear": {
+		"name": "Pear",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 14.0,
+	},
+	&"cherry": {
+		"name": "Cherry",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 12.0,
+	},
 	&"pipe": {
 		"name": "Steel Pipe",
 		"kind": KIND_WEAPON_MELEE,

@@ -559,3 +559,393 @@ func _parcels_for_cell(cx: int, cy: int) -> Array[Dictionary]:
 	# Ensure deterministic order by id
 	placed.sort_custom(_dict_id_cmp)
 	return placed
+
+# --- Orchard Parcel Cultivation P5.2 ---
+
+func _is_orchard_family(b: StringName) -> bool:
+	return b == &"orchard" or b == &"pasture_orchard"
+
+func _orchard_hash_cell(cx: int, cy: int) -> int:
+	return WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), cx, cy])
+
+func _is_orchard_village_adjacent(cell_center: Vector2) -> bool:
+	if settlement_ref == null:
+		return false
+	var anchors: Array[Dictionary] = settlement_ref.settlement_anchors()
+	for a in anchors:
+		if StringName(str(a.get("kind", ""))) != &"village":
+			continue
+		var c: Vector2 = a.get("center", Vector2.ZERO) as Vector2
+		var r: float = float(a.get("radius", 48.0))
+		var dist := cell_center.distance_to(c)
+		if dist <= r * 1.35:
+			return true
+	return false
+
+func _fruit_kind_for(hash_cell: int, k: int) -> StringName:
+	var r: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel_fruit"), hash_cell, k]) % 1000003) / 1000003.0
+	if r < 0.40:
+		return &"apple"
+	elif r < 0.70:
+		return &"plum"
+	elif r < 0.85:
+		return &"pear"
+	else:
+		return &"cherry"
+
+func _orchard_planted_day_for(hash_cell: int, k: int) -> int:
+	var r: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, 999]) % 1000003) / 1000003.0
+	return int(floor(r * 7.0))
+
+func _orchard_yaw_for(parcel_center: Vector2, hash_cell: int, k: int) -> float:
+	if road_network_ref != null:
+		var dr: float = road_network_ref.distance_to_road(parcel_center)
+		if dr < 40.0:
+			var tang := _nearest_road_tangent(parcel_center)
+			if tang.length_squared() > 1e-6:
+				var ang := atan2(tang.y, tang.x)
+				var q: float = round(ang / (PI * 0.5)) * (PI * 0.5)
+				q = wrapf(q, -PI, PI)
+				if is_equal_approx(absf(q), PI):
+					q = PI
+				return q
+	var r: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel_yaw"), hash_cell, k]) % 1000003) / 1000003.0
+	var idx: int = int(floor(r * 4.0)) % 4
+	match idx:
+		0:
+			return 0.0
+		1:
+			return PI * 0.5
+		2:
+			return PI
+		3:
+			return -PI * 0.5
+		_:
+			return 0.0
+
+func _contents_for_fruit(fruit: StringName) -> Dictionary:
+	match fruit:
+		&"apple":
+			return {&"apple": 1}
+		&"plum":
+			return {&"plum": 1}
+		&"pear":
+			return {&"pear": 1}
+		&"cherry":
+			return {&"cherry": 1}
+		_:
+			return {&"apple": 1}
+
+func _is_grown_orchard(planted_day: int) -> bool:
+	var cur_day: int = 1
+	if GameClock != null:
+		cur_day = GameClock.get_day()
+	return cur_day >= planted_day + WorldConstants.FRUIT_GROW_DAYS
+
+func _orchard_canopy_color(fruit: StringName) -> Color:
+	match fruit:
+		&"apple":
+			return WorldConstants.COL_ORCHARD_APPLE
+		&"plum":
+			return WorldConstants.COL_ORCHARD_PLUM
+		&"pear":
+			return WorldConstants.COL_ORCHARD_PEAR
+		&"cherry":
+			return WorldConstants.COL_ORCHARD_CHERRY
+		_:
+			return WorldConstants.COL_ORCHARD_APPLE
+
+func _orchard_tree_instances_for(parcel: Dictionary) -> Array[Vector3]:
+	var instances: Array[Vector3] = []
+	var center: Vector2 = parcel.get("center", Vector2.ZERO) as Vector2
+	var size: Vector2 = parcel.get("size", Vector2(32, 24)) as Vector2
+	var yaw: float = float(parcel.get("yaw", 0.0))
+	var hash_cell: int = int(parcel.get("_hash_cell", 0))
+	var k_idx: int = int(parcel.get("_k_idx", 0))
+	var tree_rows: int = 3 if size.x < 40.0 else 4
+	var trees_per_row: int
+	if size.y < 30.0:
+		trees_per_row = 3
+	else:
+		var rr: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k_idx, 888]) % 1000003) / 1000003.0
+		trees_per_row = 4 if rr < 0.5 else 5
+	var spacing_x := WorldConstants.ORCHARD_TREE_SPACING
+	var spacing_z := WorldConstants.ORCHARD_ROW_SPACING
+	for r in tree_rows:
+		for c in trees_per_row:
+			var jitter_x: float = (float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k_idx, r, c, 0]) % 1000003) / 1000003.0 - 0.5) * 1.2
+			var jitter_z: float = (float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k_idx, r, c, 1]) % 1000003) / 1000003.0 - 0.5) * 1.2
+			var off_x := (float(c) - float(trees_per_row - 1) * 0.5) * spacing_x + jitter_x
+			var off_z := (float(r) - float(tree_rows - 1) * 0.5) * spacing_z + jitter_z
+			var vec := Vector2(off_x, off_z)
+			if not is_equal_approx(yaw, 0.0):
+				vec = vec.rotated(yaw)
+			var pos2 := center + vec
+			var h: float = terrain.height_at(pos2) + WorldConstants.ORCHARD_PARCEL_LIFT_M
+			instances.append(Vector3(pos2.x, h, pos2.y))
+	return instances
+
+func orchard_parcels_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return out
+	var cx_min := floori(rect.position.x / WorldConstants.LANDSCAPE_CELL_M)
+	var cx_max := floori((rect.position.x + rect.size.x - 0.001) / WorldConstants.LANDSCAPE_CELL_M)
+	var cy_min := floori(rect.position.y / WorldConstants.LANDSCAPE_CELL_M)
+	var cy_max := floori((rect.position.y + rect.size.y - 0.001) / WorldConstants.LANDSCAPE_CELL_M)
+	for cx in range(cx_min, cx_max + 1):
+		for cy in range(cy_min, cy_max + 1):
+			var cell_parcels: Array[Dictionary] = _orchard_parcels_for_cell(cx, cy)
+			for parc in cell_parcels:
+				var center: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+				if rect.has_point(center):
+					out.append(parc)
+	out.sort_custom(_dict_id_cmp)
+	return out
+
+func orchard_parcels() -> Array[Dictionary]:
+	var world_rect := Rect2(Vector2(WorldConstants.WORLD_MIN_M, WorldConstants.WORLD_MIN_M), Vector2(WorldConstants.WORLD_SIZE_M, WorldConstants.WORLD_SIZE_M))
+	return orchard_parcels_in(world_rect)
+
+func nearest_orchard_parcel(p: Vector2) -> Dictionary:
+	var search_rect := Rect2(p - Vector2(512, 512), Vector2(1024, 1024))
+	var candidates: Array[Dictionary] = orchard_parcels_in(search_rect)
+	if candidates.is_empty():
+		candidates = orchard_parcels_in(Rect2(p - Vector2(1500,1500), Vector2(3000,3000)))
+		if candidates.is_empty():
+			return {}
+	var best: Dictionary = {}
+	var best_d := INF
+	for parc in candidates:
+		var c: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+		var d := p.distance_squared_to(c)
+		if d < best_d:
+			best_d = d
+			best = parc
+	return best
+
+func fruit_patch_for_parcel(parcel_id: String) -> Dictionary:
+	var all: Array[Dictionary] = orchard_parcels()
+	for parc in all:
+		if String(parc.get("id", "")) == parcel_id:
+			var pos: Vector2 = parc.get("pos", Vector2.ZERO) as Vector2
+			var center: Vector2 = parc.get("center", pos) as Vector2
+			var aabb: Rect2 = parc.get("aabb", Rect2()) as Rect2
+			var fruit: StringName = parc.get("fruit_kind", &"apple") as StringName
+			var planted: int = int(parc.get("planted_day", 0))
+			var yaw: float = float(parc.get("yaw", 0.0))
+			var contents: Dictionary = _contents_for_fruit(fruit)
+			var cur_day: int = 1
+			if GameClock != null:
+				cur_day = GameClock.get_day()
+			var is_grown: bool = cur_day >= planted + WorldConstants.FRUIT_GROW_DAYS
+			var h: float = terrain.height_at(center) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 0.01
+			var world_pos := Vector3(center.x, h, center.y)
+			return {
+				"id": "fruit_%s" % parcel_id,
+				"parcel_id": parcel_id,
+				"pos": center,
+				"position": world_pos,
+				"aabb": aabb,
+				"fruit_kind": fruit,
+				"kind": fruit,
+				"contents": contents,
+				"planted_day": planted,
+				"yaw": yaw,
+				"is_grown": is_grown,
+				"depleted": false,
+			}
+	return {}
+
+func _orchard_parcels_for_cell(cx: int, cy: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var cell_origin := Vector2(float(cx) * WorldConstants.LANDSCAPE_CELL_M, float(cy) * WorldConstants.LANDSCAPE_CELL_M)
+	var cell_center := cell_origin + Vector2(WorldConstants.LANDSCAPE_CELL_M * 0.5, WorldConstants.LANDSCAPE_CELL_M * 0.5)
+	var cell_rect := Rect2(cell_origin, Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+	if cell_center.length() < WorldConstants.URBAN_INNER_M:
+		return out
+	if not WorldConstants.is_inside_world(cell_center):
+		return out
+	var b_center: StringName = biome_at(cell_center)
+	if not _is_orchard_family(b_center):
+		return out
+	var density: float = WorldSeed.sample_coherent(cell_center, &"orchard_parcel_density", WorldConstants.LANDSCAPE_CELL_M, seed_used)
+	if density < WorldConstants.ORCHARD_DENSITY_MIN:
+		return out
+	var base: int = int(floor(clampf(density, 0.0, 1.0) * 2.0))
+	var village_adj: bool = _is_orchard_village_adjacent(cell_center)
+	if village_adj:
+		base += 1
+	base = clampi(base, 0, WorldConstants.ORCHARD_PARCEL_MAX_PER_LANDSCAPE_CELL)
+	if base <= 0:
+		return out
+	var hash_cell: int = _orchard_hash_cell(cx, cy)
+	var placed: Array[Dictionary] = []
+	var field_for_cell: Array[Dictionary] = _parcels_for_cell(cx, cy)
+	for k in base:
+		var parcel: Dictionary = {}
+		var found := false
+		for attempt in 12:
+			var rx: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, attempt, 0]) % 1000003) / 1000003.0
+			var rz: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, attempt, 1]) % 1000003) / 1000003.0
+			var rw: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, attempt, 2]) % 1000003) / 1000003.0
+			var rh: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, attempt, 3]) % 1000003) / 1000003.0
+			var size := Vector2(lerpf(WorldConstants.ORCHARD_PARCEL_SIZE_MIN.x, WorldConstants.ORCHARD_PARCEL_SIZE_MAX.x, rw), lerpf(WorldConstants.ORCHARD_PARCEL_SIZE_MIN.y, WorldConstants.ORCHARD_PARCEL_SIZE_MAX.y, rh))
+			var cx_pos: float = lerpf(cell_origin.x + size.x * 0.5 + 2.0, cell_origin.x + WorldConstants.LANDSCAPE_CELL_M - size.x * 0.5 - 2.0, rx)
+			var cy_pos: float = lerpf(cell_origin.y + size.y * 0.5 + 2.0, cell_origin.y + WorldConstants.LANDSCAPE_CELL_M - size.y * 0.5 - 2.0, rz)
+			if cx_pos != clampf(cx_pos, cell_origin.x + size.x * 0.5 + 2.0, cell_origin.x + WorldConstants.LANDSCAPE_CELL_M - size.x * 0.5 - 2.0):
+				continue
+			var pos := Vector2(cx_pos, cy_pos)
+			var aabb := Rect2(pos - size * 0.5, size)
+			if aabb.position.x < cell_origin.x + 1.9 or aabb.end.x > cell_origin.x + WorldConstants.LANDSCAPE_CELL_M - 1.9:
+				continue
+			if aabb.position.y < cell_origin.y + 1.9 or aabb.end.y > cell_origin.y + WorldConstants.LANDSCAPE_CELL_M - 1.9:
+				continue
+			if pos.length() < WorldConstants.URBAN_INNER_M:
+				continue
+			var b_at: StringName = biome_at(pos)
+			if not _is_orchard_family(b_at):
+				continue
+			var slope: float = terrain.slope_at(pos)
+			if slope >= WorldConstants.ORCHARD_MAX_SLOPE_DEG + 0.001:
+				continue
+			if terrain.terrain_class_at(pos) == &"cliff":
+				continue
+			if hydrology.water_body_at(pos) != &"":
+				continue
+			if hydrology.is_floodplain(pos):
+				continue
+			var d_water: float = hydrology.distance_to_water(pos)
+			if d_water <= WorldConstants.BANK_W + 2.0:
+				continue
+			if road_network_ref != null:
+				var d_road: float = road_network_ref.distance_to_road(pos)
+				if d_road < WorldConstants.ORCHARD_PARCEL_ROAD_SETBACK - 0.001:
+					continue
+				var near_bridge := false
+				var cand_rect := Rect2(pos - Vector2(16,16), Vector2(32,32))
+				var cands: Array[Dictionary] = hydrology.crossing_candidates(cand_rect)
+				for cand in cands:
+					if bool(cand.get("is_bridge", false)):
+						var cp: Vector2 = cand.get("pos", Vector2.ZERO) as Vector2
+						if pos.distance_to(cp) < 16.0:
+							near_bridge = true
+							break
+				if near_bridge:
+					continue
+			var corners: Array[Vector2] = [aabb.position, Vector2(aabb.end.x, aabb.position.y), Vector2(aabb.position.x, aabb.end.y), aabb.end, pos]
+			var min_h := INF
+			var max_h := -INF
+			for c in corners:
+				var h: float = terrain.height_at(c)
+				min_h = minf(min_h, h)
+				max_h = maxf(max_h, h)
+			if max_h - min_h > WorldConstants.ORCHARD_PARCEL_HEIGHT_VARIANCE_MAX + 0.001:
+				continue
+			var gap_ok := true
+			for other in placed:
+				var other_aabb: Rect2 = other.get("aabb", Rect2()) as Rect2
+				var gap: float = _aabb_gap(aabb, other_aabb)
+				if gap < WorldConstants.ORCHARD_PARCEL_AABB_GAP - 0.001:
+					gap_ok = false
+					break
+			if not gap_ok:
+				continue
+			for fparc in field_for_cell:
+				var f_aabb: Rect2 = fparc.get("aabb", Rect2()) as Rect2
+				var gap2: float = _aabb_gap(aabb, f_aabb)
+				if gap2 < WorldConstants.ORCHARD_PARCEL_AABB_GAP - 0.001:
+					gap_ok = false
+					break
+			if not gap_ok:
+				continue
+			if rural_building_ref != null:
+				var bld_rect := Rect2(pos - Vector2(32,32), Vector2(64,64))
+				var blds: Array[Dictionary] = rural_building_ref.rural_buildings_in(bld_rect)
+				var bld_ok := true
+				for bld in blds:
+					var bld_aabb: Rect2 = bld.get("aabb", Rect2()) as Rect2
+					if bld_aabb.size == Vector2.ZERO:
+						var bld_center_v: Vector2 = bld.get("center", Vector2.ZERO) as Vector2
+						var bld_fp: Vector2 = bld.get("footprint", Vector2(8,8)) as Vector2
+						var bld_yaw_v: float = float(bld.get("yaw", 0.0))
+						var eff := bld_fp
+						if is_equal_approx(absf(bld_yaw_v), PI*0.5):
+							eff = Vector2(bld_fp.y, bld_fp.x)
+						bld_aabb = Rect2(bld_center_v - eff*0.5, eff)
+					var gap3: float = _aabb_gap(aabb, bld_aabb)
+					if gap3 < WorldConstants.ORCHARD_PARCEL_BUILDING_GAP - 0.001:
+						bld_ok = false
+						break
+				if not bld_ok:
+					continue
+				var well_rect := Rect2(pos - Vector2(20,20), Vector2(40,40))
+				var wells: Array[Dictionary] = rural_building_ref.rural_wells_in(well_rect)
+				var forage: Array[Dictionary] = rural_building_ref.rural_forage_patches_in(well_rect)
+				var wf_ok := true
+				for w in wells:
+					var wp: Vector2 = w.get("pos", w.get("center", Vector2.ZERO)) as Vector2
+					if pos.distance_to(wp) < WorldConstants.ORCHARD_WELL_FORAGE_GAP - 0.001:
+						wf_ok = false
+						break
+				if not wf_ok:
+					continue
+				for f in forage:
+					var fp: Vector2 = f.get("pos", f.get("center", Vector2.ZERO)) as Vector2
+					if pos.distance_to(fp) < WorldConstants.ORCHARD_WELL_FORAGE_GAP - 0.001:
+						wf_ok = false
+						break
+				if not wf_ok:
+					continue
+			var yaw: float = _orchard_yaw_for(pos, hash_cell, k)
+			var fruit: StringName = _fruit_kind_for(hash_cell, k)
+			var planted: int = _orchard_planted_day_for(hash_cell, k)
+			var contents: Dictionary = _contents_for_fruit(fruit)
+			var cur_day: int = 1
+			if GameClock != null:
+				cur_day = GameClock.get_day()
+			var is_grown: bool = cur_day >= planted + WorldConstants.FRUIT_GROW_DAYS
+			var growth_stage: StringName = &"harvestable" if is_grown else (&"growing" if cur_day == planted + 1 else &"planted")
+			var landscape_cell := Vector2i(cx, cy)
+			var macro_cell := Vector2i(floori(pos.x / WorldConstants.MACRO_CELL_M), floori(pos.y / WorldConstants.MACRO_CELL_M))
+			var settlement_id := ""
+			if settlement_ref != null:
+				var nearest: Dictionary = settlement_ref.nearest_settlement(pos)
+				if not nearest.is_empty():
+					settlement_id = String(nearest.get("id", ""))
+			var pid: String = "orchard_parcel_%d_%d_%d" % [cx, cy, k]
+			parcel = {
+				"id": pid,
+				"parcel_id": pid,
+				"center": pos,
+				"pos": pos,
+				"aabb": aabb,
+				"biome": b_at,
+				"landscape_cell": landscape_cell,
+				"macro_cell": macro_cell,
+				"fruit_kind": fruit,
+				"kind": fruit,
+				"size": size,
+				"yaw": yaw,
+				"settlement_id": settlement_id,
+				"planted_day": planted,
+				"growth_stage": growth_stage,
+				"is_grown": is_grown,
+				"contents": contents,
+				"_hash_cell": hash_cell,
+				"_k_idx": k,
+			}
+			var tree_instances: Array[Vector3] = _orchard_tree_instances_for(parcel)
+			parcel["tree_instances"] = tree_instances
+			parcel["tree_rows"] = 3 if size.x < 40.0 else 4
+			if size.y < 30.0:
+				parcel["trees_per_row"] = 3
+			else:
+				var rr2: float = float(WorldSeed.combine([seed_used, WorldSeed.str_hash("orchard_parcel"), hash_cell, k, 888]) % 1000003) / 1000003.0
+				parcel["trees_per_row"] = 4 if rr2 < 0.5 else 5
+			found = true
+			break
+		if found:
+			placed.append(parcel)
+	placed.sort_custom(_dict_id_cmp)
+	return placed
