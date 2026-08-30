@@ -2,7 +2,7 @@
 
 **Task fingerprint (SHA256 of AUTOPILOT_TASK.md):** `0d5e02a9e20a5c3ee5c6a75849b71777c03d2c01d116d505f9c65ee7a4e1e9cc`
 **HEAD before:** `54f6c81` (chore: replace Kanban/controller with minimal Architect↔Builder loop)
-**HEAD after:** `c2369db` (fix(terrain): restore authoritative surface 45ae639 + cave-compatible patch)
+**HEAD after:** `fbf985b` (docs BUILD_RESULT) (fix(terrain): restore authoritative surface 45ae639 + cave-compatible patch)
 **Intermediate HEAD:** `4c428b7` (feat G8-M1 cave foundation)
 
 **Implementation summary:**
