@@ -11,6 +11,7 @@ var biome: BiomePlan
 var settlement: SettlementPlan
 var road_network: RoadNetworkPlan
 var rural_building: RuralBuildingPlan
+var cave: CavePlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -21,6 +22,7 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
+	cave = CavePlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	if biome.has_method("set_world_refs"):
 		biome.set_world_refs(settlement, road_network, rural_building)
 
@@ -397,3 +399,24 @@ func nearest_rural_granary(p: Vector2) -> Dictionary:
 
 func granary_for_building(building_id: String) -> Dictionary:
 	return rural_building.granary_for_building(building_id)
+
+# --- Cave entrance forwarding (pure, deterministic) ---
+
+func cave_entrances() -> Array[Dictionary]:
+	return cave.cave_entrances()
+
+func cave_entrances_in(rect: Rect2) -> Array[Dictionary]:
+	return cave.cave_entrances_in(rect)
+
+func nearest_cave_entrance(p: Vector2) -> Dictionary:
+	return cave.nearest_cave_entrance(p)
+
+func cave_entrance_at(p: Vector2) -> Dictionary:
+	var rect := Rect2(p - Vector2(2,2), Vector2(4,4))
+	var cands: Array[Dictionary] = cave.cave_entrances_in(rect)
+	for c in cands:
+		var aabb: Rect2 = c.get("aabb", Rect2()) as Rect2
+		if aabb.has_point(p):
+			return c
+	return nearest_cave_entrance(p) if not cands.is_empty() else {}
+

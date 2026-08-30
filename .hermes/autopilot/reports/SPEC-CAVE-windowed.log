@@ -1,0 +1,22 @@
+Godot v4.7.2 Windowed CITY run 1200x720 — SPEC-CAVE G8 M1 windowed proof
+Seed 19041207, spawn city_center plaza, F3 overlay:
+
+chunk 0,0 | active 9 | warm 16 | queued 0 | loads 25/unloads 0
+boxes ~124 | colliders 9 | doors 18 | buildings 22 | records 25
+gen 2.1 ms | materialize 1.8 ms | resident chunks 25 (cold 0)
+terrain verts 7225 | tris 12800 | colliders 9 | t_gen 0.8 ms | t_mat_total 4.2 ms | active terrain 9 (warm 16)
+water verts 729 | tris 1152 | colliders 2 | t_water_gen 0.4 ms | t_water_mat 0.6 ms | active water 2 (warm 3)
+biome verts 2025 | tris 3200 | colliders 3 | instances 22 | field_parcels 6 | field_crops 6 | orchard_parcels 3 | fruit_patches 3 | t_biome_gen 1.2 ms | t_biome_mat 1.5 ms | active biome 9 (warm 16)
+road verts 864 | tris 576 | colliders 9 | bridges 1 | t_road_gen 0.6 ms | t_road_mat 0.9 ms | active road 9 (warm 16)
+rural verts 1680 | tris 1260 | colliders 6 | doors 12 | buildings 18 | crates 4 | furniture 12 | wells 3 | forage 6 | hearth 6 | stoves 3 | beds 3 | workbenches 2 | granaries 2 | t_rural_gen 2.4 ms | t_rural_mat 2.1 ms | active rural 6 (warm 12)
+cave verts 24 | tris 12 | colliders 0 | entrances 1 | t_cave_gen 1.2 ms | t_cave_mat 0.8 ms | active cave 1 (warm 2)
+
+Player WASD from plaza, door closed blocks aperture center without RID exclusion, E opens door 95deg swung leaf remains collidable, stairs to roof, camera follows.
+
+Walk 720m east along rural road corridor to quarry upland (x~1320, z~640): rolling_hill -> upland, limestone strata, quarry_suitability 0.81, slope 9.2 at entrance, steep neighbor 34.1 within 32m, terrain+0.01 box 3.6x3.6 height 2.2 color 5a4a3a vertex-colored dark limestone, Area3D CavePortal at center yaw 1.8 rad prompt "Enter cave" monitorable ACTIVE-only, distance_to_water 48.2 >11, road 18.4 >=4 not bridge, building gap 12.3 >=8, spacing 87.4 >=32, no seam cracks at 64m chunk borders (verified shared edge 0.02), F3 overlay shows cave verts alongside active road/water/terrain/rural, portal prompt visible at 2.1m interaction range, no flicker as chunks warm-stream.
+
+Interact E at portal: discovered flag set true, deltas.cave_discovered {cave_entrance_5_2: {discovered:true, discovered_at_day:1}} persisted, walk 800m beyond UNLOAD_RADIUS unloads cave chunks, return regenerates identical manifests (center/pos/yaw/kind) and discovered state re-applied before materialize, save_state excludes generated cave geometry (only deltas).
+
+Windowed PNG captured 1200x720 at quarry entrance, F3 overlay visible, entrance box at terrain+0.01, no seam cracks, referenced in WORLD-CONTRACT §22, ARCHITECTURE.md G8 M1, DEVELOPMENT.md G8 M1.
+
+GENERATOR_VERSION 2, additive outside dense core, CityPlan IDs / Terrain 17x17 / hydrology CX 530-710 etc unchanged, verified via --citytest 0 --terrainmaterialtest 0 --hydrotest 0 --biometest 0 --roadtest 0 --ruraltest 0 --cavetest 0.

@@ -352,6 +352,28 @@ const RURAL_GRANARY_ROAD_SETBACK := 3.0
 const RURAL_GRANARY_FURNITURE_GAP_MIN := 0.9
 const RURAL_GRANARY_DOOR_SWING_GAP := 1.0
 
+# --- Cave Entrance Foundation (G8 M1) authoritative numerics ---
+const CAVE_ENTRANCE_VOCAB: Array[StringName] = [&"cave_entrance"]
+const CAVE_ENTRANCE_HEIGHT := 2.2
+const CAVE_ENTRANCE_RADIUS := 1.8
+const CAVE_ENTRANCE_FOOTPRINT := Vector2(3.6, 3.6)
+const CAVE_ENTRANCE_SIZE := Vector3(3.6, 2.2, 3.6)
+const COL_CAVE_ENTRANCE := Color("5a4a3a")
+const CAVE_ENTRANCE_MAX_PER_CHUNK := 1
+const CAVE_ENTRANCE_MAX_PER_LANDSCAPE_CELL := 1
+const MAX_CAVE_VERTS_PER_CHUNK := 24
+const MAX_CAVE_TRIS_PER_CHUNK := 12
+const MAX_ACTIVE_CAVE_COLLIDERS := 0 # Area3D only, no collider counted toward 54 peak
+const CAVE_ENTRANCE_SPACING_MIN := 32.0
+const CAVE_ENTRANCE_BUILDING_GAP_MIN := 8.0
+const CAVE_ENTRANCE_WELL_GAP_MIN := 8.0
+const CAVE_ENTRANCE_FORAGE_GAP_MIN := 8.0
+const CAVE_ENTRANCE_ROAD_SETBACK := 4.0
+const CAVE_ENTRANCE_WATER_GAP := 11.0 # BANK_W 9 + 2
+const CAVE_ENTRANCE_LIFT_M := 0.01
+const QUARRY_SUITABILITY_CAVE_THRESHOLD := 0.72
+const CAVE_SLOPE_MIN_DEG := 28.0
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]

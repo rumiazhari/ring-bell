@@ -77,6 +77,11 @@ var _rural_beds_total := 0
 var _rural_workbenches_total := 0
 var _rural_granaries_total := 0
 var _rural_mat_ms_total := 0.0
+var _cave_vertices_total := 0
+var _cave_triangles_total := 0
+var _cave_colliders_total := 0
+var _cave_entrances_total := 0
+var _cave_mat_ms_total := 0.0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -95,6 +100,7 @@ var _total_water_gen_ms := 0.0          # water manifest generation
 var _total_biome_gen_ms := 0.0          # biome manifest generation
 var _total_road_gen_ms := 0.0           # road manifest generation
 var _total_rural_gen_ms := 0.0          # rural manifest generation
+var _total_cave_gen_ms := 0.0           # cave manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
 
@@ -173,6 +179,12 @@ func reset_stream() -> void:
 	_rural_granaries_total = 0
 	_rural_mat_ms_total = 0.0
 	_total_rural_gen_ms = 0.0
+	_cave_vertices_total = 0
+	_cave_triangles_total = 0
+	_cave_colliders_total = 0
+	_cave_entrances_total = 0
+	_cave_mat_ms_total = 0.0
+	_total_cave_gen_ms = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -313,6 +325,8 @@ func _launch_batch_jobs() -> void:
 			holder["road_gen_ms"] = 0.0
 			holder["rural"] = {}
 			holder["rural_gen_ms"] = 0.0
+			holder["cave"] = {}
+			holder["cave_gen_ms"] = 0.0
 			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
@@ -323,14 +337,15 @@ func _launch_batch_jobs() -> void:
 			var b_gen: float = float(holder.get("biome_gen_ms", 0.0))
 			var r_gen: float = float(holder.get("road_gen_ms", 0.0))
 			var ru_gen: float = float(holder.get("rural_gen_ms", 0.0))
-			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "task_id": -1,
-					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen}
+			var cav_gen: float = float(holder.get("cave_gen_ms", 0.0))
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "cave": holder.get("cave", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "cave_gen_ms": cav_gen}
 		else:
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "cave_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
@@ -384,6 +399,14 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["rural"] = {}
 		holder["rural_gen_ms"] = 0.0
+	if holder.has("cave"):
+		var tcav0 := Time.get_ticks_usec()
+		var cavm := UndergroundChunkBuilder.build_manifest(shared_world, coord)
+		holder["cave"] = cavm
+		holder["cave_gen_ms"] = float(Time.get_ticks_usec() - tcav0) / 1000.0
+	else:
+		holder["cave"] = {}
+		holder["cave_gen_ms"] = 0.0
 	holder["composition"] = composition
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
@@ -435,6 +458,8 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var road_gen_ms: float = float(job.get("road_gen_ms", 0.0))
 		var rural_manifest: Dictionary = {}
 		var rural_gen_ms: float = float(job.get("rural_gen_ms", 0.0))
+		var cave_manifest: Dictionary = {}
+		var cave_gen_ms: float = float(job.get("cave_gen_ms", 0.0))
 		var composition: Dictionary = {}
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
@@ -442,6 +467,7 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			biome_manifest = job.get("biome", {})
 			road_manifest = job.get("road", {})
 			rural_manifest = job.get("rural", {})
+			cave_manifest = job.get("cave", {})
 			composition = job.get("composition", {})
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
@@ -455,14 +481,16 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			road_gen_ms = float(holder.get("road_gen_ms", 0.0))
 			rural_manifest = holder.get("rural", {})
 			rural_gen_ms = float(holder.get("rural_gen_ms", 0.0))
+			cave_manifest = holder.get("cave", {})
+			cave_gen_ms = float(holder.get("cave_gen_ms", 0.0))
 			composition = holder.get("composition", {})
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition, cave_manifest, cave_gen_ms)
 		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}, cave_manifest: Dictionary = {}, cave_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -718,6 +746,45 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				_set_rural_hearth_enabled(chunk_node_ru, coord, true)
 				_set_rural_workbench_enabled(chunk_node_ru, coord, true)
 				_set_rural_granary_enabled(chunk_node_ru, coord, true)
+	# Materialize cave under same chunk if manifest present
+	var cavstats := {}
+	if not cave_manifest.is_empty():
+		# Apply cave_discovered deltas before materialize to keep discovered flag
+		if _records.has(coord):
+			var cave_deltas: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+			var discovered: Dictionary = cave_deltas.get("cave_discovered", {}) as Dictionary
+			if not discovered.is_empty():
+				var cems: Array = cave_manifest.get("cave_entrances", []) as Array
+				var patched_cems: Array[Dictionary] = []
+				for ce in cems:
+					var cd: Dictionary = ce as Dictionary
+					var cid: String = String(cd.get("id",""))
+					if discovered.has(cid):
+						cd = cd.duplicate()
+						cd["discovered"] = true
+						var disc_data: Variant = discovered[cid]
+						if disc_data is Dictionary:
+							cd["discovered_at_day"] = int((disc_data as Dictionary).get("discovered_at_day", -1))
+						else:
+							cd["discovered_at_day"] = -1
+						patched_cems.append(cd)
+					else:
+						patched_cems.append(cd)
+				cave_manifest["cave_entrances"] = patched_cems
+		var chunk_node_cav := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node_cav != null:
+			cavstats = UndergroundChunkBuilder.materialize(chunk_node_cav, cave_manifest)
+			# Apply discovered states after materialize (re-apply deltas before interactability)
+			if _records.has(coord):
+				var deltas_c: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+				var discovered2: Dictionary = deltas_c.get("cave_discovered", {}) as Dictionary
+				if not discovered2.is_empty():
+					_apply_cave_states(chunk_node_cav, coord, discovered2)
+			# ACTIVE-only CavePortal: disable when warm (warm retains mesh but disables Area3D monitorable)
+			if not include_collision:
+				_set_caves_enabled(chunk_node_cav, coord, false)
+			else:
+				_set_caves_enabled(chunk_node_cav, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -765,6 +832,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var rural_beds := int(rustats.get("rural_beds", 0))
 	var rural_workbenches := int(rustats.get("rural_workbenches", rustats.get("workbenches", 0)))
 	var rural_granaries := int(rustats.get("rural_granaries", rustats.get("granaries", 0)))
+	var cave_verts := int(cavstats.get("cave_vertices", 0))
+	var cave_tris := int(cavstats.get("cave_triangles", 0))
+	var cave_cols := int(cavstats.get("cave_colliders", 0))
+	var cave_entrances := int(cavstats.get("cave_entrances", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -836,6 +907,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_stoves_active": rural_stoves if include_collision else 0,
 		"rural_beds_active": rural_beds if include_collision else 0,
 		"rural_manifest": rural_manifest,
+		"cave_vertices": cave_verts,
+		"cave_triangles": cave_tris,
+		"cave_colliders": cave_cols,
+		"cave_entrances": cave_entrances,
+		"cave_manifest": cave_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -853,6 +929,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"road_mat_ms": float(rstats.get("road_mat_ms", 0.0)),
 		"rural_gen_ms": rural_gen_ms,
 		"rural_mat_ms": float(rustats.get("rural_mat_ms", 0.0)),
+		"cave_gen_ms": cave_gen_ms,
+		"cave_mat_ms": float(cavstats.get("cave_mat_ms", 0.0)),
 	}
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
@@ -898,6 +976,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_rural_workbenches_total += rural_workbenches
 	_rural_granaries_total += rural_granaries
 	_rural_mat_ms_total += float(rustats.get("rural_mat_ms", 0.0))
+	_cave_vertices_total += cave_verts
+	_cave_triangles_total += cave_tris
+	_cave_colliders_total += cave_cols
+	_cave_entrances_total += cave_entrances
+	_cave_mat_ms_total += float(cavstats.get("cave_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
@@ -906,6 +989,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_total_biome_gen_ms += biome_gen_ms
 	_total_road_gen_ms += road_gen_ms
 	_total_rural_gen_ms += rural_gen_ms
+	_total_cave_gen_ms += cave_gen_ms
 	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
@@ -977,6 +1061,12 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_rural_granaries_total -= int(rec.get("rural_granaries", rec.get("granaries", 0)))
 		_rural_mat_ms_total -= float(rec.get("rural_mat_ms", 0.0))
 		_total_rural_gen_ms -= float(rec.get("rural_gen_ms", 0.0))
+		_cave_vertices_total -= int(rec.get("cave_vertices", 0))
+		_cave_triangles_total -= int(rec.get("cave_triangles", 0))
+		_cave_colliders_total -= int(rec.get("cave_colliders", 0))
+		_cave_entrances_total -= int(rec.get("cave_entrances", 0))
+		_cave_mat_ms_total -= float(rec.get("cave_mat_ms", 0.0))
+		_total_cave_gen_ms -= float(rec.get("cave_gen_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -1051,6 +1141,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				if biome_node_active != null:
 					_set_field_crops_enabled(biome_node_active, coord, true)
 					_set_fruit_patches_enabled(biome_node_active, coord, true)
+				var cave_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Cave_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if cave_node_active != null:
+					_set_caves_enabled(cave_node_active, coord, true)
 			elif desired_state != &"active" and previous_state == &"active":
 				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_warm != null:
@@ -1064,6 +1157,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				if biome_node_warm != null:
 					_set_field_crops_enabled(biome_node_warm, coord, false)
 					_set_fruit_patches_enabled(biome_node_warm, coord, false)
+				var cave_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Cave_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if cave_node_warm != null:
+					_set_caves_enabled(cave_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -1362,6 +1458,12 @@ func avg_rural_gen_ms() -> float:
 func avg_rural_mat_ms() -> float:
 	return _rural_mat_ms_total / maxf(1.0, float(maxi(1, _rural_vertices_total)))
 
+func avg_cave_gen_ms() -> float:
+	return _total_cave_gen_ms / maxf(1.0, float(_total_loads))
+
+func avg_cave_mat_ms() -> float:
+	return _cave_mat_ms_total / maxf(1.0, float(maxi(1, _cave_vertices_total)))
+
 func is_resident(coord: Vector2i) -> bool:
 	return _chunks.has(coord)
 
@@ -1461,7 +1563,91 @@ func debug_lines() -> Array[String]:
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
 	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | workbenches %d | granaries %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
 			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, _rural_granaries_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
+	lines.append("cave verts %d | tris %d | colliders %d | entrances %d | t_cave_gen %.1f ms | t_cave_mat %.1f ms | active cave %d (warm %d)"
+			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
 	return lines
+
+func _set_caves_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	var cave_node: Node = null
+	if String(parent.name).begins_with("Cave_"):
+		cave_node = parent
+	else:
+		cave_node = parent.get_node_or_null(NodePath("Cave_%d_%d" % [coord.x, coord.y]))
+	if cave_node == null or not is_instance_valid(cave_node):
+		return
+	for child in cave_node.get_children():
+		if child is CavePortal:
+			var portal: CavePortal = child as CavePortal
+			if is_instance_valid(portal) and not portal.is_queued_for_deletion() and portal.is_inside_tree():
+				if portal.has_method("set_active_enabled"):
+					portal.call("set_active_enabled", enabled)
+				else:
+					portal.monitorable = enabled
+					var inter = portal.get("interactable")
+					if inter != null and is_instance_valid(inter):
+						inter.enabled = enabled
+
+func _apply_cave_states(parent: Node, coord: Vector2i, discovered: Dictionary) -> void:
+	var cave_node: Node = parent.get_node_or_null(NodePath("Cave_%d_%d" % [coord.x, coord.y]))
+	if cave_node == null:
+		if parent.name.begins_with("Cave_"):
+			cave_node = parent
+		else:
+			return
+	for child in cave_node.get_children():
+		if child is CavePortal:
+			var cid: String = String(child.name).replace("CavePortal_", "")
+			# child.name is CavePortal_<id>, but cave_id is without prefix
+			var portal_id: String = (child as CavePortal).cave_id
+			if discovered.has(portal_id):
+				(child as CavePortal).load_state(discovered[portal_id] as Dictionary)
+			elif discovered.has(cid):
+				(child as CavePortal).load_state(discovered[cid] as Dictionary)
+			elif discovered.has(String(child.name)):
+				(child as CavePortal).load_state(discovered[String(child.name)] as Dictionary)
+
+func _record_cave_discovered(coord: Vector2i, cave_id: String, state: Dictionary) -> void:
+	if cave_id == "":
+		return
+	note_discovered(coord)
+	var cd: Dictionary = _records[coord]["deltas"].get("cave_discovered", {})
+	cd[cave_id] = state.duplicate()
+	_records[coord]["deltas"]["cave_discovered"] = cd
+
+func _snapshot_resident_caves() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_caves_recursive(node, c)
+
+func _collect_caves_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if child is CavePortal and not (child as CavePortal).is_queued_for_deletion():
+			if String(child.name).begins_with("CavePortal_"):
+				var st: Dictionary = (child as CavePortal).save_state()
+				_record_cave_discovered(coord, (child as CavePortal).cave_id, st)
+		if child.get_child_count() > 0:
+			_collect_caves_recursive(child, coord)
+
+func cave_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("cave_entrances", 0)) > 0:
+			n += 1
+	return n
+
+func cave_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("cave_entrances", 0)) > 0:
+			n += 1
+	return n
+
+func cave_total_count() -> int:
+	return _cave_entrances_total
 
 func terrain_active_count() -> int:
 	var n := 0
@@ -1931,6 +2117,7 @@ func save_state() -> Dictionary:
 	_snapshot_resident_field_crops()
 	_snapshot_resident_fruit_patches()
 	_snapshot_resident_granaries()
+	_snapshot_resident_caves()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]
