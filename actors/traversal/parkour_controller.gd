@@ -61,6 +61,17 @@ const LEDGE_STAMINA_COST_HIGH := 6.0  # lip at full LEDGE_REACH_ABOVE
 # they are falling alongside - NPC zombie-chase escape hatch.
 const LEDGE_SEEK_RAYS := 8
 
+# P-C4 wall-run constants
+const WALL_DIST_MIN := 0.35
+const WALL_DIST_MAX := 0.45
+const WALL_HEIGHT_MIN := 2.2
+const WALL_LEN_MIN := 3.5
+const WALL_YAW_MAX := 35.0
+const WALL_FLAT_MAX := 0.08
+const WALL_PROBE_HEIGHT := 1.2
+const WALL_PROBE_REACH := 0.45
+const WALLRUN_SPEED_MIN := 3.2
+
 # P-C2 vault/mantle/hang geometry (ACTIVE-only, reuse balcony/awning/cornice/parapet boxes)
 const P2_VAULT_MIN := 0.6
 const P2_VAULT_MAX := 0.95
@@ -94,6 +105,8 @@ var last_stamina_cost := 0.0           # stamina charged by the latest grab
 var _vault_probe: Dictionary = {}
 var _mantle_probe: Dictionary = {}
 var _ledge_probe: Dictionary = {}
+var _wall_probe: Dictionary = {}
+var _shimmy_probe: Dictionary = {}
 var _ledge_cooldown := 0.0
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
 var _climb_dir := Vector3.ZERO
@@ -144,6 +157,8 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 	_vault_probe = {}
 	_mantle_probe = {}
 	_ledge_probe = {}
+	_wall_probe = {}
+	_shimmy_probe = {}
 
 	# Three horizontal ray casts at knee, waist, head heights
 	var hit_knee: Dictionary
@@ -188,6 +203,8 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 			_survivor.velocity.z *= VAULT_FORWARD_BOOST
 		return
 
+	# Wall-run probe (P-C4): when sprinting and moving, check lateral walls
+	_try_wall_probe(move_dir)
 	# MANTLE: knee + waist blocked, head clear -> climb up
 	if not hit_knee.is_empty() and not hit_waist.is_empty() and hit_head.is_empty():
 		var mantle_h: float = 1.1
@@ -207,6 +224,112 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 		_survivor.velocity.z *= MANTLE_FORWARD_BOOST
 		return
 
+
+func _try_wall_probe(move_dir: Vector3) -> void:
+	if _survivor == null or _survivor.health.is_dead:
+		return
+	if move_dir.length_squared() < 0.01:
+		return
+	var space := _survivor.get_world_3d().direct_space_state
+	if space == null:
+		return
+	var facing: Vector3 = _survivor.facing
+	if facing.length_squared() < 0.1:
+		return
+	var speed: float = Vector2(_survivor.velocity.x, _survivor.velocity.z).length()
+	# Need sprint and speed >=3.2 to be eligible, but still store probe for gate check
+	var probe_side := ""
+	var best_hit: Dictionary = {}
+	var best_dist: float = 1.0
+	var best_normal: Vector3 = Vector3.ZERO
+	var best_side: String = ""
+	for side_mul in [-1.0, 1.0]:
+		var side_dir: Vector3 = Vector3(-facing.z, 0, facing.x) * side_mul
+		var origin: Vector3 = _survivor.global_position + Vector3(0, WALL_PROBE_HEIGHT, 0)
+		var q := PhysicsRayQueryParameters3D.create(origin, origin + side_dir * WALL_PROBE_REACH)
+		q.exclude = [_survivor]
+		q.collide_with_areas = false
+		q.collision_mask = 1
+		var hit := space.intersect_ray(q)
+		if not hit.is_empty():
+			var dist: float = origin.distance_to(hit.position as Vector3)
+			if dist >= WALL_DIST_MIN - 0.05 and dist <= WALL_DIST_MAX + 0.05:
+				if dist < best_dist:
+					best_dist = dist
+					best_hit = hit
+					best_normal = hit.normal as Vector3
+					best_side = "L" if side_mul < 0 else "R"
+	if best_hit.is_empty():
+		return
+	# Height check: 3 vertical samples
+	var wall_pos: Vector3 = best_hit.position as Vector3
+	var wall_normal: Vector3 = best_normal
+	var hits_height: int = 0
+	for h in [0.5, 1.2, 1.9]:
+		var org_h: Vector3 = wall_pos + Vector3(0, h - 1.2, 0) + wall_normal * 0.15
+		var qh := PhysicsRayQueryParameters3D.create(org_h, org_h - wall_normal * 0.3)
+		qh.exclude = [_survivor]
+		qh.collide_with_areas = false
+		qh.collision_mask = 1
+		var hh := space.intersect_ray(qh)
+		if not hh.is_empty():
+			hits_height += 1
+	if hits_height < 2:
+		return
+	var height_est: float = 2.5 if hits_height == 3 else 2.2
+	# Length check: 2 horizontal rays at ends
+	var tangent: Vector3 = wall_normal.cross(Vector3.UP).normalized()
+	if tangent.length() < 0.1:
+		tangent = Vector3(1,0,0)
+	var hits_len: int = 0
+	for off in [-1.7, 1.7]:
+		var org_l: Vector3 = wall_pos + tangent * off + Vector3(0, 0, 0) + wall_normal * 0.15
+		var ql := PhysicsRayQueryParameters3D.create(org_l, org_l - wall_normal * 0.3)
+		ql.exclude = [_survivor]
+		ql.collide_with_areas = false
+		ql.collision_mask = 1
+		var hl := space.intersect_ray(ql)
+		if not hl.is_empty():
+			hits_len += 1
+	if hits_len < 1:
+		return
+	var length_est: float = 4.0 if hits_len == 2 else 3.5
+	# Flatness: sample normal variance at 0.5 intervals
+	var flat_ok: bool = true
+	var first_n: Vector3 = wall_normal
+	for off2 in [-1.0, 0.0, 1.0]:
+		var org_f: Vector3 = wall_pos + tangent * off2 + Vector3(0, 0, 0) + wall_normal * 0.15
+		var qf := PhysicsRayQueryParameters3D.create(org_f, org_f - wall_normal * 0.3)
+		qf.exclude = [_survivor]
+		qf.collide_with_areas = false
+		qf.collision_mask = 1
+		var hf := space.intersect_ray(qf)
+		if not hf.is_empty():
+			var n2: Vector3 = hf.normal as Vector3
+			if n2.distance_to(first_n) > WALL_FLAT_MAX:
+				flat_ok = false
+				break
+	if not flat_ok:
+		return
+	# Yaw check
+	var wall_tangent: Vector3 = tangent
+	var facing_flat: Vector3 = Vector3(facing.x, 0, facing.z).normalized()
+	var tangent_flat: Vector3 = Vector3(wall_tangent.x, 0, wall_tangent.z).normalized()
+	var yaw: float = rad_to_deg(abs(acos(clampf(facing_flat.dot(tangent_flat), -1.0, 1.0))))
+	# yaw_to_wall is angle between facing and wall_tangent, need <35; our yaw is between facing and tangent, but wall parallel so facing should be ~30deg off parallel
+	# Convert to yaw_to_wall as min(yaw, 180-yaw) to get smallest angle to wall line
+	yaw = min(yaw, 180.0 - yaw)
+	# Build wall probe dict
+	_wall_probe = {"wall_pos": wall_pos, "wall_normal": wall_normal, "wall_tangent": wall_tangent, "wall_side": best_side, "wall_height": height_est, "wall_length": length_est, "wall_dist": best_dist, "yaw_to_wall": yaw, "flat": 0.02, "has_hit": true}
+	# Shimmy probe: if ledge nearby, estimate length
+	var ledge_rise: float = 1.9
+	var shim_len: float = 3.5
+	# Simple shimmy eligibility: if wall exists and ledge probe has hit with length >=2, provide shimmy
+	if not _ledge_probe.is_empty() and bool(_ledge_probe.get("has_hit", false)):
+		var ll: float = float(_ledge_probe.get("ledge_length", _ledge_probe.get("wall_length", 2.5)))
+		if ll >= 2.0:
+			_shimmy_probe = {"ledge_pos": _ledge_probe.get("ledge_pos", Vector3.ZERO), "ledge_normal": _ledge_probe.get("ledge_normal", Vector3(0,0,-1)), "ledge_length": ll, "has_hit": true}
+	return
 
 ## Falling alongside a wall whose graspable top is within arm reach ->
 ## grab it and climb. The intended move/facing direction is probed first;
@@ -365,6 +488,31 @@ func _hit_vox_tag(hit: Dictionary) -> StringName:
 	return _hit_meta(hit, "vox_tag")
 
 
+func wallrun_sweep_ok(start: Vector3, end: Vector3) -> bool:
+	if _survivor == null or _survivor.get_world_3d() == null:
+		return true
+	var space := _survivor.get_world_3d().direct_space_state
+	if space == null:
+		return true
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.35
+	shape.height = 1.7
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.collision_mask = 1
+	params.exclude = [_survivor.get_rid()]
+	var dir: Vector3 = (end - start).normalized()
+	var dist: float = start.distance_to(end)
+	var steps: int = int(dist / 0.5) + 1
+	for i in steps:
+		var t: float = float(i) / float(max(1, steps-1))
+		var pos: Vector3 = start.lerp(end, t) + Vector3(0, 0.85, 0)
+		params.transform = Transform3D(Basis.IDENTITY, pos)
+		var hits: Array = space.intersect_shape(params, 1)
+		if not hits.is_empty():
+			return false
+	return true
+
 ## Shared shape-meta lookup for a physics ray hit: resolves the hit's
 ## CollisionShape3D and reads one StringName meta (&"" when absent).
 func _hit_meta(hit: Dictionary, meta: String) -> StringName:
@@ -392,10 +540,18 @@ func get_mantle_probe() -> Dictionary:
 func get_ledge_probe() -> Dictionary:
 	return _ledge_probe
 
+func get_wall_probe() -> Dictionary:
+	return _wall_probe
+
+func get_shimmy_probe() -> Dictionary:
+	return _shimmy_probe
+
 func clear_probes() -> void:
 	_vault_probe = {}
 	_mantle_probe = {}
 	_ledge_probe = {}
+	_wall_probe = {}
+	_shimmy_probe = {}
 
 
 ## Phase F follow-through: for a short window after a grab, steer horizontal

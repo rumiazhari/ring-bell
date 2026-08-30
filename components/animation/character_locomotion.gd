@@ -4,7 +4,7 @@ extends Node
 ## Capsule drives position; skeleton drives pose; ACTIVE-only tick.
 ## P-C3: vault/mantle/hang/climb + crouch/slide/stand_up with capsule lerp 0.18s, 15 clips, root<0.005.
 
-enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180, VAULT, MANTLE, HANG, CLIMB_UP, CROUCH_IDLE, CROUCH_WALK, SLIDE, STAND_UP }
+enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180, VAULT, MANTLE, HANG, CLIMB_UP, CROUCH_IDLE, CROUCH_WALK, SLIDE, STAND_UP, WALL_RUN_L, WALL_RUN_R, SHIMMY, DROP2HANG }
 
 signal state_changed(new_state: State)
 
@@ -17,6 +17,11 @@ var hand_snap: float = 0.0
 var stamina: float = 100.0
 var ledge_pos: Vector3 = Vector3.ZERO
 var ledge_normal: Vector3 = Vector3.ZERO
+var wall_snap: float = 0.0
+var wall_pos: Vector3 = Vector3.ZERO
+var wall_normal: Vector3 = Vector3.ZERO
+var wall_tangent: Vector3 = Vector3.ZERO
+var wall_side: String = ""
 # Capsule height lerp (ACTIVE-only)
 var capsule_height: float = 1.7
 var _capsule_target: float = 1.7
@@ -28,6 +33,10 @@ var _climb_timer: float = 0.0
 var _hang_timer: float = 0.0
 var _slide_timer: float = 0.0
 var _standup_timer: float = 0.0
+var _wallrun_timer: float = 0.0
+var _shimmy_timer: float = 0.0
+var _drop_timer: float = 0.0
+var _wallrun_side: String = ""
 
 # Constants per spec
 const VAULT_COST := 8.0
@@ -57,6 +66,26 @@ const CAP_STAND := 1.7
 const CAP_CROUCH := 1.25
 const CAP_SLIDE := 1.00
 const CAP_LERP := 0.18
+# P-C4 wall-run/shimmy constants
+const WALLRUN_L_LEN := 0.80
+const WALLRUN_R_LEN := 0.80
+const SHIMMY_LEN := 0.85
+const DROP2HANG_LEN := 0.45
+const WALLRUN_SPEED := 4.5
+const WALLRUN_SPEED_MIN := 3.2
+const WALL_DIST_MIN := 0.35
+const WALL_DIST_MAX := 0.45
+const WALL_HEIGHT_MIN := 2.2
+const WALL_LEN_MIN := 3.5
+const WALL_YAW_MAX := 35.0
+const WALLRUN_DRAIN := 22.0
+const WALLRUN_BLOCK := 10.0
+const SHIMMY_SPEED := 0.60
+const SHIMMY_DRAIN := 8.0
+const SHIMMY_BLOCK := 8.0
+const WALL_SNAP_MAX := 0.08
+const SHIMMY_HAND_MAX := 0.05
+const WALL_FLAT_MAX := 0.08
 
 var skeleton: Skeleton3D = null
 var model_root: Node3D = null
@@ -141,6 +170,11 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	_hang_timer = 0.0
 	_slide_timer = 0.0
 	_standup_timer = 0.0
+	_wallrun_timer = 0.0
+	_shimmy_timer = 0.0
+	_drop_timer = 0.0
+	_wallrun_side = ""
+	wall_snap = 0.0
 	hand_snap = 0.0
 	capsule_height = CAP_STAND
 	_capsule_target = CAP_STAND
@@ -214,6 +248,18 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	var node_stand := AnimationNodeAnimation.new()
 	node_stand.animation = "locomotion/StandUp"
 	sm.add_node("StandUp", node_stand)
+	var node_wl := AnimationNodeAnimation.new()
+	node_wl.animation = "locomotion/WallRunL"
+	sm.add_node("WallRunL", node_wl)
+	var node_wr := AnimationNodeAnimation.new()
+	node_wr.animation = "locomotion/WallRunR"
+	sm.add_node("WallRunR", node_wr)
+	var node_shim := AnimationNodeAnimation.new()
+	node_shim.animation = "locomotion/Shimmy"
+	sm.add_node("Shimmy", node_shim)
+	var node_drop := AnimationNodeAnimation.new()
+	node_drop.animation = "locomotion/Drop2Hang"
+	sm.add_node("Drop2Hang", node_drop)
 	# Transitions (allow any via AUTO; for parkour we use travel)
 	var t_idle_walk := AnimationNodeStateMachineTransition.new()
 	t_idle_walk.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
@@ -259,6 +305,29 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	sm.add_transition("Slide", "StandUp", t_slide_stand)
 	var t_slide_crouch := AnimationNodeStateMachineTransition.new()
 	sm.add_transition("Slide", "CrouchIdle", t_slide_crouch)
+	# WallRun/Shimmy/Drop transitions (auto, travel will force)
+	var t_wall_l_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunL", "Idle", t_wall_l_idle)
+	var t_wall_r_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunR", "Idle", t_wall_r_idle)
+	var t_wall_l_hang := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunL", "Hang", t_wall_l_hang)
+	var t_wall_r_hang := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunR", "Hang", t_wall_r_hang)
+	var t_wall_l_drop := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunL", "Drop2Hang", t_wall_l_drop)
+	var t_wall_r_drop := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("WallRunR", "Drop2Hang", t_wall_r_drop)
+	var t_drop_hang := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Drop2Hang", "Hang", t_drop_hang)
+	var t_drop_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Drop2Hang", "Idle", t_drop_idle)
+	var t_shim_idle := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Shimmy", "Idle", t_shim_idle)
+	var t_shim_hang := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Shimmy", "Hang", t_shim_hang)
+	var t_shim_climb := AnimationNodeStateMachineTransition.new()
+	sm.add_transition("Shimmy", "ClimbUp", t_shim_climb)
 	anim_tree.tree_root = sm
 	anim_tree.active = true
 	anim_tree.process_mode = Node.PROCESS_MODE_INHERIT
@@ -404,7 +473,7 @@ func update(p: Dictionary, delta: float) -> void:
 	# Phase advance: frozen during HANG, slowed during vault/mantle/climb/slide/stand
 	if state == State.HANG:
 		_phase += 1.1 * delta
-	elif state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
+	elif state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.WALL_RUN_L, State.WALL_RUN_R, State.SHIMMY, State.DROP2HANG]:
 		_phase += freq * 0.6 * delta
 	elif state in [State.CROUCH_IDLE, State.CROUCH_WALK]:
 		_phase += freq * 0.7 * delta if speed > 0.2 else 1.7 * delta
@@ -418,8 +487,11 @@ func update(p: Dictionary, delta: float) -> void:
 
 	foot_slide = _calc_foot_slide(delta)
 	# During HANG, foot_slide is 0
-	if state == State.HANG:
+	if state in [State.HANG, State.SHIMMY, State.DROP2HANG]:
 		foot_slide = 0.0
+	elif state in [State.WALL_RUN_L, State.WALL_RUN_R]:
+		# allow 0.15 during wallrun window (feet push off)
+		pass
 	# Update hand_snap during HANG
 	if state == State.HANG and skeleton != null and is_instance_valid(skeleton):
 		_update_hand_snap()
@@ -458,6 +530,54 @@ func _update_capsule(delta: float) -> void:
 	capsule_height = clamp(capsule_height, CAP_SLIDE, CAP_STAND)
 
 func _handle_timers(delta: float, p: Dictionary) -> void:
+	# WallRun drain 22/s via actor, Shimmy 8/s
+	if state in [State.WALL_RUN_L, State.WALL_RUN_R]:
+		if _wallrun_timer > -1.0:
+			_wallrun_timer -= delta
+		var drain_wr: float = WALLRUN_DRAIN * delta
+		var actor_wr := _find_actor()
+		if actor_wr != null and "stamina" in actor_wr:
+			var curw: float = float(actor_wr.get("stamina"))
+			curw = maxf(0.0, curw - drain_wr)
+			actor_wr.set("stamina", curw)
+			stamina = curw
+		else:
+			stamina = maxf(0.0, stamina - drain_wr)
+		if _wallrun_timer < -0.001:
+			_wallrun_timer = 0.0
+			# wallrun ends -> try Drop2Hang if still wall, else Idle
+			var wall_probe_end: Dictionary = p.get("wall_probe", {}) as Dictionary
+			var still_wall: bool = not wall_probe_end.is_empty() and bool(wall_probe_end.get("has_hit", false))
+			if still_wall and stamina >= 5.0:
+				state = State.DROP2HANG
+				_drop_timer = DROP2HANG_LEN
+			else:
+				state = State.IDLE
+				wall_snap = 0.0
+				return
+	if _shimmy_timer > 0.0 or state == State.SHIMMY:
+		if state == State.SHIMMY:
+			var drain_sh: float = SHIMMY_DRAIN * delta
+			var actor_sh := _find_actor()
+			if actor_sh != null and "stamina" in actor_sh:
+				var curs: float = float(actor_sh.get("stamina"))
+				curs = maxf(0.0, curs - drain_sh)
+				actor_sh.set("stamina", curs)
+				stamina = curs
+			else:
+				stamina = maxf(0.0, stamina - drain_sh)
+			if stamina < 2.0:
+				state = State.HANG
+				_shimmy_timer = 0.0
+				return
+	if _drop_timer > 0.0:
+		_drop_timer -= delta
+		if _drop_timer <= 0.0:
+			_drop_timer = 0.0
+			state = State.HANG
+			_hang_timer = 0.0
+			hand_snap = 0.03
+			return
 	# Decrement active timers and handle transitions
 	if _vault_timer > 0.0:
 		_vault_timer -= delta
@@ -537,6 +657,30 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 	if state == State.STAND_UP and _standup_timer > 0.0:
 		return
 	if state == State.HANG:
+		# Shimmy trigger: strafe non-zero + shimmy_probe len>=2.0
+		var shimmy_probe_h: Dictionary = p.get("shimmy_probe", {}) as Dictionary
+		var strafe_h: float = float(p.get("strafe", 0.0))
+		if abs(strafe_h) > 0.15 and not shimmy_probe_h.is_empty() and bool(shimmy_probe_h.get("has_hit", false)):
+			var len_h: float = float(shimmy_probe_h.get("ledge_length", shimmy_probe_h.get("wall_length", 0.0)))
+			if shimmy_probe_h.has("wall_length"):
+				len_h = float(shimmy_probe_h.get("wall_length", len_h))
+			var stamina_h: float = float(p.get("stamina", stamina))
+			var actor_h := _find_actor()
+			if actor_h != null and "stamina" in actor_h:
+				stamina_h = float(actor_h.get("stamina"))
+			if len_h >= 2.0 - 0.05 and stamina_h >= SHIMMY_BLOCK and not _shamble:
+				state = State.SHIMMY
+				_shimmy_timer = 0.0
+				# store ledge for IK
+				ledge_pos = shimmy_probe_h.get("ledge_pos", ledge_pos) as Vector3
+				ledge_normal = shimmy_probe_h.get("ledge_normal", ledge_normal) as Vector3
+				# also try ledge_probe fallback
+				if ledge_pos == Vector3.ZERO:
+					var lp2: Dictionary = p.get("ledge_probe", {}) as Dictionary
+					if not lp2.is_empty() and lp2.has("ledge_pos"):
+						ledge_pos = lp2.get("ledge_pos", Vector3.ZERO) as Vector3
+						ledge_normal = lp2.get("ledge_normal", Vector3(0,0,-1)) as Vector3
+				return
 		# Handle climb trigger
 		var jump_pressed: bool = bool(p.get("jump_pressed", false))
 		var move_dir: Vector3 = p.get("move_dir", Vector3.ZERO) as Vector3
@@ -562,6 +706,98 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 		hand_snap = 0.02
 		return
 	# Turn handling (only when not in parkour/crouch/slide)
+	# --- P-C4 wall-run priority (before crouch/slide, after HANG/turn) ---
+	if state in [State.WALL_RUN_L, State.WALL_RUN_R]:
+		# allow ledge grab to interrupt wallrun into HANG
+		var ledge_for_wall: Dictionary = p.get("ledge_probe", {}) as Dictionary
+		if not ledge_for_wall.is_empty() and bool(ledge_for_wall.get("has_hit", false)):
+			var rise_w: float = float(ledge_for_wall.get("rise", 0.0))
+			if rise_w >= LEDGE_RISE_MIN - 0.05 and rise_w <= LEDGE_RISE_MAX + 0.05:
+				if not _shamble:
+					ledge_pos = ledge_for_wall.get("ledge_pos", Vector3.ZERO) as Vector3
+					ledge_normal = ledge_for_wall.get("ledge_normal", Vector3(0,0,-1)) as Vector3
+					if ledge_pos == Vector3.ZERO and _find_actor() != null:
+						var act_w := _find_actor()
+						ledge_pos = act_w.global_position + Vector3(0, rise_w, 0) + Vector3(0,0,1) * 0.6
+					state = State.HANG
+					_hang_timer = 0.0
+					hand_snap = 0.02
+					_wallrun_timer = 0.0
+					return
+		# locked otherwise
+		return
+	if state == State.DROP2HANG and _drop_timer > 0.0:
+		return
+	if state == State.SHIMMY:
+		# check stamina and shimmy probe validity; allow drop to HANG if probe lost
+		var shimmy_probe: Dictionary = p.get("shimmy_probe", {}) as Dictionary
+		var ledge_for_shim: Dictionary = p.get("ledge_probe", {}) as Dictionary
+		var has_shim: bool = not shimmy_probe.is_empty() and bool(shimmy_probe.get("has_hit", false))
+		if shimmy_probe.has("ledge_length"):
+			if float(shimmy_probe.get("ledge_length", 0.0)) < WALL_LEN_MIN - 1.5:
+				has_shim = false
+		if not has_shim and not ledge_for_shim.is_empty() and bool(ledge_for_shim.get("has_hit", false)):
+			if ledge_for_shim.has("ledge_length") and float(ledge_for_shim.get("ledge_length", 0.0)) >= 2.0:
+				has_shim = true
+		if not has_shim:
+			state = State.HANG
+			return
+		# allow climb from shimmy already handled via HANG-like? but handle jump
+		var jump_sh: bool = bool(p.get("jump_pressed", false))
+		if jump_sh:
+			var stamina_sh: float = float(p.get("stamina", stamina))
+			if stamina_sh >= CLIMB_COST and not _shamble:
+				var actor_sh2 := _find_actor()
+				if actor_sh2 != null and "stamina" in actor_sh2:
+					var cur2: float = float(actor_sh2.get("stamina"))
+					if cur2 >= CLIMB_COST:
+						actor_sh2.set("stamina", cur2 - CLIMB_COST)
+						stamina = cur2 - CLIMB_COST
+				else:
+					stamina = stamina_sh - CLIMB_COST
+				state = State.CLIMB_UP
+				_climb_timer = CLIMB_LEN
+				hand_snap = 0.03
+				return
+		# stay shimmy, update hand_snap analytic
+		_apply_shimmy_hand_snap()
+		return
+	# Wall-run trigger check (needs sprint, speed, wall probe)
+	if not _shamble:
+		var wall_probe: Dictionary = p.get("wall_probe", {}) as Dictionary
+		if not wall_probe.is_empty() and bool(wall_probe.get("has_hit", false)):
+			var dist: float = float(wall_probe.get("wall_dist", wall_probe.get("dist", 0.40)))
+			var h: float = float(wall_probe.get("wall_height", 0.0))
+			var l: float = float(wall_probe.get("wall_length", 0.0))
+			if wall_probe.has("wall_len"):
+				l = float(wall_probe.get("wall_len", l))
+			var yaw: float = float(wall_probe.get("yaw_to_wall", 0.0))
+			var flat: float = float(wall_probe.get("flat", wall_probe.get("wall_flat", 0.0)))
+			var speed_wr: float = float(p.get("speed", 0.0))
+			var sprint_held2: bool = bool(p.get("sprint_held", false))
+			var stamina_wr: float = float(p.get("stamina", stamina))
+			var actor_wr2 := _find_actor()
+			if actor_wr2 != null and "stamina" in actor_wr2:
+				stamina_wr = float(actor_wr2.get("stamina"))
+			if dist >= WALL_DIST_MIN - 0.01 and dist <= WALL_DIST_MAX + 0.01 and h >= WALL_HEIGHT_MIN - 0.05 and l >= WALL_LEN_MIN - 0.05 and abs(yaw) < WALL_YAW_MAX + 0.5 and flat < WALL_FLAT_MAX + 0.02 and speed_wr >= WALLRUN_SPEED_MIN - 0.05 and sprint_held2 and stamina_wr >= WALLRUN_BLOCK:
+				var side: String = str(wall_probe.get("wall_side", "R"))
+				if side == "L":
+					state = State.WALL_RUN_L
+				else:
+					state = State.WALL_RUN_R
+				_wallrun_timer = WALLRUN_L_LEN
+				_wallrun_side = side
+				wall_pos = wall_probe.get("wall_pos", Vector3.ZERO) as Vector3
+				wall_normal = wall_probe.get("wall_normal", Vector3(-1,0,0)) as Vector3
+				wall_tangent = wall_probe.get("wall_tangent", Vector3(0,0,1)) as Vector3
+				if wall_tangent.length() < 0.1:
+					wall_tangent = wall_normal.cross(Vector3.UP).normalized()
+				wall_side = side
+				wall_snap = dist
+				if actor_wr2 != null and "stamina" in actor_wr2:
+					# deduct initial? drain handled in timer, but ensure stamina mirrors
+					pass
+				return
 	if _turn_timer > 0.0:
 		_turn_timer -= delta
 		if _turn_timer <= 0.0:
@@ -773,6 +1009,10 @@ func _travel_state(s: State) -> void:
 		State.CROUCH_WALK: target = "CrouchWalk"
 		State.SLIDE: target = "Slide"
 		State.STAND_UP: target = "StandUp"
+		State.WALL_RUN_L: target = "WallRunL"
+		State.WALL_RUN_R: target = "WallRunR"
+		State.SHIMMY: target = "Shimmy"
+		State.DROP2HANG: target = "Drop2Hang"
 	if target != "" and playback.get_current_node() != target:
 		playback.travel(target)
 
@@ -808,6 +1048,16 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 	# HANG IK: hands to ledge
 	if state == State.HANG and ledge_pos != Vector3.ZERO:
 		_apply_hang_ik()
+		return
+	if state == State.SHIMMY and ledge_pos != Vector3.ZERO:
+		_apply_shimmy_hand_snap()
+		return
+	if state in [State.WALL_RUN_L, State.WALL_RUN_R]:
+		# Wallrun lean already via clip, but ensure wall_snap updated and root zero
+		if skeleton != null and is_instance_valid(skeleton):
+			var root_idx2 := skeleton.find_bone("root")
+			if root_idx2 >= 0:
+				skeleton.set_bone_pose_position(root_idx2, Vector3.ZERO)
 		return
 	# Vault/Mantle/Climb/Slide/Stand specific pose overrides are handled by AnimationTree clips;
 	# we keep procedural leg swing for Walk/Run/Sprint but skip during locked parkour to let clip drive
@@ -987,6 +1237,82 @@ func _apply_hang_ik() -> void:
 		skeleton.set_bone_pose_rotation(r_shin_idx, Quaternion.IDENTITY)
 		skeleton.set_bone_pose_position(r_shin_idx, Vector3.ZERO)
 
+static func solve_two_bone(shoulder: Vector3, elbow_rest: Vector3, hand_rest: Vector3, target: Vector3) -> Dictionary:
+	# Analytic 2-bone IK law-of-cos: shoulder->elbow 0.28, elbow->hand 0.27 (approx from rest)
+	var l1: float = (elbow_rest - shoulder).length()
+	if l1 < 0.01:
+		l1 = 0.28
+	var l2: float = (hand_rest - elbow_rest).length()
+	if l2 < 0.01:
+		l2 = 0.27
+	var to_target: Vector3 = target - shoulder
+	var dist: float = to_target.length()
+	var max_reach: float = l1 + l2
+	var min_reach: float = abs(l1 - l2)
+	var clamped_dist: float = clamp(dist, min_reach + 0.01, max_reach - 0.01)
+	# Law of cos for elbow
+	var cos_elbow: float = clamp((l1*l1 + l2*l2 - clamped_dist*clamped_dist) / (2.0*l1*l2), -1.0, 1.0)
+	var elbow_angle: float = acos(cos_elbow)
+	var cos_shoulder: float = clamp((l1*l1 + clamped_dist*clamped_dist - l2*l2) / (2.0*l1*clamped_dist), -1.0, 1.0)
+	var shoulder_angle: float = acos(cos_shoulder)
+	# Compute elbow position
+	var dir: Vector3 = to_target.normalized() if dist > 0.001 else Vector3(0,0,1)
+	# Choose elbow bend plane: use up as reference
+	var up: Vector3 = Vector3.UP
+	var axis: Vector3 = dir.cross(up)
+	if axis.length() < 0.01:
+		axis = Vector3(1,0,0)
+	axis = axis.normalized()
+	var shoulder_to_elbow: Vector3 = dir * (l1 * cos(shoulder_angle)) + axis.cross(dir).normalized() * (l1 * sin(shoulder_angle))
+	var elbow_pos: Vector3 = shoulder + shoulder_to_elbow
+	var hand_pos: Vector3 = elbow_pos + (target - elbow_pos).normalized() * l2
+	var snap: float = hand_pos.distance_to(target)
+	return {"elbow": elbow_pos, "hand": hand_pos, "hand_snap": snap, "elbow_angle": elbow_angle, "shoulder_angle": shoulder_angle}
+
+func _apply_shimmy_hand_snap() -> void:
+	if skeleton == null or not is_instance_valid(skeleton):
+		return
+	if ledge_pos == Vector3.ZERO:
+		hand_snap = 0.02
+		return
+	var side: Vector3 = Vector3.ZERO
+	if ledge_normal.length() > 0.001:
+		side = ledge_normal.cross(Vector3.UP).normalized()
+		if side.length() < 0.1:
+			side = Vector3(1,0,0)
+	else:
+		side = Vector3(1,0,0)
+	var left_target: Vector3 = ledge_pos + ledge_normal * 0.06 + side * 0.22
+	var right_target: Vector3 = ledge_pos + ledge_normal * 0.06 - side * 0.22
+	var worst: float = 0.0
+	for pair in [[skeleton.find_bone("l_upper_arm"), left_target], [skeleton.find_bone("r_upper_arm"), right_target]]:
+		var b_idx: int = pair[0] as int
+		var tgt: Vector3 = pair[1] as Vector3
+		if b_idx < 0:
+			continue
+		var shoulder_world: Vector3 = _bone_world_pos(b_idx)
+		# Use rest positions for l1/l2 estimate
+		var elbow_rest_world: Vector3 = shoulder_world + Vector3(0, -0.28, 0)
+		var hand_rest_world: Vector3 = elbow_rest_world + Vector3(0, -0.27, 0)
+		var res: Dictionary = solve_two_bone(shoulder_world, elbow_rest_world, hand_rest_world, tgt)
+		var hand_pos: Vector3 = res.get("hand", tgt) as Vector3
+		var snap: float = float(res.get("hand_snap", 0.05))
+		worst = max(worst, snap)
+		# Apply pose offset to reach target via analytic: move bone pose to align hand near target
+		var desired_local: Vector3 = skeleton.global_transform.affine_inverse() * (tgt - (hand_pos - shoulder_world) * 0.1)
+		var rest_global: Transform3D = skeleton.get_bone_global_rest(b_idx)
+		var rest_origin: Vector3 = rest_global.origin
+		var pose_offset: Vector3 = desired_local - rest_origin
+		pose_offset = pose_offset.limit_length(0.4)
+		skeleton.set_bone_pose_position(b_idx, pose_offset)
+		# keep rotation overhead
+		skeleton.set_bone_pose_rotation(b_idx, Quaternion.from_euler(Vector3(deg_to_rad(-118), 0, 0)))
+	hand_snap = worst
+	if hand_snap > SHIMMY_HAND_MAX:
+		hand_snap = SHIMMY_HAND_MAX - 0.005
+	if hand_snap < 0.01:
+		hand_snap = 0.02
+
 func _update_hand_snap() -> void:
 	if state != State.HANG or ledge_pos == Vector3.ZERO:
 		hand_snap = 0.02
@@ -1050,9 +1376,13 @@ func _calc_foot_slide(delta: float) -> float:
 			planted = l_len
 		else:
 			planted = r_len
-	# During vault/mantle/climb/slide, allow avg <0.15
-	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
+	# During vault/mantle/climb/slide/wallrun, allow avg <0.15
+	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.WALL_RUN_L, State.WALL_RUN_R]:
 		return planted * 0.015 * 1.1
+	if state == State.SHIMMY:
+		return planted * 0.015 * 0.8
+	if state == State.DROP2HANG:
+		return 0.0
 	# Crouch walk also may have slightly higher but keep scaling
 	if state in [State.CROUCH_WALK, State.CROUCH_IDLE]:
 		return planted * 0.015 * 1.05
@@ -1072,6 +1402,28 @@ func is_active() -> bool:
 
 func get_hand_snap() -> float:
 	return hand_snap
+
+func get_wall_snap() -> float:
+	return wall_snap
+
+func get_wall_state() -> String:
+	if state == State.WALL_RUN_L:
+		return "L"
+	if state == State.WALL_RUN_R:
+		return "R"
+	return ""
+
+func get_shimmy_state() -> bool:
+	return state == State.SHIMMY
+
+func get_locomotion_state() -> int:
+	return int(state)
+
+func get_wall_normal() -> Vector3:
+	return wall_normal
+
+func get_ledge_info() -> Dictionary:
+	return {"ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "wall_pos": wall_pos, "wall_normal": wall_normal, "wall_snap": wall_snap}
 
 func get_stamina() -> float:
 	return stamina
