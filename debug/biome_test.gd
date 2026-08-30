@@ -21,6 +21,30 @@ func _check(label: String, ok: bool, detail: String = "") -> void:
 		else:
 			print("[BiomeTest] FAIL: %s" % label)
 
+func _aabb_gap_for_test(a: Rect2, b: Rect2) -> float:
+	var dx: float = maxf(0.0, maxf(a.position.x - b.end.x, b.position.x - a.end.x))
+	var dy: float = maxf(0.0, maxf(a.position.y - b.end.y, b.position.y - a.end.y))
+	if dx == 0.0 and dy == 0.0:
+		var overlap_x: float = minf(a.end.x, b.end.x) - maxf(a.position.x, b.position.x)
+		var overlap_y: float = minf(a.end.y, b.end.y) - maxf(a.position.y, b.position.y)
+		if overlap_x > 0 and overlap_y > 0:
+			return -minf(overlap_x, overlap_y)
+		return 0.0
+	if dx > 0.0 and dy > 0.0:
+		return sqrt(dx*dx + dy*dy)
+	return maxf(dx, dy)
+
+class _MockInv:
+	var items: Dictionary = {}
+	func add(id: StringName, count: int) -> void:
+		items[id] = int(items.get(id,0)) + count
+	func add_item(id: StringName, count: int) -> void:
+		add(id, count)
+	func count(id: StringName) -> int:
+		return int(items.get(id,0))
+	func has(id: StringName) -> bool:
+		return items.has(id)
+
 func _bezier2(p0: Vector2, p1: Vector2, p2: Vector2, t: float) -> Vector2:
 	var u := 1.0 - t
 	return u * u * p0 + 2.0 * u * t * p1 + t * t * p2
@@ -607,7 +631,369 @@ func _run_all() -> void:
 	_check("save_state has records", save.has("records"), str(save.keys()))
 	cm.queue_free()
 	fake_player.queue_free()
-	# ---------- 5. Determinism and buildability preserved ----------
+		# ---------- 3b. Field parcel determinism and per-cell counts ----------
+	var field_coords: Array[Vector2i] = []
+	# Dynamically find 5 landscape cells with at least 1 parcel for canonical seed (to ensure determinism and diff checks have data)
+	for cx in range(0, 12):
+		for cy in range(0, 12):
+			if field_coords.size() >= 5:
+				break
+			var cell_rect_tmp := Rect2(Vector2(float(cx)*WorldConstants.LANDSCAPE_CELL_M, float(cy)*WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+			var plist_tmp: Array[Dictionary] = wp.field_parcels_in(cell_rect_tmp)
+			if plist_tmp.size() > 0:
+				var parc_center: Vector2 = (plist_tmp[0] as Dictionary).get("center", Vector2.ZERO) as Vector2
+				var chunk_c := WorldSeed.chunk_coord(parc_center.x, parc_center.y)
+				field_coords.append(chunk_c)
+		if field_coords.size() >= 5:
+			break
+	if field_coords.is_empty():
+		field_coords = [Vector2i(4,8), Vector2i(6,8), Vector2i(8,10)]
+	var field_manifests_fwd: Dictionary = {}
+	var field_manifests_rev: Dictionary = {}
+	for c in field_coords:
+		field_manifests_fwd[c] = BiomeChunkBuilder.build_manifest(wp, c)
+	var rev_field: Array[Vector2i] = field_coords.duplicate()
+	rev_field.reverse()
+	for c in rev_field:
+		field_manifests_rev[c] = BiomeChunkBuilder.build_manifest(wp, c)
+	var field_det_ok := true
+	var field_det_detail := ""
+	for c in field_coords:
+		var a_list: Array = field_manifests_fwd[c].get("field_parcel_manifests", [])
+		var b_list: Array = field_manifests_rev[c].get("field_parcel_manifests", [])
+		if a_list.size() != b_list.size():
+			field_det_ok = false
+			field_det_detail = "field parcel count mismatch %s %d vs %d" % [c, a_list.size(), b_list.size()]
+			break
+		for idx in a_list.size():
+			var ad: Dictionary = a_list[idx] as Dictionary
+			var bd: Dictionary = b_list[idx] as Dictionary
+			if String(ad.get("id","")) != String(bd.get("id","")):
+				field_det_ok = false
+				field_det_detail = "field id mismatch %s idx %d" % [c, idx]
+				break
+			var apos: Vector2 = ad.get("pos", Vector2.ZERO) as Vector2
+			var bpos: Vector2 = bd.get("pos", Vector2.ZERO) as Vector2
+			if not apos.is_equal_approx(bpos):
+				field_det_ok = false
+				field_det_detail = "field pos mismatch %s" % c
+				break
+			var aaabb: Rect2 = ad.get("aabb", Rect2()) as Rect2
+			var baabb: Rect2 = bd.get("aabb", Rect2()) as Rect2
+			if not aaabb.position.is_equal_approx(baabb.position) or not aaabb.size.is_equal_approx(baabb.size):
+				field_det_ok = false
+				field_det_detail = "field aabb mismatch %s" % c
+				break
+			if not is_equal_approx(float(ad.get("yaw",0.0)), float(bd.get("yaw",0.0))):
+				field_det_ok = false
+				field_det_detail = "field yaw mismatch %s" % c
+				break
+			if String(ad.get("crop_kind","")) != String(bd.get("crop_kind","")):
+				field_det_ok = false
+				field_det_detail = "field crop_kind mismatch %s" % c
+				break
+			if int(ad.get("planted_day",0)) != int(bd.get("planted_day",0)):
+				field_det_ok = false
+				field_det_detail = "field planted_day mismatch %s" % c
+				break
+			var a_cont: Dictionary = ad.get("contents", {}) as Dictionary
+			var b_cont: Dictionary = bd.get("contents", {}) as Dictionary
+			if a_cont.size() != b_cont.size():
+				field_det_ok = false
+				field_det_detail = "field contents size mismatch %s" % c
+				break
+			for k in a_cont.keys():
+				if not b_cont.has(k) or int(a_cont[k]) != int(b_cont[k]):
+					field_det_ok = false
+					field_det_detail = "field contents mismatch %s" % c
+					break
+			if not field_det_ok:
+				break
+			var acrops: Array = field_manifests_fwd[c].get("field_crop_manifests", [])
+			var bcrops: Array = field_manifests_rev[c].get("field_crop_manifests", [])
+			if acrops.size() != bcrops.size():
+				field_det_ok = false
+				field_det_detail = "crop count mismatch %s" % c
+				break
+			for ci in acrops.size():
+				var acd: Dictionary = acrops[ci] as Dictionary
+				var bcd: Dictionary = bcrops[ci] as Dictionary
+				if String(acd.get("crop_kind","")) != String(bcd.get("crop_kind","")):
+					field_det_ok = false
+					field_det_detail = "crop crop_kind mismatch %s" % c
+					break
+				if int(acd.get("planted_day",0)) != int(bcd.get("planted_day",0)):
+					field_det_ok = false
+					field_det_detail = "crop planted_day mismatch %s" % c
+					break
+			if not field_det_ok:
+				break
+			if not field_det_ok:
+				break
+		_check("field parcel manifest equality shuffled order", field_det_ok, field_det_detail)
+	var diff_parcel := 0
+	for c in field_coords:
+		var a_list: Array = field_manifests_fwd[c].get("field_parcel_manifests", [])
+		var alt_wp := WorldPlan.new(alt_a)
+		var m_alt: Dictionary = BiomeChunkBuilder.build_manifest(alt_wp, c)
+		var b_list: Array = m_alt.get("field_parcel_manifests", [])
+		if a_list.size() != b_list.size():
+			diff_parcel += 1
+		else:
+			var same := true
+			if a_list.is_empty() and b_list.is_empty():
+				same = true
+			else:
+				for idx in a_list.size():
+					if String((a_list[idx] as Dictionary).get("crop_kind","")) != String((b_list[idx] as Dictionary).get("crop_kind","")):
+						same = false
+						break
+					if String((a_list[idx] as Dictionary).get("planted_day","")) != String((b_list[idx] as Dictionary).get("planted_day","")):
+						same = false
+						break
+			if not same:
+				diff_parcel += 1
+	var pct_diff: float = float(diff_parcel) / float(maxi(1, field_coords.size()))
+	_check("different seed field parcels differ >=30%", pct_diff >= 0.3, "diff %d/%d %.2f" % [diff_parcel, field_coords.size(), pct_diff])
+	var cell_ok := true
+	var cell_detail := ""
+	for seed in all_seeds:
+		var wpp2 := WorldPlan.new(seed)
+		for cx in range(-2, 3):
+			for cy in range(-2, 3):
+				var cell_rect := Rect2(Vector2(float(cx)*WorldConstants.LANDSCAPE_CELL_M, float(cy)*WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+				var parcels: Array[Dictionary] = wpp2.field_parcels_in(cell_rect)
+				if parcels.size() > WorldConstants.FIELD_PARCEL_MAX_PER_LANDSCAPE_CELL:
+					cell_ok = false
+					cell_detail = "cell %d,%d count %d >3 seed %d" % [cx, cy, parcels.size(), seed]
+					break
+				for parc in parcels:
+					var cent: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+					if not cell_rect.has_point(cent):
+						cell_ok = false
+						cell_detail = "parcel center outside cell %s %s" % [cent, cell_rect]
+						break
+				if not cell_ok:
+					break
+			if not cell_ok:
+				break
+		if not cell_ok:
+			break
+	_check("per landscape cell 0-3 parcels", cell_ok, cell_detail)
+	var footprint_ok := true
+	var footprint_detail := ""
+	for c in field_coords:
+		var plist: Array = field_manifests_fwd[c].get("field_parcel_manifests", [])
+		for parc in plist:
+			var pd: Dictionary = parc as Dictionary
+			var size: Vector2 = pd.get("size", Vector2.ZERO) as Vector2
+			if size.x < WorldConstants.FIELD_PARCEL_SIZE_MIN.x - 0.01 or size.x > WorldConstants.FIELD_PARCEL_SIZE_MAX.x + 0.01:
+				footprint_ok = false
+				footprint_detail = "size.x %.1f out of 18-64 at %s" % [size.x, pd.get("id","")]
+				break
+			if size.y < WorldConstants.FIELD_PARCEL_SIZE_MIN.y - 0.01 or size.y > WorldConstants.FIELD_PARCEL_SIZE_MAX.y + 0.01:
+				footprint_ok = false
+				footprint_detail = "size.y %.1f out of 14-48" % size.y
+				break
+			var aabb: Rect2 = pd.get("aabb", Rect2()) as Rect2
+			var pos: Vector2 = pd.get("pos", Vector2.ZERO) as Vector2
+			if pos.length() < WorldConstants.URBAN_INNER_M - 0.01:
+				footprint_ok = false
+				footprint_detail = "parcel inside urban 350 %s" % pos
+				break
+			if aabb.size.x <= 0 or aabb.size.y <= 0:
+				footprint_ok = false
+				footprint_detail = "aabb empty"
+				break
+			for other in plist:
+				if other == parc:
+					continue
+				var o_aabb: Rect2 = (other as Dictionary).get("aabb", Rect2()) as Rect2
+				var gap: float = _aabb_gap_for_test(aabb, o_aabb)
+				if gap < -0.01:
+					footprint_ok = false
+					footprint_detail = "parcels overlapping %s" % pd.get("id","")
+					break
+			if not footprint_ok:
+				break
+			var b_at: StringName = pd.get("biome", &"") as StringName
+			if not (b_at == &"arable_field" or b_at == &"pasture" or b_at == &"pasture_orchard" or b_at == &"orchard"):
+				footprint_ok = false
+				footprint_detail = "parcel biome not arable family %s" % b_at
+				break
+			var slope: float = wp.terrain.slope_at(pos)
+			var max_s: float = WorldConstants.ARABLE_MAX_SLOPE_DEG if b_at == &"arable_field" else WorldConstants.PASTURE_MAX_SLOPE_DEG
+			if slope >= max_s + 0.5:
+				footprint_ok = false
+				footprint_detail = "parcel slope %.1f >= %.1f at %s" % [slope, max_s, pos]
+				break
+			if wp.terrain.terrain_class_at(pos) == &"cliff":
+				footprint_ok = false
+				footprint_detail = "parcel on cliff %s" % pos
+				break
+			if wp.water_body_at(pos) != &"":
+				footprint_ok = false
+				footprint_detail = "parcel on water %s" % pos
+				break
+			if wp.is_floodplain(Vector2(pos.x, pos.y)):
+				footprint_ok = false
+				footprint_detail = "parcel on floodplain %s" % pos
+				break
+			if wp.distance_to_water(pos) <= WorldConstants.BANK_W + 2.0 + 0.01:
+				footprint_ok = false
+				footprint_detail = "parcel too close to water %.1f" % wp.distance_to_water(pos)
+				break
+			if wp.distance_to_road(pos) < WorldConstants.FIELD_PARCEL_ROAD_SETBACK - 0.01:
+				footprint_ok = false
+				footprint_detail = "parcel too close to road %.1f" % wp.distance_to_road(pos)
+				break
+			var near_buildings: Array[Dictionary] = wp.rural_buildings_in(Rect2(pos - Vector2(40,40), Vector2(80,80)))
+			for bld in near_buildings:
+				var b_aabb: Rect2 = bld.get("aabb", Rect2()) as Rect2
+				if b_aabb.size == Vector2.ZERO:
+					var bc: Vector2 = bld.get("center", Vector2.ZERO) as Vector2
+					var fp: Vector2 = bld.get("footprint", Vector2(8,8)) as Vector2
+					b_aabb = Rect2(bc - fp*0.5, fp)
+				var gap2: float = _aabb_gap_for_test(aabb, b_aabb)
+				if gap2 < WorldConstants.FIELD_PARCEL_BUILDING_GAP - 0.01:
+					footprint_ok = false
+					footprint_detail = "parcel too close to building gap %.1f" % gap2
+					break
+			if not footprint_ok:
+				break
+		if not footprint_ok:
+			break
+	_check("field parcel footprint and geographic gates", footprint_ok, footprint_detail)
+	var grown_ok := true
+	var grown_detail := ""
+	var sample_parcel: Dictionary = {}
+	for c in field_coords:
+		var plist: Array = field_manifests_fwd[c].get("field_parcel_manifests", [])
+		if not plist.is_empty():
+			sample_parcel = plist[0] as Dictionary
+			break
+	if sample_parcel.is_empty():
+		# Fallback scan world for any parcel
+		for cx in range(0, 8):
+			for cy in range(0, 8):
+				var rect_tmp := Rect2(Vector2(float(cx)*256, float(cy)*256), Vector2(256,256))
+				var plist2: Array[Dictionary] = wp.field_parcels_in(rect_tmp)
+				if not plist2.is_empty():
+					sample_parcel = plist2[0]
+					break
+			if not sample_parcel.is_empty():
+				break
+	if not sample_parcel.is_empty():
+		var planted: int = int(sample_parcel.get("planted_day", 0))
+		var cur_day: int = GameClock.get_day()
+		var is_grown: bool = bool(sample_parcel.get("is_grown", false))
+		var expected_grown: bool = cur_day >= planted + WorldConstants.CROP_GROW_DAYS
+		if is_grown != expected_grown:
+			grown_ok = false
+			grown_detail = "is_grown mismatch cur %d planted %d is_grown %s expected %s" % [cur_day, planted, is_grown, expected_grown]
+		if grown_ok:
+			var test_crop := CropPatch.new()
+			add_child(test_crop)
+			var crop_data: Dictionary = {
+				"id": "test_crop_advance",
+				"parcel_id": "test_parcel",
+				"crop_kind": sample_parcel.get("crop_kind", &"wheat"),
+				"planted_day": planted,
+				"pos": sample_parcel.get("pos", Vector2.ZERO),
+				"contents": sample_parcel.get("contents", {&"canned_food":1}),
+			}
+			test_crop.setup(crop_data)
+			var before_grown: bool = test_crop.is_grown()
+			if before_grown != expected_grown:
+				grown_ok = false
+				grown_detail = "CropPatch is_grown mismatch before"
+			else:
+				if before_grown:
+					var mock_player := Node3D.new()
+					var inv := _MockInv.new()
+					mock_player.set("inventory", inv)
+					test_crop._on_interacted(mock_player)
+					if not test_crop.is_depleted():
+						grown_ok = false
+						grown_detail = "CropPatch should be depleted after harvest"
+					else:
+						var dep_day: int = test_crop.depleted_at_day
+						GameClock.advance(1440.0)
+						if not test_crop.is_depleted():
+							grown_ok = false
+							grown_detail = "CropPatch should still be depleted after 1 day"
+						else:
+							GameClock.advance(1440.0 + 10.0)
+							if test_crop.is_depleted():
+								grown_ok = false
+								grown_detail = "CropPatch should have regrown after 2 days cur %d dep %d" % [GameClock.get_day(), dep_day]
+							if not test_crop.is_grown():
+								grown_ok = false
+								grown_detail = "CropPatch is_grown false after regrow"
+						mock_player.queue_free()
+				else:
+					if test_crop.interactable != null and String(test_crop.interactable.prompt).find("Growing") == -1:
+						grown_ok = false
+						grown_detail = "CropPatch prompt should be Growing when not grown: %s" % test_crop.interactable.prompt
+			test_crop.queue_free()
+			GameClock.total_minutes = float(cur_day * 1440 + 420)
+	else:
+		grown_ok = false
+		grown_detail = "no sample parcel found"
+	_check("CropPatch is_grown planted+2 and depleted regrow 2d via GameClock.advance", grown_ok, grown_detail)
+	var contig_ok2 := false
+	var contig_detail2 := ""
+	var best_total := 0
+	for seed in all_seeds:
+		var wpp3 := WorldPlan.new(seed)
+		var best_for_seed := 0
+		for bx in range(-4, 12):
+			for by in range(-4, 12):
+				var block_total := 0
+				for cx in range(bx, bx+4):
+					for cy in range(by, by+4):
+						var rect := Rect2(Vector2(float(cx)*256, float(cy)*256), Vector2(256,256))
+						var plist: Array[Dictionary] = wpp3.field_parcels_in(rect)
+						block_total += plist.size()
+				if block_total > best_for_seed:
+					best_for_seed = block_total
+		best_total += best_for_seed
+	if best_total >= 9:
+		contig_ok2 = true
+		contig_detail2 = "best block total %d across 5 seeds" % best_total
+	else:
+		contig_detail2 = "only %d best block parcels across 5 seeds, need >=9" % best_total
+	_check("field parcel contiguity >=9 across 5-seed arable belt", contig_ok2, contig_detail2)
+	var dup_ok := true
+	var dup_detail := ""
+	for c in [Vector2i(0,0), Vector2i(1,0), Vector2i(0,1), Vector2i(-1,0), Vector2i(0,-1)]:
+		var m_a: Dictionary = BiomeChunkBuilder.build_manifest(wp, c)
+		var list_a: Array = m_a.get("field_parcel_manifests", [])
+		for parc in list_a:
+			var cent: Vector2 = (parc as Dictionary).get("center", Vector2.ZERO) as Vector2
+			var owner: Vector2i = WorldSeed.chunk_coord(cent.x, cent.y)
+			if owner != c:
+				dup_ok = false
+				dup_detail = "parcel %s center %s owned by %s not %s" % [parc.get("id",""), cent, owner, c]
+				break
+		if not dup_ok:
+			break
+	var mz0b: Dictionary = BiomeChunkBuilder.build_manifest(wp, Vector2i(0,0))
+	var mz1b: Dictionary = BiomeChunkBuilder.build_manifest(wp, Vector2i(0,-1))
+	var has_dup_z := false
+	var ids_z: Dictionary = {}
+	for p in mz0b.get("field_parcel_manifests", []) as Array:
+		ids_z[String((p as Dictionary).get("id",""))] = true
+	for p in mz1b.get("field_parcel_manifests", []) as Array:
+		if ids_z.has(String((p as Dictionary).get("id",""))):
+			has_dup_z = true
+			break
+	if has_dup_z:
+		dup_ok = false
+		dup_detail = "duplicate parcel id across -Z border"
+	_check("field parcel center ownership no duplication + and - and -Z", dup_ok, dup_detail)
+
+# ---------- 5. Determinism and buildability preserved ----------
 	_check("GENERATOR_VERSION stays 2", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
 	# WorldPlan pure check: after queries, second plan gives same height
 	var wp2 := WorldPlan.new(canonical)

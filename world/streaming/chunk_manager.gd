@@ -46,6 +46,11 @@ var _biome_triangles_total := 0
 var _biome_colliders_total := 0
 var _biome_instances_total := 0
 var _biome_mat_ms_total := 0.0
+var _field_parcels_total := 0
+var _field_crops_total := 0
+var _field_vertices_total := 0
+var _field_triangles_total := 0
+var _field_hedgerow_total := 0
 var _road_vertices_total := 0
 var _road_triangles_total := 0
 var _road_colliders_total := 0
@@ -127,6 +132,11 @@ func reset_stream() -> void:
 	_biome_instances_total = 0
 	_biome_mat_ms_total = 0.0
 	_total_biome_gen_ms = 0.0
+	_field_parcels_total = 0
+	_field_crops_total = 0
+	_field_vertices_total = 0
+	_field_triangles_total = 0
+	_field_hedgerow_total = 0
 	_road_vertices_total = 0
 	_road_triangles_total = 0
 	_road_colliders_total = 0
@@ -420,14 +430,63 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	# Materialize biome under same chunk if manifest present
 	var bstats := {}
 	if not biome_manifest.is_empty():
+		# Apply field crop deltas before materialize (persistence-first) and handle regrow via GameClock
+		if _records.has(coord):
+			var b_deltas: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+			var fc_deltas: Dictionary = b_deltas.get("field_crops", {}) as Dictionary
+			if not fc_deltas.is_empty():
+				var cur_day_fc: int = GameClock.get_day() if GameClock != null else 1
+				var patched_fc := {}
+				for fid in fc_deltas.keys():
+					var fs: Dictionary = fc_deltas[fid] as Dictionary
+					var dep: bool = bool(fs.get("depleted", false))
+					var dep_day: int = int(fs.get("depleted_at_day", -1))
+					if dep and cur_day_fc >= dep_day + WorldConstants.CROP_REGROW_DAYS:
+						continue
+					patched_fc[fid] = fs
+				if patched_fc.size() != fc_deltas.size():
+					b_deltas["field_crops"] = patched_fc
+					_records[coord]["deltas"] = b_deltas
+				# Patch manifests contents/depleted before materialize
+				var crop_manifests: Array = biome_manifest.get("field_crop_manifests", []) as Array
+				var patched_manifests: Array[Dictionary] = []
+				for cm in crop_manifests:
+					var cd: Dictionary = cm as Dictionary
+					var cid: String = String(cd.get("id", ""))
+					if patched_fc.has(cid):
+						var saved: Dictionary = patched_fc[cid] as Dictionary
+						cd = cd.duplicate()
+						# preserve saved depleted state (already filtered for regrow)
+						cd["depleted"] = bool(saved.get("depleted", false))
+						cd["depleted_at_day"] = int(saved.get("depleted_at_day", -1))
+						if saved.has("contents"):
+							var new_contents: Dictionary = {}
+							var sc: Dictionary = saved["contents"] as Dictionary
+							for k in sc.keys():
+								new_contents[StringName(str(k))] = int(sc[k])
+							cd["contents"] = new_contents
+					patched_manifests.append(cd)
+				biome_manifest["field_crop_manifests"] = patched_manifests
+				# Also update parcel manifests is_grown? is_grown derived from GameClock, not delta, so keep
 		var chunk_node_b := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
 		if chunk_node_b != null:
 			bstats = BiomeChunkBuilder.materialize(chunk_node_b, biome_manifest)
+			# Apply field crop depleted states after materialize (re-apply deltas before interactability) — already patched before, but also ensure loaded state
+			if _records.has(coord):
+				var deltas_b2: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+				var fc_deltas2: Dictionary = deltas_b2.get("field_crops", {}) as Dictionary
+				if not fc_deltas2.is_empty():
+					_apply_field_crop_states(chunk_node_b, coord, fc_deltas2)
 			# ACTIVE-only biome physics: disable warm biome colliders (visual MultiMesh retained)
 			if not include_collision:
 				var bb := chunk_node_b.get_node_or_null(NodePath("Biome_%d_%d/BiomeBody" % [coord.x, coord.y]))
 				if bb != null and is_instance_valid(bb):
 					(bb as StaticBody3D).collision_layer = 0
+			# ACTIVE-only CropPatch: disable when warm
+			if not include_collision:
+				_set_field_crops_enabled(chunk_node_b, coord, false)
+			else:
+				_set_field_crops_enabled(chunk_node_b, coord, true)
 	# Materialize road under same chunk if manifest present
 	var rstats := {}
 	if not road_manifest.is_empty():
@@ -542,6 +601,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var biome_tris := int(bstats.get("biome_triangles", 0))
 	var biome_cols := int(bstats.get("biome_colliders", 0))
 	var biome_instances := int(bstats.get("biome_instances", 0))
+	var field_parcels := int(bstats.get("field_parcels", 0))
+	var field_crops := int(bstats.get("field_crops", 0))
+	var field_vertices := int(bstats.get("field_vertices", 0))
+	var field_triangles := int(bstats.get("field_triangles", 0))
+	var field_hedgerow := int(bstats.get("field_hedgerow", 0))
 	var road_verts := int(rstats.get("road_vertices", 0))
 	var road_tris := int(rstats.get("road_triangles", 0))
 	var road_cols := int(rstats.get("road_colliders", 0))
@@ -580,6 +644,13 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"biome_colliders_active": biome_cols if include_collision else 0,
 		"biome_instances": biome_instances,
 		"biome_manifest": biome_manifest,
+		"field_parcels": field_parcels,
+		"field_crops": field_crops,
+		"field_vertices": field_vertices,
+		"field_triangles": field_triangles,
+		"field_hedgerow": field_hedgerow,
+		"field_parcels_active": field_parcels if include_collision else 0,
+		"field_crops_active": field_crops if include_collision else 0,
 		"road_vertices": road_verts,
 		"road_triangles": road_tris,
 		"road_colliders": road_cols,
@@ -637,6 +708,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_biome_colliders_total += biome_cols
 	_biome_instances_total += biome_instances
 	_biome_mat_ms_total += float(bstats.get("biome_mat_ms", 0.0))
+	_field_parcels_total += field_parcels
+	_field_crops_total += field_crops
+	_field_vertices_total += field_vertices
+	_field_triangles_total += field_triangles
+	_field_hedgerow_total += field_hedgerow
 	_road_vertices_total += road_verts
 	_road_triangles_total += road_tris
 	_road_colliders_total += road_cols
@@ -701,6 +777,11 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_biome_instances_total -= int(rec.get("biome_instances", 0))
 		_biome_mat_ms_total -= float(rec.get("biome_mat_ms", 0.0))
 		_total_biome_gen_ms -= float(rec.get("biome_gen_ms", 0.0))
+		_field_parcels_total -= int(rec.get("field_parcels", 0))
+		_field_crops_total -= int(rec.get("field_crops", 0))
+		_field_vertices_total -= int(rec.get("field_vertices", 0))
+		_field_triangles_total -= int(rec.get("field_triangles", 0))
+		_field_hedgerow_total -= int(rec.get("field_hedgerow", 0))
 		_road_vertices_total -= int(rec.get("road_vertices", 0))
 		_road_triangles_total -= int(rec.get("road_triangles", 0))
 		_road_colliders_total -= int(rec.get("road_colliders", 0))
@@ -789,6 +870,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_wells_enabled(rural_node_active, coord, true)
 					_set_rural_forage_enabled(rural_node_active, coord, true)
 					_set_rural_hearth_enabled(rural_node_active, coord, true)
+				var biome_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if biome_node_active != null:
+					_set_field_crops_enabled(biome_node_active, coord, true)
 			elif desired_state != &"active" and previous_state == &"active":
 				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_warm != null:
@@ -796,6 +880,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_wells_enabled(rural_node_warm, coord, false)
 					_set_rural_forage_enabled(rural_node_warm, coord, false)
 					_set_rural_hearth_enabled(rural_node_warm, coord, false)
+				var biome_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if biome_node_warm != null:
+					_set_field_crops_enabled(biome_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -1120,8 +1207,8 @@ func debug_lines() -> Array[String]:
 			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count(), terrain_warm_count()])
 	lines.append("water verts %d | tris %d | colliders %d | t_water_gen %.1f ms | t_water_mat %.1f ms | active water %d (warm %d)"
 			% [_water_vertices_total, _water_triangles_total, _water_colliders_total, avg_water_gen_ms(), _water_mat_ms_total, water_active_count(), water_warm_count()])
-	lines.append("biome verts %d | tris %d | colliders %d | instances %d | t_biome_gen %.1f ms | t_biome_mat %.1f ms | active biome %d (warm %d)"
-			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
+	lines.append("biome verts %d | tris %d | colliders %d | instances %d | field_parcels %d | field_crops %d | t_biome_gen %.1f ms | t_biome_mat %.1f ms | active biome %d (warm %d)"
+			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, _field_parcels_total, _field_crops_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
 	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
 	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
@@ -1301,6 +1388,86 @@ func _set_rural_hearth_enabled(rural_parent: Node, coord: Vector2i, enabled: boo
 					if inter != null and is_instance_valid(inter):
 						inter.enabled = enabled
 
+func _set_field_crops_enabled(biome_parent: Node, coord: Vector2i, enabled: bool) -> void:
+	var biome_node: Node = biome_parent
+	if biome_parent.name.begins_with("Chunk_"):
+		biome_node = biome_parent.get_node_or_null(NodePath("Biome_%d_%d" % [coord.x, coord.y]))
+		if biome_node == null:
+			return
+	# Variant-safe iteration: freed nodes may still be in children list
+	var children: Array = biome_node.get_children().duplicate()
+	for child: Variant in children:
+		if child is CropPatch:
+			var patch: CropPatch = child as CropPatch
+			if not is_instance_valid(patch):
+				continue
+			if patch.is_queued_for_deletion() or not patch.is_inside_tree():
+				continue
+			if patch.has_method("set_active_enabled"):
+				patch.call("set_active_enabled", enabled)
+			else:
+				patch.monitorable = enabled
+				var inter = patch.get("interactable")
+				if inter != null and is_instance_valid(inter):
+					inter.enabled = enabled
+
+func _apply_field_crop_states(parent: Node, coord: Vector2i, field_crops: Dictionary) -> void:
+	var biome_node: Node = parent.get_node_or_null(NodePath("Biome_%d_%d" % [coord.x, coord.y]))
+	if biome_node == null:
+		if parent.name.begins_with("Biome_"):
+			biome_node = parent
+		else:
+			return
+	for child in biome_node.get_children():
+		if child is CropPatch:
+			var cid: String = String(child.name)
+			if field_crops.has(cid):
+				(child as CropPatch).load_state(field_crops[cid] as Dictionary)
+
+func _record_field_crop(coord: Vector2i, crop_id: String, state: Dictionary) -> void:
+	if crop_id == "":
+		return
+	note_discovered(coord)
+	var fc: Dictionary = _records[coord]["deltas"].get("field_crops", {})
+	fc[crop_id] = state.duplicate()
+	_records[coord]["deltas"]["field_crops"] = fc
+
+func _snapshot_resident_field_crops() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_field_crops_recursive(node, c)
+
+func _collect_field_crops_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if child is CropPatch and not (child as CropPatch).is_queued_for_deletion():
+			if String(child.name).begins_with("crop_"):
+				var st: Dictionary = (child as CropPatch).save_state()
+				_record_field_crop(coord, String(child.name), st)
+		if child.get_child_count() > 0:
+			_collect_field_crops_recursive(child, coord)
+
+func field_parcels_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("field_parcels", 0))
+	return n
+
+func field_crops_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("field_crops", 0))
+	return n
+
+func field_parcels_total() -> int:
+	return _field_parcels_total
+
+func field_crops_total() -> int:
+	return _field_crops_total
+
 func _apply_rural_well_forage_states(parent: Node, coord: Vector2i, wells: Dictionary, forage: Dictionary) -> void:
 	# parent is Chunk_X_Y, need to find Rural node
 	var rural_node: Node = parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
@@ -1398,6 +1565,7 @@ func save_state() -> Dictionary:
 	_snapshot_resident_doors()
 	_snapshot_resident_crates()
 	_snapshot_resident_wells_forage()
+	_snapshot_resident_field_crops()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]

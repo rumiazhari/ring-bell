@@ -229,6 +229,34 @@ const BED_SLEEP_MINUTES := 480.0 # 8h to next 06:00
 const WELL_REFILL_HOUR := 4 # 04:00 next day
 const FORAGE_REGROW_DAYS := 2
 
+# --- Field-Parcel Cultivation (P5.1) authoritative numerics ---
+const FIELD_PARCEL_VOCAB: Array[StringName] = [&"wheat", &"barley", &"potato", &"beet"]
+const CROP_VOCAB: Array[StringName] = [&"wheat", &"barley", &"potato", &"beet"]
+const FIELD_PARCEL_SIZE_MIN := Vector2(18, 14)
+const FIELD_PARCEL_SIZE_MAX := Vector2(64, 48)
+const FIELD_PARCEL_MAX_PER_LANDSCAPE_CELL := 3
+const FIELD_PARCEL_MAX_PER_CHUNK := 4
+const FIELD_DENSITY_MIN := 0.38
+const FIELD_CROP_MAX_PER_CHUNK := 4
+const FIELD_PARCEL_ROAD_SETBACK := 3.0
+const FIELD_PARCEL_BUILDING_GAP := 8.0
+const FIELD_PARCEL_SPACING_MIN := 4.0
+const FIELD_PARCEL_WELL_FORAGE_GAP := 6.0
+const CROP_GROW_DAYS := 2
+const CROP_REGROW_DAYS := 2
+const FIELD_PARCEL_LIFT_M := 0.02
+const HEDGEROW_HEIGHT := 0.6
+const FIELD_PARCEL_HEDGEROW_COLOR := Color("5a7a3a")
+const COL_FIELD_WHEAT := Color("c2b280")
+const COL_FIELD_BARLEY := Color("8faa6a")
+const COL_FIELD_POTATO := Color("6e635a")
+const COL_FIELD_BEET := Color("6a8a5a")
+const MAX_FIELD_VERTS_PER_CHUNK := 96
+const MAX_FIELD_TRIS_PER_CHUNK := 64
+const FIELD_HEDGEROW_MAX_PER_CHUNK := 8
+const FIELD_PARCEL_AABB_GAP := 4.0
+const FIELD_PARCEL_HEIGHT_VARIANCE_MAX := 0.8
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]

@@ -1,11 +1,10 @@
 class_name BiomeChunkBuilder
 extends RefCounted
-## Pure biome manifest + main-thread materialization for P3.1 rural mosaic.
+## Pure biome manifest + main-thread materialization for P3.1 rural mosaic + P5.1 field parcels.
 ## 9x9 samples per 64 m chunk (8 m spacing), world-space shared edges matching terrain/water,
-## one overlay mesh + at most one MultiMesh + at most one collider per chunk (ACTIVE-only).
-## Overlay lift 0.03 m above terrain to avoid z-fighting without extra depth bias.
-## Budgets: 81 verts / <=128 tris per chunk, <=48 forest or <=12 field + <=6 quarry instances per chunk (global <=48), <=1 collider.
-## Urban inner flat emits urban_basin with 0 instances; water samples are floodplain/wet_meadow not forest/field.
+## one overlay mesh + at most one MultiMesh + at most one collider per chunk (ACTIVE-only) plus tilled parcels.
+## Overlay lift 0.03 m above terrain; tilled lift 0.02 m.
+## Budgets: 81 verts / <=128 tris overlay, <=96/64 tilled per chunk, <=48 instances total, <=1 collider, <=4 parcels, <=4 CropPatch, hedgerow <=8 of 48.
 
 const RESOLUTION := 9
 const SPACING := 8.0
@@ -24,6 +23,19 @@ static func _masked_height(world_plan: WorldPlan, p: Vector2) -> float:
 	var t := _urban_factor(p)
 	var s := t * t * (3.0 - 2.0 * t)
 	return lerpf(0.0, h, s)
+
+static func _tilled_color(crop: StringName) -> Color:
+	match crop:
+		&"wheat":
+			return WorldConstants.COL_FIELD_WHEAT
+		&"barley":
+			return WorldConstants.COL_FIELD_BARLEY
+		&"potato":
+			return WorldConstants.COL_FIELD_POTATO
+		&"beet":
+			return WorldConstants.COL_FIELD_BEET
+		_:
+			return WorldConstants.COL_FIELD_WHEAT
 
 static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
@@ -44,14 +56,12 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var has_quarry := false
 	var is_wet_margin := false
 	var wet_count := 0
-	# For instance generation, collect sampling data
 	for j in RESOLUTION:
 		for i in RESOLUTION:
 			var p := origin + Vector2(float(i) * SPACING, float(j) * SPACING)
 			var idx := j * RESOLUTION + i
 			var b: StringName = world_plan.biome_at(p)
 			biome_ids[idx] = b
-			# material/class proxies: reuse biome as material, class as terrain class for debug
 			material_ids[idx] = b
 			class_ids[idx] = world_plan.terrain_class_at(p)
 			colors[idx] = world_plan.surface_tint_at(p)
@@ -83,17 +93,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			indices[k] = d; k += 1
 	var vertex_count := RESOLUTION * RESOLUTION
 	var tri_count := (RESOLUTION - 1) * (RESOLUTION - 1) * 2
-	# Instance generation deterministic per chunk
 	var instances: Array[Transform3D] = []
 	var instance_count := 0
-	# Urban core check: if center within URBAN_INNER_M, force 0 instances (spec: urban_basin 0 instances)
 	var center := origin + size * 0.5
 	var is_urban_core: bool = center.length() < WorldConstants.URBAN_INNER_M
-	# Also if is_urban_core, has_forest etc may be true due to fringe, but we still zero instances
-	# Actually spec says interior URBAN_INNER_M 350 flat yields urban_basin with is_wet_margin=false and instance_count=0
-	# Our biome_at already returns urban_basin for points inside 350, but center <350 ensures chunk is interior, we zero instances
 	if not is_urban_core:
-		# Forest instances
 		var forest_samples := 0
 		for j in RESOLUTION:
 			for i in RESOLUTION:
@@ -102,12 +106,12 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				var b: StringName = biome_ids[idx]
 				if b == &"deciduous_forest" or b == &"mixed_upland_forest":
 					forest_samples += 1
-		var is_forest_dominant: bool = forest_samples >= 35 # >~43% of 81 indicates dominant
+		var is_forest_dominant: bool = forest_samples >= 35
 		var forest_cap := 0
 		if is_forest_dominant:
 			forest_cap = WorldConstants.BIOME_INSTANCE_CAP_FOREST
 		elif forest_samples > 0:
-			forest_cap = 12 # transitional
+			forest_cap = 12
 		else:
 			forest_cap = 0
 		var forest_added := 0
@@ -125,7 +129,6 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				var dens: float = world_plan.biome_density_at(p)
 				if dens <= WorldConstants.BIOME_DENSITY_FOREST_MIN:
 					continue
-				# Deterministic transform: hash via combine
 				var hsh := WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("biome_tree"), coord.x, coord.y, i, j])
 				var rng := RandomNumberGenerator.new()
 				rng.seed = hsh
@@ -134,9 +137,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				var y: float = _masked_height(world_plan, p)
 				var x: float = origin.x + float(i) * SPACING + rng.randf_range(-0.8, 0.8)
 				var z: float = origin.y + float(j) * SPACING + rng.randf_range(-0.8, 0.8)
-				# Clip to chunk rect ownership via footprint center: only emit if center inside chunk rect
 				if x < origin.x or x >= origin.x + CHUNK_M or z < origin.y or z >= origin.y + CHUNK_M:
-					# clamp to inside
 					x = clampf(x, origin.x + 0.1, origin.x + CHUNK_M - 0.1)
 					z = clampf(z, origin.y + 0.1, origin.y + CHUNK_M - 0.1)
 				var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(scale, scale, scale)), Vector3(x, y, z))
@@ -145,7 +146,6 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			if forest_added >= forest_cap:
 				break
 		instance_count = instances.size()
-		# Field hedgerow instances (if field present and not forest dominant)
 		if has_field and instance_count < WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 			var field_cap := WorldConstants.BIOME_INSTANCE_CAP_FIELD
 			var field_added := 0
@@ -173,16 +173,13 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						hz = clampf(hz, origin.y + 0.1, origin.y + CHUNK_M - 0.1)
 					var hy: float = _masked_height(world_plan, Vector2(hx, hz))
 					var fh: float = rng2.randf_range(0.45, 0.75)
-					var scale_v := Vector3(2.0, fh, 0.4) # hedgerow box length 2m, height 0.45-0.75
-					var yaw_f: float = 0.0 # aligned to world axes, no rotation
-					# Use scale as basis scale
+					var scale_v := Vector3(2.0, fh, 0.4)
 					var xf2 := Transform3D(Basis.IDENTITY.scaled(scale_v), Vector3(hx, hy + fh * 0.5, hz))
 					instances.append(xf2)
 					field_added += 1
 					instance_count += 1
 				if field_added >= field_cap or instance_count >= WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 					break
-		# Quarry instances: 2-6 per quarry chunk
 		if has_quarry and instance_count < WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 			var qsuit_center: float = world_plan.quarry_suitability_at(center)
 			if qsuit_center > WorldConstants.QUARRY_SUITABILITY_THRESHOLD or has_quarry:
@@ -190,7 +187,6 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				var rngq := RandomNumberGenerator.new()
 				rngq.seed = hq
 				var qcount: int = int(rngq.randi_range(2, 6))
-				# Ensure capped by budget
 				var remaining := WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK - instance_count
 				qcount = mini(qcount, WorldConstants.BIOME_INSTANCE_CAP_QUARRY)
 				qcount = mini(qcount, remaining)
@@ -205,33 +201,166 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 					var qxf := Transform3D(Basis.IDENTITY.scaled(Vector3(qs, qs * 0.7, qs)), Vector3(qx, qy + qs * 0.35, qz))
 					instances.append(qxf)
 				instance_count = instances.size()
-	# Global cap enforcement <=48
 	if instance_count > WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 		instances.resize(WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK)
 		instance_count = instances.size()
-	# Urban core forces zero
 	if is_urban_core:
 		instances.clear()
 		instance_count = 0
 		has_forest = false
 		has_field = false
 		has_quarry = false
-	# Collision budget: at most one biome collider per chunk (0 if no forest/quarry proxies)
 	var biome_colliders := 0
 	if has_forest or has_quarry:
 		if instance_count > 0:
 			biome_colliders = 1
 		else:
-			# Even if has_forest flag but no instances due to density threshold, still 0
 			biome_colliders = 0
 	else:
 		biome_colliders = 0
-	# Field-only should have 0 collider per spec
 	if has_forest == false and has_quarry == false:
 		biome_colliders = 0
+	# --- Field parcel generation (P5.1) ---
+	var chunk_rect := Rect2(origin, size)
+	var field_parcels_raw: Array[Dictionary] = []
+	if not is_urban_core:
+		# field parcels suppressed inside urban flat (350) already via is_urban_core; also need explicit check for center <350 already handled via biome plan's urban inner skip
+		field_parcels_raw = world_plan.field_parcels_in(chunk_rect)
+	# field parcels are already center-owned, so all in raw are owned by this chunk
+	# enforce per-chunk cap <=4
+	if field_parcels_raw.size() > WorldConstants.FIELD_PARCEL_MAX_PER_CHUNK:
+		field_parcels_raw.resize(WorldConstants.FIELD_PARCEL_MAX_PER_CHUNK)
+	var field_parcel_manifests: Array[Dictionary] = []
+	var field_vertices := 0
+	var field_triangles := 0
+	var field_crop_manifests: Array[Dictionary] = []
+	var hedgerow_added := 0
+	# Hedgerow cap: at most FIELD_HEDGEROW_MAX_PER_CHUNK of 48, field parcels contribute
+	var remaining_instances := WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK - instance_count
+	var hedgerow_cap := mini(WorldConstants.FIELD_HEDGEROW_MAX_PER_CHUNK, remaining_instances)
+	# hedgerow is per parcel perimeter: generate hedgerow boxes along edges
+	for parc in field_parcels_raw:
+		var pid: String = String(parc.get("id", ""))
+		var p_center: Vector2 = parc.get("center", Vector2.ZERO) as Vector2
+		var p_aabb: Rect2 = parc.get("aabb", Rect2()) as Rect2
+		var p_crop: StringName = parc.get("crop_kind", &"wheat") as StringName
+		var p_planted: int = int(parc.get("planted_day", 0))
+		var p_yaw: float = float(parc.get("yaw", 0.0))
+		var p_size: Vector2 = parc.get("size", Vector2(32,24)) as Vector2
+		# field vertices/triangles for tilled quad (4 verts, 2 tris per parcel)
+		field_vertices += 4
+		field_triangles += 2
+		# contents for crop
+		var contents: Dictionary = parc.get("contents", {}) as Dictionary
+		if contents.is_empty():
+			match p_crop:
+				&"wheat":
+					contents = {&"canned_food": 1}
+				&"barley":
+					contents = {&"water_bottle": 1}
+				&"potato":
+					contents = {&"bandage": 1}
+				&"beet":
+					contents = {&"antibiotics": 1}
+				_:
+					contents = {&"canned_food": 1}
+		var cur_day: int = 1
+		if GameClock != null:
+			cur_day = GameClock.get_day()
+		var is_grown: bool = cur_day >= p_planted + WorldConstants.CROP_GROW_DAYS
+		var growth_stage: StringName = &"harvestable" if is_grown else (&"growing" if cur_day == p_planted + 1 else &"planted")
+		var h_tilled: float = _masked_height(world_plan, p_center) + WorldConstants.FIELD_PARCEL_LIFT_M
+		var tilled_manifest := {
+			"id": pid,
+			"parcel_id": pid,
+			"center": p_center,
+			"pos": p_center,
+			"aabb": p_aabb,
+			"biome": parc.get("biome", &"arable_field"),
+			"crop_kind": p_crop,
+			"kind": p_crop,
+			"size": p_size,
+			"yaw": p_yaw,
+			"planted_day": p_planted,
+			"growth_stage": growth_stage,
+			"is_grown": is_grown,
+			"contents": contents,
+			"landscape_cell": parc.get("landscape_cell", Vector2i.ZERO),
+			"macro_cell": parc.get("macro_cell", Vector2i.ZERO),
+			"settlement_id": parc.get("settlement_id", ""),
+		}
+		field_parcel_manifests.append(tilled_manifest)
+		var crop_id: String = "crop_%s" % pid
+		var crop_pos := Vector3(p_center.x, h_tilled + 0.01, p_center.y)
+		var crop_manifest := {
+			"id": crop_id,
+			"parcel_id": pid,
+			"pos": p_center,
+			"position": crop_pos,
+			"aabb": p_aabb,
+			"crop_kind": p_crop,
+			"kind": p_crop,
+			"contents": contents,
+			"planted_day": p_planted,
+			"yaw": p_yaw,
+			"is_grown": is_grown,
+			"growth_stage": growth_stage,
+		}
+		field_crop_manifests.append(crop_manifest)
+		# Hedgerow instances along parcel border (2 per parcel, capped)
+		if hedgerow_added < hedgerow_cap:
+			var hedges_to_add := mini(2, hedgerow_cap - hedgerow_added)
+			# Generate along long edges of parcel
+			for hi in hedges_to_add:
+				var is_long_side := hi % 2 == 0
+				var hx: float
+				var hz: float
+				var hed_yaw: float
+				if is_long_side:
+					# long side: along X if yaw 0, else along Z
+					if is_equal_approx(absf(p_yaw), PI*0.5):
+						hx = p_center.x
+						hz = p_center.y + (p_size.y * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hed_yaw = p_yaw
+					else:
+						hx = p_center.x + (p_size.x * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hz = p_center.y
+						hed_yaw = p_yaw
+				else:
+					if is_equal_approx(absf(p_yaw), PI*0.5):
+						hx = p_center.x + (p_size.x * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hz = p_center.y
+						hed_yaw = p_yaw
+					else:
+						hx = p_center.x
+						hz = p_center.y + (p_size.y * 0.5 - 0.2) * (1 if hi==0 else -1)
+						hed_yaw = p_yaw
+				var hedge_y: float = _masked_height(world_plan, Vector2(hx, hz)) + WorldConstants.HEDGEROW_HEIGHT * 0.5
+				var hedge_len: float = p_size.x if is_long_side and is_equal_approx(p_yaw, 0.0) else p_size.y if is_long_side else p_size.y if is_equal_approx(p_yaw,0.0) else p_size.x
+				# Use box length 2.0 scaled: we represent whole side as one instance scaled to length
+				var scale_v := Vector3(maxf(2.0, hedge_len * 0.9), WorldConstants.HEDGEROW_HEIGHT, 0.4)
+				var basis := Basis(Vector3.UP, hed_yaw).scaled(scale_v)
+				var xf := Transform3D(basis, Vector3(hx, hedge_y, hz))
+				instances.append(xf)
+				hedgerow_added += 1
+				instance_count += 1
+				if hedgerow_added >= hedgerow_cap:
+					break
+	# enforce field caps again after hedgerow
+	if field_vertices > WorldConstants.MAX_FIELD_VERTS_PER_CHUNK:
+		field_vertices = WorldConstants.MAX_FIELD_VERTS_PER_CHUNK
+	if field_triangles > WorldConstants.MAX_FIELD_TRIS_PER_CHUNK:
+		field_triangles = WorldConstants.MAX_FIELD_TRIS_PER_CHUNK
+	if instance_count > WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
+		# Trim hedgerow if overflow
+		var overflow := instance_count - WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK
+		if overflow > 0 and hedgerow_added > 0:
+			var to_remove := mini(overflow, hedgerow_added)
+			instances.resize(instances.size() - to_remove)
+			instance_count = instances.size()
+			hedgerow_added -= to_remove
 	var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
 	var density_avg := 0.0
-	# average density for forest samples
 	var dens_sum := 0.0
 	var dens_cnt := 0
 	for j in RESOLUTION:
@@ -267,6 +396,16 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"biome_colliders": biome_colliders,
 		"biome_nodes": 0,
 		"biome_instances": instance_count,
+		"field_parcels": field_parcel_manifests.size(),
+		"field_parcel_manifests": field_parcel_manifests,
+		"field_parcel_count": field_parcel_manifests.size(),
+		"field_crops": field_crop_manifests.size(),
+		"field_crop_patches": field_crop_manifests.size(),
+		"field_crop_manifests": field_crop_manifests,
+		"field_vertices": field_vertices,
+		"field_triangles": field_triangles,
+		"field_hedgerow": hedgerow_added,
+		"field_hedgerow_count": hedgerow_added,
 	}
 
 static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
@@ -279,33 +418,93 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var biome_colliders: int = int(manifest.get("biome_colliders", 0))
 	var instance_count: int = int(manifest.get("instance_count", 0))
 	var instances: Array = manifest.get("instances", [])
+	var field_parcel_manifests: Array = manifest.get("field_parcel_manifests", [])
+	var field_crop_manifests: Array = manifest.get("field_crop_manifests", [])
+	var field_vertices: int = int(manifest.get("field_vertices", 0))
+	var field_triangles: int = int(manifest.get("field_triangles", 0))
 	var existing := parent.get_node_or_null(NodePath("Biome_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
 		parent.remove_child(existing)
-		existing.free()
+		existing.queue_free()
 	var biome_node := Node3D.new()
 	biome_node.name = "Biome_%d_%d" % [coord.x, coord.y]
 	parent.add_child(biome_node)
-	# Build overlay mesh even if zero instances (urban still has tint)
-	var verts := PackedVector3Array()
-	verts.resize(RESOLUTION * RESOLUTION)
-	var norms := PackedVector3Array()
-	norms.resize(RESOLUTION * RESOLUTION)
+	# Build overlay mesh (81) + tilled quads (field)
+	var overlay_verts := PackedVector3Array()
+	overlay_verts.resize(RESOLUTION * RESOLUTION)
+	var overlay_norms := PackedVector3Array()
+	overlay_norms.resize(RESOLUTION * RESOLUTION)
 	for j in RESOLUTION:
 		for i in RESOLUTION:
 			var idx := j * RESOLUTION + i
 			var x := origin.x + float(i) * SPACING
 			var z := origin.y + float(j) * SPACING
 			var y: float = heights[idx] if idx < heights.size() else 0.0
-			verts[idx] = Vector3(x, y, z)
-			norms[idx] = Vector3.UP
+			overlay_verts[idx] = Vector3(x, y, z)
+			overlay_norms[idx] = Vector3.UP
+	# If field parcels present, create combined mesh with tilled quads
+	var all_verts := PackedVector3Array()
+	var all_colors := PackedColorArray()
+	var all_indices := PackedInt32Array()
+	all_verts = overlay_verts.duplicate()
+	all_colors = colors.duplicate()
+	all_indices = indices.duplicate()
+	var base_idx := overlay_verts.size()
+	# Add tilled quad vertices per parcel
+	for parc in field_parcel_manifests:
+		var pd: Dictionary = parc as Dictionary
+		var p_center: Vector2 = pd.get("center", Vector2.ZERO) as Vector2
+		var p_size: Vector2 = pd.get("size", Vector2(32,24)) as Vector2
+		var p_crop: StringName = pd.get("crop_kind", &"wheat") as StringName
+		var p_yaw: float = float(pd.get("yaw", 0.0))
+		var col: Color = _tilled_color(p_crop)
+		var h: float = 0.0
+		if heights.size() > 0:
+			# approximate height at center from overlay heights (nearest)
+			var ix := clampi(int(round((p_center.x - origin.x) / SPACING)), 0, RESOLUTION-1)
+			var jz := clampi(int(round((p_center.y - origin.y) / SPACING)), 0, RESOLUTION-1)
+			var idx_c := jz * RESOLUTION + ix
+			if idx_c < heights.size():
+				h = heights[idx_c] - WorldConstants.BIOME_OVERLAY_LIFT_M + WorldConstants.FIELD_PARCEL_LIFT_M
+			else:
+				h = 0.0 + WorldConstants.FIELD_PARCEL_LIFT_M
+		else:
+			h = WorldConstants.FIELD_PARCEL_LIFT_M
+		# Quad corners axis-aligned with yaw (cardinal only)
+		var hx := p_size.x * 0.5
+		var hz := p_size.y * 0.5
+		var corners: Array[Vector3] = []
+		if is_equal_approx(absf(p_yaw), PI*0.5):
+			# swap
+			hx = p_size.y * 0.5
+			hz = p_size.x * 0.5
+		corners.append(Vector3(p_center.x - hx, h, p_center.y - hz))
+		corners.append(Vector3(p_center.x + hx, h, p_center.y - hz))
+		corners.append(Vector3(p_center.x + hx, h, p_center.y + hz))
+		corners.append(Vector3(p_center.x - hx, h, p_center.y + hz))
+		var start := all_verts.size()
+		for c in corners:
+			all_verts.append(c)
+			all_colors.append(col)
+		# two triangles
+		all_indices.append(start)
+		all_indices.append(start + 1)
+		all_indices.append(start + 2)
+		all_indices.append(start)
+		all_indices.append(start + 2)
+		all_indices.append(start + 3)
+	# Build mesh
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_VERTEX] = all_verts
+	var norms := PackedVector3Array()
+	norms.resize(all_verts.size())
+	for i in all_verts.size():
+		norms[i] = Vector3.UP
 	arrays[Mesh.ARRAY_NORMAL] = norms
-	if not colors.is_empty():
-		arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_INDEX] = indices
+	if not all_colors.is_empty():
+		arrays[Mesh.ARRAY_COLOR] = all_colors
+	arrays[Mesh.ARRAY_INDEX] = all_indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mat := StandardMaterial3D.new()
@@ -316,7 +515,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	mi.name = "BiomeMesh"
 	mi.mesh = mesh
 	biome_node.add_child(mi)
-	# MultiMesh for instances
+	# MultiMesh for instances (forest + field edge + hedgerow)
 	var multimesh_created := 0
 	if instance_count > 0 and not instances.is_empty():
 		var mm_instance := MultiMeshInstance3D.new()
@@ -324,7 +523,6 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		var multimesh := MultiMesh.new()
 		multimesh.transform_format = MultiMesh.TRANSFORM_3D
 		multimesh.instance_count = instance_count
-		# Use a simple BoxMesh as proxy; vertex-colored via material? Keep simple.
 		var box := BoxMesh.new()
 		box.size = Vector3(1, 1, 1)
 		var box_mat := StandardMaterial3D.new()
@@ -338,11 +536,6 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		mm_instance.multimesh = multimesh
 		biome_node.add_child(mm_instance)
 		multimesh_created = 1
-	# Collider: at most one per chunk (sparse aggregated, budgeted choice)
-	# Use a single BoxShape per chunk instead of per-instance Concave to keep
-	# physics cost low (9 active biome max -> 9 boxes, not 9*48 concave faces).
-	# Detailed per-tree collision remains a later milestone; this satisfies
-	# the 1-collider ACTIVE-only budget with minimal RID/collision cost.
 	var collider_created := 0
 	if biome_colliders == 1 and instance_count > 0:
 		var body := StaticBody3D.new()
@@ -351,13 +544,11 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		body.collision_mask = 0
 		biome_node.add_child(body)
 		var box_shape := BoxShape3D.new()
-		# Representative trunk/boulder size; placed at first instance or chunk center
 		var base_pos: Vector3 = Vector3.ZERO
 		if not instances.is_empty():
 			base_pos = (instances[0] as Transform3D).origin
 		else:
 			base_pos = Vector3(origin.x + CHUNK_M * 0.5, 0.0, origin.y + CHUNK_M * 0.5)
-		# Ensure Y at terrain height
 		if base_pos.y == 0.0:
 			base_pos.y = 0.6
 		box_shape.size = Vector3(0.6, 1.2, 0.6)
@@ -366,9 +557,33 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		coll.position = base_pos
 		body.add_child(coll)
 		collider_created = 1
+	# CropPatch Area3D leaves (ACTIVE-only monitorable, no collider counted)
+	var crops_created := 0
+	for cdata in field_crop_manifests:
+		var cd: Dictionary = cdata as Dictionary
+		var patch := CropPatch.new()
+		patch.name = String(cd.get("id", "crop_unknown"))
+		# Setup will be called after adding to tree? Set data then add
+		patch.crop_id = String(cd.get("id", ""))
+		patch.parcel_id = String(cd.get("parcel_id", ""))
+		var ck: StringName = StringName(str(cd.get("crop_kind", cd.get("kind", "wheat"))))
+		patch.crop_kind = ck
+		patch.planted_day = int(cd.get("planted_day", 0))
+		var cont: Dictionary = cd.get("contents", {}) as Dictionary
+		patch.contents.clear()
+		for kk in cont.keys():
+			patch.contents[StringName(str(kk))] = int(cont[kk])
+		var pos3: Vector3 = cd.get("position", Vector3.ZERO) as Vector3
+		# Ensure position's y is at terrain + lift; pos3 already has correct y from manifest
+		biome_node.add_child(patch)
+		patch.position = pos3
+		if cd.has("yaw"):
+			patch.rotation.y = float(cd["yaw"])
+		# initial depleted false; will be patched by ChunkManager if saved
+		crops_created += 1
 	var mat_ms := float(Time.get_ticks_usec() - t0) / 1000.0
-	var verts_n := verts.size()
-	var tris_n := indices.size() / 3
+	var verts_n := all_verts.size()
+	var tris_n := all_indices.size() / 3
 	return {
 		"biome_vertices": verts_n,
 		"biome_triangles": tris_n,
@@ -378,4 +593,9 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"biome_mat_ms": mat_ms,
 		"biome_nodes": 1 + multimesh_created + collider_created,
 		"biome_multimesh": multimesh_created,
+		"field_parcels": int(field_parcel_manifests.size()),
+		"field_crops": crops_created,
+		"field_vertices": field_vertices,
+		"field_triangles": field_triangles,
+		"field_hedgerow": int(manifest.get("field_hedgerow", 0)),
 	}

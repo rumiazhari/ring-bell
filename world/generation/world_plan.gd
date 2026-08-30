@@ -21,6 +21,8 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
+	if biome.has_method("set_world_refs"):
+		biome.set_world_refs(settlement, road_network, rural_building)
 
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
@@ -126,6 +128,18 @@ func biome_density_at(p: Vector2) -> float:
 
 func surface_tint_at(p: Vector2) -> Color:
 	return biome.surface_tint_at(p)
+
+func field_parcels_in(rect: Rect2) -> Array[Dictionary]:
+	return biome.field_parcels_in(rect)
+
+func field_parcels() -> Array[Dictionary]:
+	return biome.field_parcels()
+
+func nearest_field_parcel(p: Vector2) -> Dictionary:
+	return biome.nearest_field_parcel(p)
+
+func crop_patch_for_parcel(parcel_id: String) -> Dictionary:
+	return biome.crop_patch_for_parcel(parcel_id)
 
 # --- Settlement forwarding (pure, deterministic) ---
 
