@@ -103,6 +103,7 @@ func _build_stats_text() -> String:
 		ActorRegistry.count_alive_in_group(&"zombies"),
 	])
 	lines.append(_player_line())
+	lines.append(_locomotion_line())
 	for line in _chunk_lines():
 		lines.append(line)
 	for quest_id: StringName in QuestManager.QUEST_DEFS:
@@ -137,6 +138,29 @@ func _player_line() -> String:
 		player.stamina,
 		player.health.infection * 100.0,
 	]
+
+
+func _locomotion_line() -> String:
+	var player := ActorRegistry.get_actor(&"player")
+	if player == null or not is_instance_valid(player):
+		return "loco: no player"
+	if not player.has_method("get_locomotion"):
+		return "loco: no locomotion"
+	var loco: CharacterLocomotion = player.get_locomotion() as CharacterLocomotion
+	if loco == null or not is_instance_valid(loco):
+		return "loco: no locomotion"
+	var speed: float = 0.0
+	if player is CharacterBody3D:
+		speed = Vector2((player as CharacterBody3D).velocity.x, (player as CharacterBody3D).velocity.z).length()
+	var state_str: String = player.get_locomotion_state() if player.has_method("get_locomotion_state") else "?"
+	var blend: float = loco.blend
+	var strafe: float = loco.strafe
+	var slope: float = loco.slope_deg
+	var foot: float = loco.foot_slide
+	var anim_ms: float = loco.get_anim_ms() if loco.has_method("get_anim_ms") else 0.0
+	var active_chars: int = CharacterLocomotion.active_char_count()
+	var skinned: int = CharacterLocomotion.skinned_count()
+	return "loco: %s blend %.2f speed %.1f strafe %.1f slope %.1f foot_slide %.3f anim_ms %.2f active_chars %d/12 skinned %d/9" % [state_str, blend, speed, strafe, slope, foot, anim_ms, active_chars, skinned]
 
 
 func _quest_state_text(quest_id: StringName) -> String:

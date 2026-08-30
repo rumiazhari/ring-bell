@@ -67,6 +67,9 @@ var _death_impulse := Vector3.ZERO     # snapshot of the killing blow's push
 var _visual_root: Node3D
 var _model_root: Node3D
 var _animator: HumanoidAnimator
+var _skeleton: Skeleton3D
+var _locomotion: CharacterLocomotion
+var _visual_yaw: float = 0.0
 var _lantern: OmniLight3D
 var _lantern_t := 0.0
 
@@ -177,10 +180,23 @@ func _setup_body() -> void:
 		cfg["hair"] = Color(0.4, 0.27, 0.16)
 		cfg["pants"] = Color(0.35, 0.32, 0.36)
 	_model_root = HumanoidModel.build_human(cfg)
+	# Skeleton + locomotion (in-place, ACTIVE-only)
+	_skeleton = SkeletonFactory.build_survivor_skeleton()
+	_visual_root.add_child(_skeleton)
+	_locomotion = CharacterLocomotion.new()
+	_locomotion.name = "Locomotion"
+	_visual_root.add_child(_locomotion)
+	# Attach primitive meshes via BoneAttachment3D before animator
+	SkeletonFactory.attach_model(_skeleton, _model_root)
 	_animator = HumanoidAnimator.new()
 	_visual_root.add_child(_animator)
 	_animator.add_child(_model_root)
 	_animator.configure(_model_root.get_meta("anim_limbs"))
+	# Wire locomotion after skeleton is in tree
+	_locomotion.setup(_skeleton, _model_root)
+	# Gate animator: when skeleton exists, locomotion is authoritative
+	if _skeleton != null:
+		_animator.set_process(false)
 
 
 func set_body_color(color: Color) -> void:
@@ -246,14 +262,73 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
-	if _animator != null:
+	if _locomotion != null and _skeleton != null and is_instance_valid(_locomotion) and is_instance_valid(_skeleton):
+		var xz_speed: float = Vector2(velocity.x, velocity.z).length()
+		# strafe: signed lateral where +1 is right
+		var right := Vector3(-facing.z, 0.0, facing.x)
+		var strafe_val: float = 0.0
+		if _move_dir.length_squared() > 0.001:
+			strafe_val = clamp(_move_dir.dot(right), -1.0, 1.0)
+		# slope: from floor normal or WorldPlan height delta (read-only)
+		var slope_val: float = 0.0
+		if is_on_floor():
+			var n: Vector3 = get_floor_normal()
+			slope_val = rad_to_deg(acos(clampf(n.dot(Vector3.UP), -1.0, 1.0)))
+			# Clamp to buildable max
+			slope_val = min(slope_val, 22.0)
+		else:
+			# Fallback: sample WorldPlan heights if available (read-only)
+			var mgr_world := get_tree().get_first_node_in_group("chunk_manager") if get_tree().has_method("get_first_node_in_group") else null
+			if mgr_world == null:
+				var managers2 := get_tree().get_nodes_in_group("chunk_manager")
+				if not managers2.is_empty():
+					mgr_world = managers2[0]
+			if mgr_world != null and mgr_world.has_method("get") and mgr_world.get("world_plan") != null:
+				var wp: WorldPlan = mgr_world.get("world_plan") as WorldPlan
+				if wp != null:
+					var p0 := Vector2(global_position.x, global_position.z)
+					var p1 := p0 + Vector2(1, 0)
+					var h0: float = wp.terrain_height_at(p0)
+					var h1: float = wp.terrain_height_at(p1)
+					slope_val = rad_to_deg(atan2(abs(h1 - h0), 1.0))
+		# yaw delta: wrap target - facing
+		var facing_yaw: float = atan2(facing.x, facing.z)
+		var target_yaw: float = facing_yaw
+		if _move_dir.length_squared() > 0.001:
+			target_yaw = atan2(_move_dir.x, _move_dir.z)
+		else:
+			# For stationary turn, check visual yaw vs facing (mouse yaw)
+			target_yaw = _visual_yaw
+		var yaw_delta: float = wrapf(target_yaw - facing_yaw, -PI, PI)
+		# Deadzone to avoid jitter
+		if abs(yaw_delta) < deg_to_rad(15.0):
+			yaw_delta = 0.0
+		_locomotion.update({
+			"speed": xz_speed,
+			"strafe": strafe_val,
+			"slope_deg": slope_val,
+			"yaw_delta": yaw_delta,
+			"is_airborne": not is_on_floor(),
+			"move_dir": _move_dir,
+			"facing": facing
+		}, delta)
+		# In-place guarantee: root bone must stay <0.005
+		if _skeleton != null and is_instance_valid(_skeleton):
+			var rid: int = _skeleton.find_bone("root")
+			if rid >= 0:
+				var pos: Vector3 = _skeleton.get_bone_pose_position(rid)
+				if pos.length() > 0.0049:
+					_skeleton.set_bone_pose_position(rid, Vector3.ZERO)
+	elif _animator != null:
 		_animator.set_motion(
 			Vector2(velocity.x, velocity.z).length(),
 			not is_on_floor())
 
 	if moving:
 		facing = _move_dir.normalized()
-	_visual_root.rotation.y = atan2(facing.x, facing.z)
+	# Visual yaw: face where we move, smoothed
+	_visual_yaw = atan2(facing.x, facing.z)
+	_visual_root.rotation.y = _visual_yaw
 
 	_update_lantern(delta)
 
@@ -438,8 +513,41 @@ func _spawn_ragdoll_corpse() -> void:
 
 ## Firearm recoil / melee swing cue for the procedural animator.
 func notify_attack_anim() -> void:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		# Locomotion authoritative, but also trigger animator for attacks if needed
+		if _animator != null:
+			_animator.play_attack()
+		return
 	if _animator != null:
 		_animator.play_attack()
+
+func get_locomotion_state() -> String:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		match _locomotion.state:
+			CharacterLocomotion.State.IDLE: return "IDLE"
+			CharacterLocomotion.State.WALK: return "WALK"
+			CharacterLocomotion.State.RUN: return "RUN"
+			CharacterLocomotion.State.SPRINT: return "SPRINT"
+			CharacterLocomotion.State.TURN_L90: return "TURN_L90"
+			CharacterLocomotion.State.TURN_R90: return "TURN_R90"
+			CharacterLocomotion.State.TURN_180: return "TURN_180"
+	return "IDLE"
+
+func get_locomotion_blend() -> float:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.blend
+	return 0.0
+
+func get_foot_slide() -> float:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.foot_slide
+	return 0.0
+
+func get_skeleton() -> Skeleton3D:
+	return _skeleton
+
+func get_locomotion() -> CharacterLocomotion:
+	return _locomotion
 
 
 # --- Persistence ------------------------------------------------------------
@@ -474,3 +582,10 @@ func load_state(data: Dictionary) -> void:
 	inventory.load_state(data.get("items", {}))
 	health.load_state(data)
 	needs.load_state(data)
+	# Locomotion reconstruction: IDLE then next update corrects to material speed (persistence)
+	if _locomotion != null and is_instance_valid(_locomotion):
+		_locomotion.state = CharacterLocomotion.State.IDLE
+		_locomotion.blend = 0.0
+		_locomotion.strafe = 0.0
+		_locomotion.slope_deg = 0.0
+		_locomotion.foot_slide = 0.0

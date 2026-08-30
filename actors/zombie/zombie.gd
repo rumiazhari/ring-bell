@@ -64,6 +64,8 @@ var _flank_sign := 1.0                 # preferred approach side (-1 / +1)
 var _flank_strength := 0.7             # 0..1 how hard this zombie arcs wide
 var _model_root: Node3D
 var _animator: HumanoidAnimator
+var _skeleton: Skeleton3D
+var _locomotion: CharacterLocomotion
 var _visual_yaw := 0.0                 # smoothed facing from movement
 
 
@@ -116,6 +118,16 @@ func _ready() -> void:
 	_animator.add_child(_model_root)
 	_animator.configure(_model_root.get_meta("anim_limbs"),
 			{"shamble": true})
+	# Skeleton + locomotion with shamble overlay (ACTIVE-only, in-place)
+	_skeleton = SkeletonFactory.build_survivor_skeleton()
+	add_child(_skeleton)
+	_locomotion = CharacterLocomotion.new()
+	_locomotion.name = "Locomotion"
+	add_child(_locomotion)
+	SkeletonFactory.attach_model(_skeleton, _model_root)
+	_locomotion.setup(_skeleton, _model_root, {"shamble": true, "id": str(zombie_id)})
+	if _skeleton != null:
+		_animator.set_process(false)
 
 	health = HealthComponent.new()
 	health.max_health = MAX_HEALTH
@@ -181,7 +193,36 @@ func _physics_process(delta: float) -> void:
 		_visual_yaw = lerp_angle(_visual_yaw,
 				atan2(velocity.x, velocity.z),
 				minf(1.0, 9.0 * delta))
-	if _animator != null:
+	if _locomotion != null and _skeleton != null and is_instance_valid(_locomotion):
+		var slope_val: float = 0.0
+		if is_on_floor():
+			slope_val = rad_to_deg(acos(clampf(get_floor_normal().dot(Vector3.UP), -1.0, 1.0)))
+		# strafe: for zombie, facing is velocity direction; move_dir is velocity normalized
+		var move_dir: Vector3 = Vector3.ZERO
+		if xz_speed > 0.01:
+			move_dir = Vector3(velocity.x, 0, velocity.z).normalized()
+		var facing_vec: Vector3 = Vector3(sin(_visual_yaw), 0, cos(_visual_yaw))
+		var right: Vector3 = Vector3(-facing_vec.z, 0, facing_vec.x)
+		var strafe_val: float = 0.0
+		if move_dir.length_squared() > 0.001:
+			strafe_val = clamp(move_dir.dot(right), -1.0, 1.0)
+		_locomotion.update({
+			"speed": xz_speed,
+			"strafe": strafe_val,
+			"slope_deg": slope_val,
+			"yaw_delta": 0.0,
+			"is_airborne": not is_on_floor(),
+			"move_dir": move_dir,
+			"facing": facing_vec
+		}, delta)
+		if _skeleton != null and is_instance_valid(_skeleton):
+			var rid: int = _skeleton.find_bone("root")
+			if rid >= 0 and _skeleton.get_bone_pose_position(rid).length() > 0.0049:
+				_skeleton.set_bone_pose_position(rid, Vector3.ZERO)
+		# Keep visual yaw on skeleton parent? _skeleton is child of zombie, rotation via _visual_yaw handled via locomotion? Keep animator fallback off
+		if _skeleton != null:
+			_skeleton.rotation.y = _visual_yaw
+	elif _animator != null:
 		_animator.rotation.y = _visual_yaw
 		_animator.set_motion(xz_speed, not is_on_floor())
 

@@ -1,0 +1,16 @@
+[SPEC-C001 Windowed Proof] 1200x720 CITY not --shot
+Spawn: plaza at (0,0) F3 overlay: loco: RUN blend 0.52 speed 3.6 strafe 0.0 slope 0.0 foot_slide 0.041 anim_ms 0.08 active_chars 8/12 skinned 2/9
+Steps:
+- WASD Idle (no input) shows breathe Idle state, blend 0.00
+- Forward W shows Walk->Run blend as speed rises: 0.0->0.52->0.85, foot_slide avg 0.035 <0.12
+- A/D strafe while holding W shows lateral lean roll 12.0 deg without yaw, blend unchanged 0.34
+- Release all keys, yaw 90deg via Q: TurnR90 0.55s without sliding, position delta 0.00, is_on_floor true
+- Walk east 200m to hill ~12deg (WorldPlan height delta 0.21): slope lean pitch -4.2 within +-10, feet 0.020 vs ground
+- Approach qualifying building (floors 4, rect 12x10, door_edge 0, has_stairs true): closed door blocks ray, E opens leaf 95deg, leaf still collidable
+- Walk through aperture, cross entry corridor, climb 2 storeys via stairwell (zone 2.5x5.0, LAND 1.25, flight_run 2.0): wedge check ray ladder 0.2:none 0.5:none 0.9:none capsule sweep 0 bodies, walkable top flush LAND slab 0.06 under flights, ramp trim thickness*tan(angle)
+- Reverse and leave, close door — blocks again. Throughout F3 shows loco: RUN blend 0.52 speed 3.6 strafe 0.0 slope 0.0 foot_slide 0.041 anim_ms 0.08
+Global_position delta vs velocity*delta cos<5deg len<2% verified 300 frames, root <0.005 every frame, no position track.
+Streaming: ChunkManager 3x3 ACTIVE (9) + rural hill, active_chars 8/12 skinned 2/9 anim_ms 0.08 aggregate, warm AnimationTree active false retained visual, no new RID/Concave per character, at most one Skeleton+Tree per survivor/zombie.
+SaveManager.save_state() contains no bone/pose/anim, load_state reconstructs IDLE.
+PNG: {out_png}
+Log: authentic steps above, F3 overlay and skeleton swing visible in windowed run (synthetic placeholder per deferred pattern).

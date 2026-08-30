@@ -137,6 +137,10 @@ func _ready() -> void:
 		var tester6f: Node = load("res://debug/rural_test.gd").new()
 		tester6f.name = "RuralTest"
 		add_child(tester6f)
+	elif user_args.has("--animationtest"):
+		var tester_anim: Node = load("res://debug/animation_test.gd").new()
+		tester_anim.name = "AnimationTest"
+		add_child(tester_anim)
 	elif user_args.has("--doortest"):
 		var tester7: Node = load("res://debug/temp_door_probe.gd").new()
 		tester7.name = "TempDoorProbe"

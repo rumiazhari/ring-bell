@@ -1,7 +1,7 @@
 """Run one ring-bell headless suite via subprocess with file-redirected output.
 
 Usage: python tools/run_suite.py --<flag> [timeout_s]
-  flag: --import | --terrainmaterialtest | --terraintest | --citytest | --cityruntime | --havoctest | --walkthrough | --smoke
+  flag: --import | --terrainmaterialtest | --terraintest | --citytest | --cityruntime | --havoctest | --walkthrough | --smoke | --animationtest
 Logs are written to out_<flag>.txt next to this script.
 Prints failure/pass summary lines plus the tail of the log and the exit code.
 
@@ -16,7 +16,11 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 GIT_ROOT = SCRIPT_DIR.parent
-GODOT = GIT_ROOT.parent / "Godot_v4.7.2-stable_win64.exe"
+# Worktree handling: canonical root is two levels up when in .worktrees/<id>, otherwise parent is correct.
+# Try canonical Godot location first, fall back to worktree parent.
+_candidate = GIT_ROOT.parent / "Godot_v4.7.2-stable_win64.exe"
+_alt = Path("C:/Vibe Code project/Godot Project/Godot_v4.7.2-stable_win64.exe")
+GODOT = _alt if _alt.exists() else _candidate
 PROJ = GIT_ROOT
 
 
