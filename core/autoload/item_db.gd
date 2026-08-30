@@ -50,6 +50,32 @@ const ITEMS := {
 		"kind": KIND_FOOD,
 		"hunger_reduction": 12.0,
 	},
+	&"wheat_grain": {
+		"name": "Wheat Grain",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 12.0,
+	},
+	&"barley_grain": {
+		"name": "Barley Grain",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 10.0,
+	},
+	&"flour": {
+		"name": "Flour",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 14.0,
+	},
+	&"bread": {
+		"name": "Bread",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 42.0,
+	},
+	&"cider": {
+		"name": "Cider",
+		"kind": KIND_FOOD,
+		"hunger_reduction": 8.0,
+		"thirst_reduction": 38.0,
+	},
 	&"pipe": {
 		"name": "Steel Pipe",
 		"kind": KIND_WEAPON_MELEE,

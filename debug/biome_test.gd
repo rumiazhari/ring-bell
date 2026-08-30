@@ -1538,3 +1538,74 @@ func _run_all() -> void:
 			if WorldConstants.BIOME_VOCAB.has(bpp2.biome_at(p)) and WorldConstants.GEOLOGY_STRATA_VOCAB.has(gpp.strata_at(p)):
 				total_biome_checks += 1
 	_check("biome/geology vocab checks across seeds", total_biome_checks >= 40, str(total_biome_checks))
+	# --- C011 distinct grain + workbench checks ---
+	var item_wheat: Dictionary = ItemDB.get_def(&"wheat_grain")
+	_check("ItemDB wheat_grain hunger 12", is_equal_approx(float(item_wheat.get("hunger_reduction", -1)), 12.0), str(item_wheat))
+	var item_barley: Dictionary = ItemDB.get_def(&"barley_grain")
+	_check("ItemDB barley_grain hunger 10", is_equal_approx(float(item_barley.get("hunger_reduction", -1)), 10.0), str(item_barley))
+	var item_flour: Dictionary = ItemDB.get_def(&"flour")
+	_check("ItemDB flour hunger 14", is_equal_approx(float(item_flour.get("hunger_reduction", -1)), 14.0), str(item_flour))
+	var item_bread: Dictionary = ItemDB.get_def(&"bread")
+	_check("ItemDB bread hunger 42", is_equal_approx(float(item_bread.get("hunger_reduction", -1)), 42.0), str(item_bread))
+	var item_cider: Dictionary = ItemDB.get_def(&"cider")
+	_check("ItemDB cider thirst 38", is_equal_approx(float(item_cider.get("thirst_reduction", -1)), 38.0), str(item_cider))
+	var wheat_grain_ok := false
+	var barley_grain_ok := false
+	var wheat_canned := false
+	var all_parcels_check: Array[Dictionary] = wp.field_parcels_in(Rect2(Vector2(-4000, -4000), Vector2(8000, 8000)))
+	for fp in all_parcels_check:
+		var dk: StringName = fp.get("crop_kind", &"") as StringName
+		var dc: Dictionary = fp.get("contents", {}) as Dictionary
+		if dk == &"wheat" and dc.has(&"wheat_grain"):
+			wheat_grain_ok = true
+		if dk == &"wheat" and dc.has(&"canned_food"):
+			wheat_canned = true
+		if dk == &"barley" and dc.has(&"barley_grain"):
+			barley_grain_ok = true
+	# also check manifests as fallback
+	if not wheat_grain_ok or not barley_grain_ok:
+		for c in field_manifests_fwd.keys():
+			var plist: Array = field_manifests_fwd[c].get("field_parcel_manifests", []) as Array
+			for fp2 in plist:
+				var dk2: StringName = (fp2 as Dictionary).get("crop_kind", &"") as StringName
+				var dc2: Dictionary = (fp2 as Dictionary).get("contents", {}) as Dictionary
+				if dk2 == &"wheat" and dc2.has(&"wheat_grain"):
+					wheat_grain_ok = true
+				if dk2 == &"barley" and dc2.has(&"barley_grain"):
+					barley_grain_ok = true
+	_check("CropPatch distinct wheat->wheat_grain not canned", wheat_grain_ok and not wheat_canned, "wheat_grain %s canned %s" % [wheat_grain_ok, wheat_canned])
+	_check("CropPatch distinct barley->barley_grain", barley_grain_ok, str(barley_grain_ok))
+	# Workbench per chunk and budget via BiomeChunkBuilder rural side? Check via RuralBuildingPlan
+	var wp_wb := WorldPlan.new(canonical)
+	var rur_wb: RuralBuildingPlan = wp_wb.rural_building
+	var wbs_all: Array[Dictionary] = rur_wb.rural_workbenches()
+	_check("workbench at least 1 in canonical", wbs_all.size() >= 1, str(wbs_all.size()))
+	var wb_per_chunk_ok := true
+	for c in [Vector2i(0,0), Vector2i(1,0), Vector2i(0,1), Vector2i(-1,-1), Vector2i(8,0)]:
+		var pm: Dictionary = RuralBuildingChunkBuilder.build_manifest(wp_wb, c)
+		var wbc: int = int(pm.get("rural_workbenches", 0))
+		if wbc > WorldConstants.RURAL_WORKBENCH_MAX_PER_CHUNK:
+			wb_per_chunk_ok = false
+			break
+	_check("workbench per chunk <=2", wb_per_chunk_ok, "")
+	# Workbench prompt priority via Workbench instance
+	var dummy_wb2 = load("res://world/workbench.gd").new()
+	dummy_wb2._ready()
+	var test_player2 := Survivor.new()
+	test_player2.configure({"is_player": true, "items": {}})
+	add_child(test_player2)
+	add_child(dummy_wb2)
+	await get_tree().process_frame
+	test_player2.inventory.add(&"flour", 1)
+	dummy_wb2._update_prompt(test_player2)
+	_check("workbench prompt Bake bread with flour", dummy_wb2.interactable.prompt.find("Bake bread") != -1, dummy_wb2.interactable.prompt)
+	test_player2.inventory.remove(&"flour", 1)
+	test_player2.inventory.add(&"apple", 2)
+	dummy_wb2._update_prompt(test_player2)
+	_check("workbench prompt Press cider with apple", dummy_wb2.interactable.prompt.find("Press cider") != -1, dummy_wb2.interactable.prompt)
+	test_player2.inventory.remove(&"apple", 2)
+	test_player2.inventory.add(&"wheat_grain", 2)
+	dummy_wb2._update_prompt(test_player2)
+	_check("workbench prompt Mill flour with wheat_grain", dummy_wb2.interactable.prompt.find("Mill flour") != -1, dummy_wb2.interactable.prompt)
+	dummy_wb2.queue_free()
+	test_player2.queue_free()

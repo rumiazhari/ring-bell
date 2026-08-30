@@ -332,8 +332,53 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var has_hearth: bool = hearth_manifests.size() > 0
 	var has_stove: bool = stove_manifests.size() > 0
 	var has_bed: bool = bed_manifests.size() > 0
+	# Workbench manifests (village barn mill/press, hamlet 0-1 via plan, clipped center ownership)
+	var workbench_manifests: Array[Dictionary] = []
+	if not suppress:
+		var raw_wb: Array[Dictionary] = world_plan.rural_workbenches_in(rect)
+		for w in raw_wb:
+			var wpos: Vector2 = w["pos"] as Vector2
+			if not rect.has_point(wpos):
+				continue
+			if wpos.length() < WorldConstants.URBAN_INNER_M - 0.5:
+				var is_gate_wb := false
+				var gates_wb: Array[Dictionary] = world_plan.city_gates()
+				for g in gates_wb:
+					var gc: Vector2 = g["center"] as Vector2
+					if wpos.distance_to(gc) < 140.0:
+						is_gate_wb = true
+						break
+				if not is_gate_wb:
+					continue
+			var ground_wb: float = world_plan.terrain_height_at(wpos) + WorldConstants.WORKBENCH_LIFT_M
+			var pos3wb: Vector3 = Vector3(wpos.x, ground_wb + WorldConstants.RURAL_WORKBENCH_SIZE.y*0.5, wpos.y)
+# alternatively use pos3 from plan
+			var wpos3: Vector3 = w.get("pos3", pos3wb) as Vector3
+			if wpos3 == Vector3.ZERO:
+				wpos3 = pos3wb
+			var wm: Dictionary = {
+				"id": w["id"],
+				"workbench_id": w.get("workbench_id", w["id"]),
+				"building_id": w["building_id"],
+				"settlement_id": w["settlement_id"],
+				"settlement_kind": w.get("settlement_kind", &"village"),
+				"building_kind": w.get("building_kind", &"barn"),
+				"pos": wpos,
+				"position": wpos3,
+				"pos3": wpos3,
+				"aabb": w.get("aabb", Rect2(wpos - Vector2(0.6,0.3), Vector2(1.2,0.6))),
+				"center": w.get("center", wpos),
+				"yaw": float(w.get("yaw", 0.0)),
+				"size": w.get("size", WorldConstants.RURAL_WORKBENCH_SIZE),
+			}
+			workbench_manifests.append(wm)
+	if workbench_manifests.size() > WorldConstants.RURAL_WORKBENCH_MAX_PER_CHUNK:
+		workbench_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		workbench_manifests = workbench_manifests.slice(0, WorldConstants.RURAL_WORKBENCH_MAX_PER_CHUNK)
+	workbench_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	var has_workbench: bool = workbench_manifests.size() > 0
 	# has_rural now true if buildings or wells/forage present (well gives collider, forage alone still visual but we treat as rural for mesh, collider only for building/well)
-	var has_any_visual: bool = has_rural or has_well or has_forage
+	var has_any_visual: bool = has_rural or has_well or has_forage or has_workbench
 	var has_collider: bool = has_rural or has_well
 	# Generate batched mesh geometry
 	var verts := PackedVector3Array()
@@ -511,6 +556,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var rural_hearths: int = hearth_manifests.size()
 	var rural_stoves: int = stove_manifests.size()
 	var rural_beds: int = bed_manifests.size()
+	var rural_workbenches: int = workbench_manifests.size()
 	var gen_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
 	door_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -549,6 +595,9 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"rural_hearths": rural_hearths,
 		"rural_stoves": rural_stoves,
 		"rural_beds": rural_beds,
+		"rural_workbenches": rural_workbenches,
+		"workbench_manifests": workbench_manifests,
+		"workbenches": rural_workbenches,
 		"well_vertices": well_vertices,
 		"well_triangles": well_triangles,
 		"forage_vertices": forage_vertices,
@@ -561,6 +610,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"has_hearth": has_hearth,
 		"has_stove": has_stove,
 		"has_bed": has_bed,
+		"has_workbench": has_workbench,
 		"rural_gen_ms": gen_ms,
 		"rural_mat_ms": 0.0,
 		"aabbs": aabbs,
@@ -579,7 +629,8 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var has_well: bool = bool(manifest.get("has_well", false))
 	var has_forage: bool = bool(manifest.get("has_forage", false))
 	var has_hearth: bool = bool(manifest.get("has_hearth", false))
-	var has_any: bool = has_rural or has_well or has_forage or has_hearth
+	var has_workbench: bool = bool(manifest.get("has_workbench", false))
+	var has_any: bool = has_rural or has_well or has_forage or has_hearth or has_workbench
 	var existing := parent.get_node_or_null(NodePath("Rural_%d_%d" % [coord.x, coord.y]))
 	if existing != null:
 		parent.remove_child(existing)
@@ -598,6 +649,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			"rural_hearths": 0,
 			"rural_stoves": 0,
 			"rural_beds": 0,
+			"rural_workbenches": 0,
 			"rural_buildings": 0,
 			"has_rural": false,
 			"rural_gen_ms": float(manifest.get("rural_gen_ms", 0.0)),
@@ -616,6 +668,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var hearth_manifests: Array = manifest.get("hearth_manifests", []) as Array
 	var stove_manifests: Array = manifest.get("stove_manifests", []) as Array
 	var bed_manifests: Array = manifest.get("bed_manifests", []) as Array
+	var workbench_manifests: Array = manifest.get("workbench_manifests", manifest.get("workbenches", [])) as Array
 	var rural_node := Node3D.new()
 	rural_node.name = "Rural_%d_%d" % [coord.x, coord.y]
 	parent.add_child(rural_node)
@@ -786,6 +839,23 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 				stove2.call("_update_prompt", null)
 			stove_count += 1
 			hearth_count += 1
+	var workbench_count := 0
+	for wm in workbench_manifests:
+		var w: Dictionary = wm as Dictionary
+		var pos3w: Vector3 = w.get("position", w.get("pos3", Vector3.ZERO)) as Vector3
+		if pos3w == Vector3.ZERO:
+			var p2: Vector2 = w.get("pos", Vector2.ZERO) as Vector2
+			pos3w = Vector3(p2.x, pos3w.y, p2.y)
+		var wb = load("res://world/workbench.gd").new()
+		wb.name = String(w["id"])
+		wb.position = pos3w
+		wb.rotation.y = float(w.get("yaw", 0.0))
+		wb.workbench_id = String(w["id"])
+		wb.building_id = String(w.get("building_id", ""))
+		rural_node.add_child(wb)
+		if wb.has_method("_update_prompt"):
+			wb.call("_update_prompt", null)
+		workbench_count += 1
 	var mat_ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
 	var has_collider_flag: bool = has_rural or has_well
 	return {
@@ -799,6 +869,9 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"rural_hearths": hearth_count,
 		"rural_stoves": stove_count,
 		"rural_beds": bed_count,
+		"rural_workbenches": workbench_count,
+		"workbenches": workbench_count,
+		"workbench_manifests": workbench_count,
 		"rural_furniture": int(manifest.get("rural_furniture", 0)),
 		"rural_buildings": int((manifest.get("rural_buildings", []) as Array).size()),
 		"has_rural": true,

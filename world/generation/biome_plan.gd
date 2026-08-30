@@ -272,15 +272,15 @@ func _nearest_road_tangent(p: Vector2) -> Vector2:
 func _contents_for_crop(crop: StringName) -> Dictionary:
 	match crop:
 		&"wheat":
-			return {&"canned_food": 1}
+			return {&"wheat_grain": 1}
 		&"barley":
-			return {&"water_bottle": 1}
+			return {&"barley_grain": 1}
 		&"potato":
 			return {&"bandage": 1}
 		&"beet":
 			return {&"antibiotics": 1}
 		_:
-			return {&"canned_food": 1}
+			return {&"wheat_grain": 1}
 
 func _is_grown(planted_day: int) -> bool:
 	var cur_day: int = 1

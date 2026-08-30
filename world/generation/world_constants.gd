@@ -302,6 +302,20 @@ const MAX_ORCHARD_INSTANCES_PER_CHUNK := 12
 const ORCHARD_TRUNK_SIZE := Vector3(0.35, 1.8, 0.35)
 const ORCHARD_CANOPY_SIZE := Vector3(1.4, 1.0, 1.4)
 
+# --- Rural Workbench Economy (P5.3) authoritative numerics ---
+const RURAL_WORKBENCH_MAX_PER_CHUNK := 2
+const RURAL_WORKBENCH_MAX_PER_VILLAGE := 1
+const RURAL_WORKBENCH_MAX_PER_HAMLET := 1
+const RURAL_WORKBENCH_MAX_PER_FARMSTEAD := 0
+const RURAL_WORKBENCH_SPACING_MIN := 8.0
+const RURAL_WORKBENCH_BUILDING_GAP_MIN := 1.0
+const RURAL_WORKBENCH_SIZE := Vector3(1.2, 0.9, 0.6)
+const COL_WORKBENCH := Color("7a6a5a")
+const WORKBENCH_LIFT_M := 0.04
+const RURAL_WORKBENCH_WELL_GAP_MIN := 6.0
+const RURAL_WORKBENCH_FORAGE_GAP_MIN := 6.0
+const RURAL_WORKBENCH_ROAD_SETBACK := 3.0
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]

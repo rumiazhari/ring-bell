@@ -236,3 +236,15 @@ func rural_hearths_in(rect: Rect2) -> Array[Dictionary]:
 
 func nearest_rural_hearth(p: Vector2, kind: StringName = &"") -> Dictionary:
 	return rural_building.nearest_rural_hearth(p, kind)
+
+func rural_workbenches() -> Array[Dictionary]:
+	return rural_building.rural_workbenches()
+
+func rural_workbenches_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_workbenches_in(rect)
+
+func nearest_rural_workbench(p: Vector2) -> Dictionary:
+	return rural_building.nearest_rural_workbench(p)
+
+func workbench_for_building(building_id: String) -> Dictionary:
+	return rural_building.workbench_for_building(building_id)

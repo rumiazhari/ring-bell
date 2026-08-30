@@ -20,8 +20,12 @@ var _wells_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
 var _wells_by_id: Dictionary = {}
 var _forage: Array[Dictionary] = []
 var _forage_by_id: Dictionary = {}
+var _workbenches: Array[Dictionary] = []
+var _workbenches_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
+var _workbenches_by_id: Dictionary = {} # workbench.id -> Dictionary
+var _workbench_by_building: Dictionary = {} # building.id -> Dictionary
 
-static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary}
+static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary, workbenches: Array, workbenches_by_settlement: Dictionary, workbenches_by_id: Dictionary, workbench_by_building: Dictionary}
 
 static func _unit_float_with_seed(purpose: String, parts: Array, seed: int) -> float:
 	return float(WorldSeed.combine([seed, WorldSeed.str_hash(purpose)] + parts) % 1000003) / 1000003.0
@@ -53,6 +57,13 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 		_wells_by_id = (cached.get("wells_by_id", {}) as Dictionary).duplicate()
 		_forage = (cached.get("forage", []) as Array[Dictionary]).duplicate()
 		_forage_by_id = (cached.get("forage_by_id", {}) as Dictionary).duplicate()
+		_workbenches = (cached.get("workbenches", []) as Array[Dictionary]).duplicate()
+		var wbs2: Dictionary = cached.get("workbenches_by_settlement", {}) as Dictionary
+		_workbenches_by_settlement = {}
+		for k in wbs2.keys():
+			_workbenches_by_settlement[k] = (wbs2[k] as Array[Dictionary]).duplicate()
+		_workbenches_by_id = (cached.get("workbenches_by_id", {}) as Dictionary).duplicate()
+		_workbench_by_building = (cached.get("workbench_by_building", {}) as Dictionary).duplicate()
 		# Invalidate stale cache without hearth (SPEC-C008): hearth derived from furniture must exist
 		var stale := false
 		if _buildings.size() > 0:
@@ -60,6 +71,16 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 			if first.has("interior"):
 				var inter: Dictionary = first["interior"] as Dictionary
 				if not inter.has("hearth"):
+					stale = true
+		if not stale:
+			# also invalidate if workbenches missing for existing village barns
+			if _workbenches.is_empty() and _buildings.size() > 0:
+				var has_village_barn := false
+				for b in _buildings:
+					if String(b.get("settlement_kind", "")) == "village" and (String(b.get("kind","")) == "barn" or String(b.get("kind","")) == "stable"):
+						has_village_barn = true
+						break
+				if has_village_barn:
 					stale = true
 		if not stale:
 			return
@@ -73,7 +94,10 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 	var wbs_copy := {}
 	for k in _wells_by_settlement.keys():
 		wbs_copy[k] = (_wells_by_settlement[k] as Array[Dictionary]).duplicate()
-	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate()}
+	var wbs_copy2 := {}
+	for k in _workbenches_by_settlement.keys():
+		wbs_copy2[k] = (_workbenches_by_settlement[k] as Array[Dictionary]).duplicate()
+	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate()}
 
 func _hash_id(s: String) -> int:
 	return WorldSeed.str_hash(s)
@@ -1233,6 +1257,10 @@ func _generate() -> void:
 	_wells_by_id.clear()
 	_forage.clear()
 	_forage_by_id.clear()
+	_workbenches.clear()
+	_workbenches_by_settlement.clear()
+	_workbenches_by_id.clear()
+	_workbench_by_building.clear()
 	var anchors: Array[Dictionary] = settlement.settlement_anchors()
 	var gate_barns_used: Dictionary = {}
 	var gates: Array[Dictionary] = settlement.city_gates()
@@ -1662,6 +1690,7 @@ func _generate() -> void:
 	# Generate wells and forage after buildings (deterministic, additive)
 	_generate_wells()
 	_generate_forage()
+	_generate_workbenches()
 	# Sort buildings by id
 	_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -1672,6 +1701,274 @@ func _generate() -> void:
 			return String(a["id"]) < String(b["id"])
 		)
 		_by_settlement[sid] = arr
+
+
+func _is_valid_workbench_position(p: Vector2, building: Dictionary, existing_workbenches: Array[Dictionary]) -> bool:
+	var tclass: StringName = terrain.terrain_class_at(p)
+	if tclass == &"cliff":
+		return false
+	var slope: float = terrain.slope_at(p)
+	var kind_b: StringName = building["kind"] as StringName
+	if kind_b == &"village_house":
+		if slope >= 14.0 - 1e-6:
+			return false
+	else:
+		if slope >= WorldConstants.BUILDABLE_MAX_SLOPE_DEG - 1e-6:
+			if slope >= 22.0 - 1e-6:
+				return false
+	if hydrology.water_body_at(p) != &"":
+		return false
+	if hydrology.is_floodplain(p):
+		return false
+	if hydrology.distance_to_water(p) <= WorldConstants.BANK_W + 2.0 + 1e-6:
+		return false
+	if p.length() < WorldConstants.URBAN_INNER_M - 0.5:
+		return false
+	var d_road: float = road_network.distance_to_road(p) if road_network != null else INF
+	if d_road < WorldConstants.RURAL_WORKBENCH_ROAD_SETBACK - 1e-6:
+		return false
+	var wb_aabb := Rect2(p - Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z))
+	# building gap 8 (check against all buildings)
+	for b in _buildings:
+		if String(b["id"]) == String(building["id"]):
+			continue
+		var baabb: Rect2 = b["aabb"] as Rect2
+		var gap: float = _aabb_gap(wb_aabb, baabb)
+		if gap < 8.0 - 1e-6 and gap >= -1e-6:
+			# actually need >=8 from other workbenches/buildings, but our own host building aabb contains workbench, so gap to host will be negative (overlap) — skip host
+			# Check distance to host building edge: workbench must be inside host, so gap negative is expected for host; skip host building
+			pass
+		# Check against other buildings (except host) : need >=8 from building aabb
+		if String(b["id"]) != String(building["id"]):
+			if _aabb_gap(wb_aabb, baabb) < 8.0 - 1e-6 and _aabb_gap(wb_aabb, baabb) >= 0:
+				# if gap is negative means overlap, but workbench inside host already excluded; other building overlap not allowed
+				if wb_aabb.intersects(baabb):
+					return false
+				if wb_aabb.get_center().distance_to(Vector2(baabb.get_center())) < 8.0 - 1e-6:
+					# fallback distance check
+					pass
+	# well gap 6
+	for w in _wells:
+		var wpos: Vector2 = w["pos"] as Vector2
+		if p.distance_to(wpos) < WorldConstants.RURAL_WORKBENCH_WELL_GAP_MIN - 1e-6:
+			return false
+		var waabb := Rect2(wpos - Vector2(0.9,0.9), Vector2(1.8,1.8))
+		if _aabb_gap(wb_aabb, waabb) < 6.0 - 1e-6 and _aabb_gap(wb_aabb, waabb) >= 0:
+			return false
+	# forage gap 6
+	for f in _forage:
+		var fpos: Vector2 = f["pos"] as Vector2
+		if p.distance_to(fpos) < WorldConstants.RURAL_WORKBENCH_FORAGE_GAP_MIN - 1e-6:
+			return false
+	# workbench-workbench spacing 8
+	for wb in existing_workbenches:
+		var opos: Vector2 = wb["pos"] as Vector2
+		if p.distance_to(opos) < WorldConstants.RURAL_WORKBENCH_SPACING_MIN - 1e-6:
+			return false
+		var oaabb: Rect2 = wb["aabb"] as Rect2
+		if _aabb_gap(wb_aabb, oaabb) < 8.0 - 1e-6:
+			return false
+	# is_bridge check
+	if road_network != null:
+		var rect2 := Rect2(p - Vector2(30,30), Vector2(60,60))
+		var segs: Array[Dictionary] = road_network.road_segments_in(rect2)
+		for seg in segs:
+			if bool(seg.get("is_bridge", false)):
+				var poly: PackedVector2Array = seg["polyline"] as PackedVector2Array
+				for i in range(poly.size()-1):
+					var a2: Vector2 = poly[i]
+					var b2: Vector2 = poly[i+1]
+					var ab2 := b2 - a2
+					var len2b := ab2.length_squared()
+					if len2b < 1e-6:
+						continue
+					var t2 := (p - a2).dot(ab2) / len2b
+					t2 = clampf(t2, 0.0, 1.0)
+					var proj2 := a2 + ab2 * t2
+					var w_road: float = float(seg.get("width", WorldConstants.ROAD_WIDTH_TRACK))
+					if p.distance_to(proj2) < w_road * 0.5 + 2.0 and hydrology.water_body_at(proj2) != &"":
+						return false
+	# terrain variance 0.8 across aabb corners
+	var footprint: Vector2 = building["footprint"] as Vector2
+	var yaw: float = float(building["yaw"])
+	var center: Vector2 = building["center"] as Vector2
+	# check height variance across workbench aabb corners
+	var wb_size := WorldConstants.RURAL_WORKBENCH_SIZE
+	var hx := wb_size.x *0.5
+	var hz := wb_size.z *0.5
+	var corners: Array[Vector2] = [p+Vector2(hx,hz), p+Vector2(-hx,hz), p+Vector2(-hx,-hz), p+Vector2(hx,-hz)]
+	var h0: float = terrain.height_at(corners[0])
+	var h1: float = terrain.height_at(corners[1])
+	var h2: float = terrain.height_at(corners[2])
+	var h3: float = terrain.height_at(corners[3])
+	var h_min := minf(minf(h0,h1), minf(h2,h3))
+	var h_max := maxf(maxf(h0,h1), maxf(h2,h3))
+	if h_max - h_min > 0.8 + 1e-6:
+		return false
+	# also check building inset 0.5 and furniture gaps and door swing - caller ensures
+	return true
+
+func _workbench_pos_for_building(building: Dictionary, attempt: int) -> Vector2:
+	var footprint: Vector2 = building["footprint"] as Vector2
+	var yaw: float = float(building["yaw"])
+	var center: Vector2 = building["center"] as Vector2
+	var interior: Dictionary = building.get("interior", {}) as Dictionary
+	var furniture: Array = interior.get("furniture", []) as Array
+	# try reuse shelf/table anchor if exists
+	for f in furniture:
+		var fk: StringName = f.get("kind", &"") as StringName
+		if fk == &"shelf" or fk == &"table":
+			var fpos: Vector2 = f.get("pos", Vector2.ZERO) as Vector2
+			# Workbench size 1.2x0.9x0.6 ; furniture shelf is 1.2x0.4x1.1, table 1.0x1.0x0.75 ; use furniture pos directly
+			if attempt == 0:
+				return fpos
+	# fallback: building center inset 0.7 from wall toward interior (like hearth but deterministic)
+	var hx: float = footprint.x *0.5
+	var hz: float = footprint.y *0.5
+	# choose wall opposite door (far wall) like crate: use deterministic jitter
+	var bid_hash: int = _hash_id(String(building["id"]))
+	var r_off: float = _unit_float_with_seed("rural_workbench", [bid_hash, attempt], seed_used)
+	var r_off2: float = _unit_float_with_seed("rural_workbench", [bid_hash, attempt+10], seed_used)
+	# inset position 0.7 from each wall
+	var inset := 0.7 + WorldConstants.RURAL_WORKBENCH_SIZE.x*0.5 + 0.15
+	var inset_z := 0.7 + WorldConstants.RURAL_WORKBENCH_SIZE.z*0.5 + 0.15
+	var local_x: float = lerpf(-hx + inset, hx - inset, r_off)
+	var local_z: float = lerpf(-hz + inset_z, hz - inset_z, r_off2)
+	# clamp
+	local_x = clampf(local_x, -hx + inset, hx - inset)
+	local_z = clampf(local_z, -hz + inset_z, hz - inset_z)
+	var local := Vector2(local_x, local_z)
+	return _local_to_world(center, yaw, local)
+
+func _generate_workbenches() -> void:
+	_workbenches.clear()
+	_workbenches_by_settlement.clear()
+	_workbenches_by_id.clear()
+	_workbench_by_building.clear()
+	var anchors: Array[Dictionary] = settlement.settlement_anchors()
+	var global_wb: Array[Dictionary] = []
+	for s in anchors:
+		var sid: String = String(s["id"])
+		var skind: StringName = s["kind"] as StringName
+		var s_center: Vector2 = s["center"] as Vector2
+		var id_hash: int = _hash_id(sid)
+		var buildings: Array[Dictionary] = _by_settlement.get(sid, []) as Array[Dictionary]
+		if buildings.is_empty():
+			continue
+		# filter barn/stable
+		var barn_buildings: Array[Dictionary] = []
+		for b in buildings:
+			var k: StringName = b["kind"] as StringName
+			if k == &"barn" or k == &"stable":
+				barn_buildings.append(b)
+		if barn_buildings.is_empty():
+			continue
+		# sort barn by id_hash smallest
+		barn_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _hash_id(String(a["id"])) < _hash_id(String(b["id"])))
+		var target := 0
+		if skind == &"village":
+			target = 1
+		elif skind == &"hamlet":
+			var roll: float = _unit_float_with_seed("rural_workbench_hamlet_roll", [id_hash], seed_used)
+			target = 1 if roll > 0.5 else 0
+		else:
+			target = 0
+		if target == 0:
+			continue
+		# pick first barn_by_hash
+		var host: Dictionary = barn_buildings[0]
+		var bid: String = String(host["id"])
+		# if urban suppression? host already not in urban unless gate barn
+		if Vector2(host["center"] as Vector2).length() < WorldConstants.URBAN_INNER_M - 0.5 and not bool(host.get("allow_gate_barn", false)):
+			continue
+		# try 4 attempts with jitter 1.2 as spec
+		var found := false
+		var wb_pos: Vector2 = Vector2.ZERO
+		var wb_yaw: float = float(host["yaw"])
+		var wb_aabb: Rect2 = Rect2()
+		var final_pos: Vector2 = Vector2.ZERO
+		for attempt in 4:
+			var cand: Vector2 = _workbench_pos_for_building(host, attempt)
+			# apply jitter 1.2 * unit_float for attempt>0
+			if attempt > 0:
+				var jx: float = _unit_float_with_seed("rural_workbench", [_hash_id(bid), attempt], seed_used)
+				var jy: float = _unit_float_with_seed("rural_workbench", [_hash_id(bid), attempt+100], seed_used)
+				cand += Vector2((jx-0.5)*1.2, (jy-0.5)*1.2)
+			# check inside building aabb inset 0.5
+			var building_aabb: Rect2 = host["aabb"] as Rect2
+			var inset_aabb := Rect2(building_aabb.position + Vector2(0.5,0.5), building_aabb.size - Vector2(1.0,1.0))
+			var cand_aabb := Rect2(cand - Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z)*0.5, Vector2(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z))
+			if not inset_aabb.has_point(cand_aabb.position) or not inset_aabb.has_point(cand_aabb.end):
+				continue
+			# check >=0.9 from other furniture
+			var interior: Dictionary = host.get("interior", {}) as Dictionary
+			var furn: Array = interior.get("furniture", []) as Array
+			var ok_furn := true
+			for f in furn:
+				var fpos: Vector2 = f.get("pos", Vector2.ZERO) as Vector2
+				var fsize: Vector3 = f.get("size", Vector3(1,1,1)) as Vector3
+				var faabb: Rect2 = f.get("aabb", Rect2(fpos - Vector2(fsize.x,fsize.z)*0.5, Vector2(fsize.x,fsize.z))) as Rect2
+				# if this furniture is the host shelf/table we reuse, skip check for that one (distance 0)
+				if cand.distance_to(fpos) < 0.1:
+					continue
+				var gap: float = _aabb_gap(cand_aabb, faabb)
+				if gap < 0.9 - 1e-6:
+					ok_furn = false
+					break
+			if not ok_furn:
+				continue
+			# check >=1.0 from door swing
+			var door_pos: Vector2 = host["door_pos"] as Vector2
+			if cand.distance_to(door_pos) < 1.0 + maxf(WorldConstants.RURAL_WORKBENCH_SIZE.x, WorldConstants.RURAL_WORKBENCH_SIZE.z)*0.5:
+				var door_rect := Rect2(door_pos - Vector2(1.0,1.0), Vector2(2.0,2.0))
+				if cand_aabb.intersects(door_rect):
+					continue
+				if cand.distance_to(door_pos) < 1.0:
+					continue
+			# now validate geographic gates and spacing
+			if not _is_valid_workbench_position(cand, host, global_wb):
+				continue
+			wb_pos = cand
+			wb_aabb = cand_aabb
+			found = true
+			break
+		if not found:
+			continue
+		var wbid: String = "rural_workbench_%s" % sid
+		# hamlet with >1 not needed but handle
+		var sid_count: int = int(_workbenches_by_settlement.get(sid, [] as Array[Dictionary]).size())
+		if sid_count >0:
+			wbid = "rural_workbench_%s_%d" % [sid, sid_count]
+		var terrain_h: float = terrain.height_at(wb_pos) + WorldConstants.WORKBENCH_LIFT_M
+		var pos3 := Vector3(wb_pos.x, terrain_h, wb_pos.y)
+		var wb_dict: Dictionary = {
+			"id": wbid,
+			"workbench_id": wbid,
+			"center": wb_pos,
+			"pos": wb_pos,
+			"position": pos3,
+			"pos3": pos3,
+			"aabb": wb_aabb,
+			"building_id": bid,
+			"settlement_id": sid,
+			"settlement_kind": skind,
+			"building_kind": host["kind"] as StringName,
+			"yaw": wb_yaw,
+			"size": WorldConstants.RURAL_WORKBENCH_SIZE,
+		}
+		_workbenches.append(wb_dict)
+		if not _workbenches_by_settlement.has(sid):
+			_workbenches_by_settlement[sid] = [] as Array[Dictionary]
+		(_workbenches_by_settlement[sid] as Array[Dictionary]).append(wb_dict)
+		_workbenches_by_id[wbid] = wb_dict
+		_workbench_by_building[bid] = wb_dict
+		global_wb.append(wb_dict)
+	# sort
+	_workbenches.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	for sid in _workbenches_by_settlement.keys():
+		var arr: Array[Dictionary] = _workbenches_by_settlement[sid] as Array[Dictionary]
+		arr.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+		_workbenches_by_settlement[sid] = arr
 
 func _build_hearth(furniture: Array[Dictionary], building: Dictionary) -> Dictionary:
 	# Deterministic hearth reusing furniture anchors where kind==stove/bed (SPEC-C008 §1)
@@ -1905,6 +2202,44 @@ func nearest_rural_hearth(p: Vector2, kind: StringName = &"") -> Dictionary:
 			if String(h["id"]) < String(best["id"]):
 				best = h
 	return best
+
+func rural_workbenches() -> Array[Dictionary]:
+	return _workbenches.duplicate()
+
+func rural_workbenches_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for w in _workbenches:
+		var c: Vector2 = w["center"] as Vector2
+		if rect.has_point(c):
+			out.append(w)
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	return out
+
+func nearest_rural_workbench(p: Vector2) -> Dictionary:
+	if _workbenches.is_empty():
+		return {}
+	var best: Dictionary = _workbenches[0]
+	var best_d2: float = p.distance_squared_to(best["center"] as Vector2)
+	for i in range(1, _workbenches.size()):
+		var w: Dictionary = _workbenches[i]
+		var d2: float = p.distance_squared_to(w["center"] as Vector2)
+		if d2 < best_d2 - 1e-6:
+			best_d2 = d2
+			best = w
+		elif is_equal_approx(d2, best_d2):
+			if String(w["id"]) < String(best["id"]):
+				best = w
+	return best
+
+func workbench_for_building(building_id: String) -> Dictionary:
+	if _workbench_by_building.has(building_id):
+		return _workbench_by_building[building_id] as Dictionary
+	return {}
+
+func workbenches_for_settlement(settlement_id: String) -> Array[Dictionary]:
+	if _workbenches_by_settlement.has(settlement_id):
+		return (_workbenches_by_settlement[settlement_id] as Array[Dictionary]).duplicate()
+	return [] as Array[Dictionary]
 
 func hearths_for_settlement(settlement_id: String) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []

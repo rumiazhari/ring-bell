@@ -39,15 +39,15 @@ func _ready() -> void:
 func _default_contents() -> Dictionary:
 	match crop_kind:
 		&"wheat":
-			return {&"canned_food": 1}
+			return {&"wheat_grain": 1}
 		&"barley":
-			return {&"water_bottle": 1}
+			return {&"barley_grain": 1}
 		&"potato":
 			return {&"bandage": 1}
 		&"beet":
 			return {&"antibiotics": 1}
 		_:
-			return {&"canned_food": 1}
+			return {&"wheat_grain": 1}
 
 func setup(data: Dictionary) -> void:
 	crop_id = String(data.get("id", data.get("parcel_id", name)))

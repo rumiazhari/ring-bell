@@ -1022,6 +1022,176 @@ func _run_all() -> void:
 			hearth_owned_ok = false
 			break
 	_check("hearth pos inside owner chunk 0,0", hearth_owned_ok, str(h0b))
+	# --- C011 Workbench economy: ItemDB distinct grain + workbench per settlement + recipes ---
+	# ItemDB wheat_grain 12 barley_grain 10 flour 14 bread 42 cider thirst 38
+	var item_wheat: Dictionary = ItemDB.get_def(&"wheat_grain")
+	_check("ItemDB wheat_grain hunger 12", is_equal_approx(float(item_wheat.get("hunger_reduction", -1)), 12.0), str(item_wheat))
+	var item_barley: Dictionary = ItemDB.get_def(&"barley_grain")
+	_check("ItemDB barley_grain hunger 10", is_equal_approx(float(item_barley.get("hunger_reduction", -1)), 10.0), str(item_barley))
+	var item_flour: Dictionary = ItemDB.get_def(&"flour")
+	_check("ItemDB flour hunger 14", is_equal_approx(float(item_flour.get("hunger_reduction", -1)), 14.0), str(item_flour))
+	var item_bread: Dictionary = ItemDB.get_def(&"bread")
+	_check("ItemDB bread hunger 42", is_equal_approx(float(item_bread.get("hunger_reduction", -1)), 42.0), str(item_bread))
+	var item_cider: Dictionary = ItemDB.get_def(&"cider")
+	_check("ItemDB cider thirst 38", is_equal_approx(float(item_cider.get("thirst_reduction", -1)), 38.0), str(item_cider))
+	# CropPatch distinct mapping via BiomePlan field_parcels
+	var wb_biome_rect := Rect2(Vector2(-2000, -2000), Vector2(4000, 4000))
+	var wbp2: WorldPlan = WorldPlan.new(canonical)
+	var field_parcels_wb: Array[Dictionary] = wbp2.field_parcels_in(wb_biome_rect)
+	var wheat_has_grain := false
+	var barley_has_grain := false
+	var wheat_has_canned := false
+	for fp in field_parcels_wb:
+		var ck: StringName = fp.get("crop_kind", &"") as StringName
+		var cont: Dictionary = fp.get("contents", {}) as Dictionary
+		if ck == &"wheat":
+			if cont.has(&"wheat_grain"):
+				wheat_has_grain = true
+			if cont.has(&"canned_food"):
+				wheat_has_canned = true
+		elif ck == &"barley":
+			if cont.has(&"barley_grain"):
+				barley_has_grain = true
+	_check("CropPatch distinct wheat->wheat_grain not canned", wheat_has_grain and not wheat_has_canned, "wheat_grain %s canned %s" % [wheat_has_grain, wheat_has_canned])
+	_check("CropPatch distinct barley->barley_grain", barley_has_grain, str(barley_has_grain))
+	# Workbench per settlement: village 1, hamlet 0-1 50%
+	var wb_anchors: Array[Dictionary] = wp.settlement.settlement_anchors()
+	var wb_village_ok := true
+	var wb_hamlet_ok := true
+	for s in wb_anchors:
+		var sid2: String = String(s["id"])
+		var sk: StringName = s["kind"] as StringName
+		var wbs_for_s: Array[Dictionary] = rural.workbenches_for_settlement(sid2)
+		if sk == &"village":
+			var barn_builds: Array[Dictionary] = rural.settlement_buildings(sid2).filter(func(b: Dictionary) -> bool: return String(b["kind"]) == "barn" or String(b["kind"]) == "stable")
+			if barn_builds.size() > 0:
+				if wbs_for_s.size() != 1:
+					wb_village_ok = false
+					break
+			else:
+				if wbs_for_s.size() != 0:
+					wb_village_ok = false
+					break
+		elif sk == &"hamlet":
+			if wbs_for_s.size() > 1:
+				wb_hamlet_ok = false
+				break
+		elif sk == &"farmstead" or sk == &"isolated_farm":
+			if wbs_for_s.size() != 0:
+				wb_hamlet_ok = false
+				break
+	_check("workbench per village 1 with barn", wb_village_ok, "")
+	_check("workbench hamlet 0-1 farmstead 0", wb_hamlet_ok, "")
+	# Workbench shuffled manifest identical
+	var rur2_wb := RuralBuildingPlan.new(canonical, wp2.terrain, wp2.hydrology, wp2.geology, wp2.biome, wp2.settlement, wp2.road_network)
+	var wbs_a: Array[Dictionary] = rural.rural_workbenches_in(Rect2(Vector2(-2000,-2000), Vector2(4000,4000)))
+	var wbs_b: Array[Dictionary] = rur2_wb.rural_workbenches_in(Rect2(Vector2(-2000,-2000), Vector2(4000,4000)))
+	_check("workbench shuffled identical count", wbs_a.size() == wbs_b.size(), "%d vs %d" % [wbs_a.size(), wbs_b.size()])
+	var wb_eq := true
+	if wbs_a.size() == wbs_b.size():
+		for i in wbs_a.size():
+			if String(wbs_a[i]["id"]) != String(wbs_b[i]["id"]) or not Vector2(wbs_a[i]["center"]).is_equal_approx(Vector2(wbs_b[i]["center"])) or not Vector2(wbs_a[i]["pos"]).is_equal_approx(Vector2(wbs_b[i]["pos"])) or String(wbs_a[i]["building_id"]) != String(wbs_b[i]["building_id"]):
+				wb_eq = false
+				break
+	else:
+		wb_eq = false
+	_check("workbench shuffled identical pos/aabb/building", wb_eq, "")
+	# Workbench spacing and footprint
+	var wb_spacing_ok := true
+	for i in wbs_a.size():
+		var wbi: Dictionary = wbs_a[i]
+		var pi: Vector2 = wbi["pos"] as Vector2
+		var aabbi: Rect2 = wbi["aabb"] as Rect2
+		if not is_equal_approx(aabbi.size.x, WorldConstants.RURAL_WORKBENCH_SIZE.x) or not is_equal_approx(aabbi.size.y, WorldConstants.RURAL_WORKBENCH_SIZE.z):
+			wb_spacing_ok = false
+			break
+		for j in range(i+1, wbs_a.size()):
+			var pj: Vector2 = wbs_a[j]["pos"] as Vector2
+			if pi.distance_to(pj) < WorldConstants.RURAL_WORKBENCH_SPACING_MIN - 0.01:
+				wb_spacing_ok = false
+				break
+		if not wb_spacing_ok:
+			break
+	_check("workbench footprint 1.2x0.6 and spacing >=8", wb_spacing_ok, "")
+	# Workbench geographic gates (no urban, no water, no cliff)
+	var wb_geo_ok := true
+	for w in wbs_a:
+		var pos: Vector2 = w["pos"] as Vector2
+		if pos.length() < WorldConstants.URBAN_INNER_M - 0.5:
+			wb_geo_ok = false
+			break
+		if wp.hydrology.water_body_at(pos) != &"" or wp.hydrology.is_floodplain(pos):
+			wb_geo_ok = false
+			break
+		if wp.terrain.terrain_class_at(pos) == &"cliff":
+			wb_geo_ok = false
+			break
+		if wp.hydrology.distance_to_water(pos) <= WorldConstants.BANK_W + 2.0 - 0.5:
+			wb_geo_ok = false
+			break
+	_check("workbench geographic gates urban/water/cliff/distance", wb_geo_ok, "")
+	# Workbench chunk manifest per chunk <=2 and budget
+	var wb_per_chunk_ok := true
+	for c in coords:
+		var mm: Dictionary = manifests_fwd[c]
+		var wbc: int = int(mm.get("rural_workbenches", mm.get("workbenches", 0)))
+		if wbc > WorldConstants.RURAL_WORKBENCH_MAX_PER_CHUNK:
+			wb_per_chunk_ok = false
+			break
+	_check("workbench per chunk <=2", wb_per_chunk_ok, "")
+	# Workbench Area3D monitorable ACTIVE-only and prompt priority via Workbench instance
+	var dummy_wb = load("res://world/workbench.gd").new()
+	dummy_wb._ready()
+	_check("workbench monitorable true active", dummy_wb.monitorable == true, str(dummy_wb.monitorable))
+	var test_player := Survivor.new()
+	test_player.configure({"is_player": true, "items": {}})
+	add_child(test_player)
+	await get_tree().process_frame
+	# Give flour
+	test_player.inventory.add(&"flour", 1)
+	dummy_wb._update_prompt(test_player)
+	_check("workbench prompt Bake when flour", dummy_wb.interactable.prompt.find("Bake bread") != -1, dummy_wb.interactable.prompt)
+	# Clear flour, give apple
+	test_player.inventory.remove(&"flour", 1)
+	test_player.inventory.add(&"apple", 2)
+	dummy_wb._update_prompt(test_player)
+	_check("workbench prompt Press cider when apple", dummy_wb.interactable.prompt.find("Press cider") != -1, dummy_wb.interactable.prompt)
+	# Clear apple, give wheat_grain
+	test_player.inventory.remove(&"apple", 2)
+	test_player.inventory.add(&"wheat_grain", 2)
+	dummy_wb._update_prompt(test_player)
+	_check("workbench prompt Mill flour when wheat_grain", dummy_wb.interactable.prompt.find("Mill flour") != -1, dummy_wb.interactable.prompt)
+	# Needs case
+	test_player.inventory.remove(&"wheat_grain", 2)
+	dummy_wb._update_prompt(test_player)
+	_check("workbench prompt needs when lacking", dummy_wb.interactable.prompt.find("needs") != -1, dummy_wb.interactable.prompt)
+	# Recipe execution: wheat_grain x2 -> flour
+	test_player.inventory.add(&"wheat_grain", 2)
+	dummy_wb._on_interacted(test_player)
+	_check("workbench Mill flour consumes wheat_grain gives flour", test_player.inventory.count(&"wheat_grain") == 0 and test_player.inventory.count(&"flour") == 1, "wheat %d flour %d" % [test_player.inventory.count(&"wheat_grain"), test_player.inventory.count(&"flour")])
+	# Bake bread flour -> bread
+	dummy_wb._update_prompt(test_player)
+	dummy_wb._on_interacted(test_player)
+	_check("workbench Bake bread flour->bread", test_player.inventory.count(&"flour") == 0 and test_player.inventory.count(&"bread") == 1, "flour %d bread %d" % [test_player.inventory.count(&"flour"), test_player.inventory.count(&"bread")])
+	# Press cider apple x2 -> cider
+	test_player.inventory.add(&"apple", 2)
+	dummy_wb._update_prompt(test_player)
+	dummy_wb._on_interacted(test_player)
+	_check("workbench Press cider apple->cider", test_player.inventory.count(&"apple") == 0 and test_player.inventory.count(&"cider") == 1, "apple %d cider %d" % [test_player.inventory.count(&"apple"), test_player.inventory.count(&"cider")])
+	dummy_wb.queue_free()
+	test_player.queue_free()
+	# Workbench ACTIVE-only: monitorable false when warm via ChunkManager helper
+	var wb_manifests: Array = mz_w0.get("workbench_manifests", []) as Array
+	var wb_dup := false
+	var wb_ids := {}
+	for w in wb_manifests:
+		wb_ids[String(w["id"])] = true
+	var wb_dup2: Array = mz_w1.get("workbench_manifests", []) as Array
+	for w in wb_dup2:
+		if wb_ids.has(String(w["id"])):
+			wb_dup = true
+			break
+	_check("-Z workbench no duplication", not wb_dup, "")
 	cm.queue_free()
 	fake_player.queue_free()
 	# Cleanup

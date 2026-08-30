@@ -255,15 +255,15 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		if contents.is_empty():
 			match p_crop:
 				&"wheat":
-					contents = {&"canned_food": 1}
+					contents = {&"wheat_grain": 1}
 				&"barley":
-					contents = {&"water_bottle": 1}
+					contents = {&"barley_grain": 1}
 				&"potato":
 					contents = {&"bandage": 1}
 				&"beet":
 					contents = {&"antibiotics": 1}
 				_:
-					contents = {&"canned_food": 1}
+					contents = {&"wheat_grain": 1}
 		var cur_day: int = 1
 		if GameClock != null:
 			cur_day = GameClock.get_day()
