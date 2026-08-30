@@ -16,12 +16,14 @@ const MAX_PER_CHUNK := 8
 const SPAWN_Y := 0.2
 
 var plan: CityPlan
+var manager: ChunkManager
 
 var _live := {}                        # Vector2i chunk coord -> Array[Zombie]
 
 
-func setup(city_plan: CityPlan, manager: ChunkManager) -> void:
+func setup(city_plan: CityPlan, chunk_manager: ChunkManager) -> void:
 	plan = city_plan
+	manager = chunk_manager
 	add_to_group(&"city_spawner")
 	manager.chunk_state_changed.connect(_on_chunk_state_changed)
 	manager.chunk_unloaded.connect(_on_chunk_unloaded)
@@ -39,7 +41,12 @@ func _on_chunk_unloaded(coord: Vector2i) -> void:
 
 
 func _spawn_for(coord: Vector2i) -> void:
-	if plan == null or _live.has(coord):
+	if plan == null or manager == null or _live.has(coord):
+		return
+	# City ambient population belongs only to the WorldPlan-selected bounded
+	# urban fabric. Rural/forest/quarry chunks must not receive CityPlan actors.
+	var rec: Dictionary = manager._chunks.get(coord, {}) as Dictionary
+	if not bool(rec.get("city_materialized", false)):
 		return
 	var rng := WorldSeed.rng_for("zpop", [coord.x, coord.y])
 	var count := rng.randi_range(MIN_PER_CHUNK, MAX_PER_CHUNK)
@@ -55,7 +62,8 @@ func _spawn_for(coord: Vector2i) -> void:
 		zombie.requested_id = id
 		zombie.city_plan = plan
 		add_child(zombie)
-		zombie.global_position = Vector3(anchor2.x, SPAWN_Y, anchor2.y)
+		var ground_y: float = manager.world_plan.surface_height_at(anchor2) if manager.world_plan != null else SPAWN_Y
+		zombie.global_position = Vector3(anchor2.x, ground_y + WorldConstants.SPAWN_FEET_CLEARANCE_M, anchor2.y)
 		zombie.anchor = zombie.global_position
 		zombie._wander_pause = rng.randf_range(0.5, 4.0)
 		roster.append(zombie)

@@ -70,13 +70,17 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 
-	# Focused regression harness: it owns its tiny fixture and intentionally
-	# bypasses normal city startup so stale-roster and stream-pacing failures
-	# are isolated from gameplay setup.
+	# Focused regression harnesses own their fixtures and intentionally bypass
+	# normal city startup so their materialization contracts stay isolated.
 	if args.has("--streamingregressiontest"):
 		var streaming_tester: Node = load("res://debug/streaming_regression_test.gd").new()
 		streaming_tester.name = "StreamingRegressionTest"
 		add_child(streaming_tester)
+		return
+	if args.has("--worldrealizationtest"):
+		var realization_tester: Node = load("res://debug/world_realization_test.gd").new()
+		realization_tester.name = "WorldRealizationTest"
+		add_child(realization_tester)
 		return
 
 	# Deferred menu: windowed interactive only — headless/tests go straight through
@@ -422,9 +426,11 @@ func _build_streamed_city() -> void:
 
 func _spawn_city_population() -> void:
 	var entry: Dictionary = Population.PLAYER_ENTRY.duplicate(true)
-	var spawn := city_plan.find_spawn_point() if city_plan != null \
-			else Vector2.ZERO
-	entry["position"] = Vector3(spawn.x, 0.15, spawn.y)
+	var wplan: WorldPlan = chunk_manager.world_plan if chunk_manager != null and chunk_manager.world_plan != null else WorldPlan.new(city_plan.seed_used if city_plan != null else WorldSeed.get_world_seed())
+	# Normal play starts at the WorldPlan-owned urban terrace. CityPlan supplies
+	# only the city-center X/Z anchor; it no longer owns the physical Y datum.
+	var spawn_pos: Vector3 = SpawnPoints.get_spawn_position(&"city_center", wplan, city_plan)
+	entry["position"] = spawn_pos
 	_spawn_survivor(entry, {})
 	player = ActorRegistry.get_actor(&"player")
 	if player != null:
@@ -452,7 +458,7 @@ func _spawn_city_population_with_override(kind: StringName) -> void:
 	var entry: Dictionary = Population.PLAYER_ENTRY.duplicate(true)
 	var wplan: WorldPlan = chunk_manager.world_plan if chunk_manager != null and chunk_manager.world_plan != null else WorldPlan.new(city_plan.seed_used if city_plan != null else WorldSeed.get_world_seed())
 	var spawn_pos: Vector3 = SpawnPoints.get_spawn_position(kind, wplan, city_plan)
-	# SpawnPoints already returns y = terrain + 0.15, so use directly.
+	# SpawnPoints already returns WorldPlan surface + clearance.
 	# Guard against water: if still in water, fallback to city center.
 	if wplan.water_body_at(Vector2(spawn_pos.x, spawn_pos.z)) != &"":
 		var fallback: Vector3 = SpawnPoints.get_spawn_position(&"city_center", wplan, city_plan)
@@ -496,6 +502,13 @@ func _release_city_spawn_gate_when_ready() -> void:
 			NodePath("Terrain_%d_%d/TerrainBody" % [coord.x, coord.y]))
 	if terrain_body == null or not is_instance_valid(terrain_body):
 		return
+	# The semantic candidate was chosen by WorldPlan; now verify the exact
+	# materialized WALKABLE_GROUND collision and capsule clearance before any
+	# player physics is enabled. This is validation, never a roof raycast spawn.
+	var verified: Dictionary = chunk_manager.verify_spawn_surface(player.global_position)
+	if not bool(verified.get("ok", false)):
+		return
+	player.global_position.y = float(verified.get("feet_y", player.global_position.y))
 	_city_spawn_gate_active = false
 	if is_instance_valid(player) and player.is_inside_tree():
 		player.process_mode = Node.PROCESS_MODE_INHERIT

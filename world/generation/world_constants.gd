@@ -84,9 +84,27 @@ const TRIB_UPSTREAM_BASE_Z := -2200.0
 const TRIB_UPSTREAM_STEP_Z := 1400.0
 const TRIB_UPSTREAM_JITTER_Z := 320.0
 # Meander phase seeded via unit_float("hydro_phi")
-# --- Urban compatibility (authoritative, shared across terrain/water/biome) ---
+# --- World-composition and realized-surface contract ---
+# WorldPlan is the only owner of the outdoor Y datum. CityPlan uses a flat
+# grade only inside this fully materialized urban terrace; the 350-600 m band
+# is macro terrain / city-edge composition, never an unbounded second city.
 const URBAN_INNER_M := 350.0
 const URBAN_OUTER_M := 600.0
+const URBAN_CITY_TERRACE_Y := 0.0
+const SURFACE_SAMPLE_EPSILON_M := 0.5
+const RIVER_BED_DEPTH_M := 2.5
+const RIVER_BANK_FREEBOARD_M := 0.65
+const QUARRY_FEATURE_CELL_M := 256.0
+const QUARRY_FEATURE_RADIUS_M := 72.0
+const QUARRY_FEATURE_DEPTH_M := 8.0
+const SPAWN_FEET_CLEARANCE_M := 0.06
+# Layer 8 is reserved for surfaces a character can stand on. Gameplay bodies
+# keep the existing environment layer (1); spawn validation rays use ONLY 8
+# so roofs, walls, props and water cannot define "ground".
+const COLLISION_WALKABLE_GROUND := 8
+# Water is queryable/visible but is not walkable ground. It stays off actor
+# masks while preserving its own body for hydrology probes.
+const COLLISION_WATER := 16
 const FRAME_BUDGET_MS := 12.0
 
 # --- World IDs & vocabulary ---

@@ -174,8 +174,8 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						# If road is over water without bridge, this is invalid per spec, but we still place at water level + bridge lift to avoid sinking
 						y_center = world_plan.water_level_at(p) + WorldConstants.BRIDGE_DECK_LIFT_M
 					else:
-						y_center = world_plan.terrain_height_at(p) + WorldConstants.ROAD_LIFT_M
-						# Apply urban factor like terrain? For simplicity, not
+						y_center = world_plan.surface_height_at(p) + WorldConstants.ROAD_LIFT_M
+						# Road uses the same WorldPlan surface datum as terrain.
 				# For left/right vertices, use same Y as center for flat road (avoids twisting)
 				var y_left: float = y_center
 				var y_right: float = y_center
@@ -359,7 +359,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	# Single collider aggregated
 	var body := StaticBody3D.new()
 	body.name = "RoadBody"
-	body.collision_layer = 1
+	body.collision_layer = 1 | WorldConstants.COLLISION_WALKABLE_GROUND
 	body.collision_mask = 0
 	road_node.add_child(body)
 	var concave := ConcavePolygonShape3D.new()

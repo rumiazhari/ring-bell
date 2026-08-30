@@ -46,7 +46,6 @@ const LAMP_STEP := 22.0
 ## Emits everything for `coord` into `b`. Deterministic and side-effect free.
 static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 	var rect := WorldSeed.chunk_rect(coord)
-	_ground(b, plan, coord)
 	_roads(b, plan, rect)
 	for cell in plan.cells_in_rect(rect):
 		var block := plan.cell_block(cell)
@@ -78,7 +77,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 ## persistence delta are NOT respawned when their chunk streams back in.
 static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		batcher: MeshBatcher = null, dead_doors := {},
-		include_collision := true) -> Dictionary:
+		include_collision := true, materialize_city := true) -> Dictionary:
 	if batcher == null:
 		batcher = MeshBatcher.new()
 		fill_batcher(batcher, plan, coord)
@@ -88,38 +87,40 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	chunk.name = "Chunk_%d_%d" % [coord.x, coord.y]
 	parent.add_child(chunk)
 	var stats := batcher.flush_into(chunk, 1, include_collision)
-	# Dynamic door entities from the deterministic manifests.
-	var rect := WorldSeed.chunk_rect(coord)
+	# City doors/interiors are emitted only when WorldPlan assigned this chunk
+	# to the bounded historic-urban composition. An empty batcher alone is not
+	# sufficient: otherwise rural chunks would still receive CityPlan doors.
 	var doors := 0
 	var buildings := 0
-	for spec in _owned_buildings(plan, rect, coord):
-		buildings += 1
-		for dm: Dictionary in spec.get("doors", []):
-			if dead_doors.has(String(dm["id"])):
-				continue   # destroyed doors stay destroyed across reloads
-			var door := Door.new()
-			door.name = String(dm["id"])
-			door.setup(dm)
-			chunk.add_child(door)
-			doors += 1
-		# interior doors + stations
-		var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
-		var InteriorStationScript = load("res://world/buildings/interior_station.gd")
-		var imanifest: Dictionary = InteriorPlanScript.build_for_building(spec)
-		for fl in imanifest.get("floors", []):
-			for dm2 in fl.get("doors", []):
-				if dead_doors.has(String(dm2["id"])):
+	if materialize_city:
+		var rect := WorldSeed.chunk_rect(coord)
+		for spec in _owned_buildings(plan, rect, coord):
+			buildings += 1
+			for dm: Dictionary in spec.get("doors", []):
+				if dead_doors.has(String(dm["id"])):
 					continue
-				var door2 := Door.new()
-				door2.name = String(dm2["id"])
-				door2.setup(dm2)
-				chunk.add_child(door2)
+				var door := Door.new()
+				door.name = String(dm["id"])
+				door.setup(dm)
+				chunk.add_child(door)
 				doors += 1
-			for sm in fl.get("stations", []):
-				var st = InteriorStationScript.new()
-				st.name = String(sm["id"])
-				st.setup(sm)
-				chunk.add_child(st)
+			var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
+			var InteriorStationScript = load("res://world/buildings/interior_station.gd")
+			var imanifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+			for fl in imanifest.get("floors", []):
+				for dm2 in fl.get("doors", []):
+					if dead_doors.has(String(dm2["id"])):
+						continue
+					var door2 := Door.new()
+					door2.name = String(dm2["id"])
+					door2.setup(dm2)
+					chunk.add_child(door2)
+					doors += 1
+				for sm in fl.get("stations", []):
+					var st = InteriorStationScript.new()
+					st.name = String(sm["id"])
+					st.setup(sm)
+					chunk.add_child(st)
 
 	stats["doors"] = doors
 	stats["buildings"] = buildings
@@ -206,7 +207,7 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 	var s := float(WorldSeed.CHUNK_SIZE)
 	var rect := WorldSeed.chunk_rect(coord)
 	var closest := Vector2(clampf(0.0, rect.position.x, rect.end.x), clampf(0.0, rect.position.y, rect.end.y))
-	if closest.length() >= TerrainChunkBuilder.URBAN_INNER_M:
+	if closest.length() >= WorldConstants.URBAN_INNER_M:
 		return
 	# If any corner is outside inner radius, this chunk straddles the
 	# boundary — omit city ground and let terrain sole-own it.
@@ -214,7 +215,7 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 	var farthest := 0.0
 	for p in corners:
 		farthest = maxf(farthest, p.length())
-	if farthest >= TerrainChunkBuilder.URBAN_INNER_M:
+	if farthest >= WorldConstants.URBAN_INNER_M:
 		return
 	# Subtle per-chunk tone variation keeps large surfaces from reading flat.
 	var tint := 0.94 + 0.06 * WorldSeed.unit_float("ground", [coord.x, coord.y])

@@ -27,13 +27,150 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
 
+# --- Authoritative realized outdoor surface ---------------------------------
+# `terrain_height_at()` remains the raw macro query used when plans choose
+# sites. Every renderer/collider/grounded runtime object uses this surface API.
+func urban_weight_at(p: Vector2) -> float:
+	var d := p.length()
+	if d <= WorldConstants.URBAN_INNER_M:
+		return 0.0
+	if d >= WorldConstants.URBAN_OUTER_M:
+		return 1.0
+	var t := (d - WorldConstants.URBAN_INNER_M) / (WorldConstants.URBAN_OUTER_M - WorldConstants.URBAN_INNER_M)
+	return t * t * (3.0 - 2.0 * t)
+
+func _river_surface_height_at(p: Vector2, base_height: float) -> float:
+	var d: float = distance_to_water(p)
+	if d > WorldConstants.BANK_W:
+		return base_height
+	var water_y: float = water_level_at(p)
+	var bed_y: float = minf(base_height, water_y - WorldConstants.RIVER_BED_DEPTH_M)
+	if d <= 0.0:
+		return bed_y
+	# A real earth bank joins the excavated bed to dry ground rather than
+	# laying water on an unrelated macro hill.
+	var dry_bank_y: float = maxf(base_height, water_y + WorldConstants.RIVER_BANK_FREEBOARD_M)
+	var t := clampf(d / WorldConstants.BANK_W, 0.0, 1.0)
+	t = t * t * (3.0 - 2.0 * t)
+	return lerpf(bed_y, dry_bank_y, t)
+
+func quarry_feature_at(p: Vector2) -> Dictionary:
+	var cell := Vector2i(floori(p.x / WorldConstants.QUARRY_FEATURE_CELL_M), floori(p.y / WorldConstants.QUARRY_FEATURE_CELL_M))
+	var h := WorldSeed.combine([seed_used, WorldSeed.str_hash("quarry_feature"), cell.x, cell.y])
+	var ux := float(h % 1000003) / 1000003.0
+	var uz := float(WorldSeed.combine([h, 71]) % 1000003) / 1000003.0
+	var origin := Vector2(cell) * WorldConstants.QUARRY_FEATURE_CELL_M
+	var center := origin + Vector2(lerpf(72.0, 184.0, ux), lerpf(72.0, 184.0, uz))
+	var eligible := biome_at(center) == &"rocky_quarry" \
+		or quarry_suitability_at(center) >= WorldConstants.QUARRY_SUITABILITY_THRESHOLD + 0.08
+	if center.length() < WorldConstants.URBAN_OUTER_M:
+		eligible = false
+	var radius := WorldConstants.QUARRY_FEATURE_RADIUS_M
+	var distance := p.distance_to(center)
+	var inside := eligible and distance <= radius
+	var t := clampf(distance / radius, 0.0, 1.0)
+	# Broad pit floor plus a smooth bench/ramp toward the existing terrain.
+	var rim := t * t * (3.0 - 2.0 * t)
+	var depth := WorldConstants.QUARRY_FEATURE_DEPTH_M * (1.0 - rim)
+	return {
+		"id": "quarry_%d_%d" % [cell.x, cell.y],
+		"center": center,
+		"radius": radius,
+		"inside": inside,
+		"depth": depth if inside else 0.0,
+		"spoil_center": center + Vector2(radius * 0.72, -radius * 0.35),
+	}
+
+func surface_height_at(p: Vector2) -> float:
+	var surface := lerpf(WorldConstants.URBAN_CITY_TERRACE_Y, terrain_height_at(p), urban_weight_at(p))
+	# CityPlan is constrained to the terrace; all macro features are composed
+	# into the physical terrain outside it, never layered over city geometry.
+	if p.length() >= WorldConstants.URBAN_INNER_M:
+		surface = _river_surface_height_at(p, surface)
+		var quarry := quarry_feature_at(p)
+		if bool(quarry.get("inside", false)):
+			surface -= float(quarry.get("depth", 0.0))
+	return surface
+
+func surface_normal_at(p: Vector2) -> Vector3:
+	var e := WorldConstants.SURFACE_SAMPLE_EPSILON_M
+	var dx := (surface_height_at(p + Vector2(e, 0.0)) - surface_height_at(p - Vector2(e, 0.0))) / (2.0 * e)
+	var dz := (surface_height_at(p + Vector2(0.0, e)) - surface_height_at(p - Vector2(0.0, e))) / (2.0 * e)
+	var normal := Vector3(-dx, 1.0, -dz)
+	if normal.length_squared() < 1e-8 or not normal.is_finite():
+		return Vector3.UP
+	return normal.normalized()
+
+func surface_slope_at(p: Vector2) -> float:
+	return rad_to_deg(acos(clampf(surface_normal_at(p).dot(Vector3.UP), -1.0, 1.0)))
+
+func surface_class_at(p: Vector2) -> StringName:
+	if surface_slope_at(p) >= WorldConstants.CLIFF_SLOPE_DEG:
+		return &"cliff"
+	var h := surface_height_at(p)
+	if h >= WorldConstants.TERRAIN_UPLAND_HEIGHT_M:
+		return &"upland"
+	if h >= WorldConstants.TERRAIN_ROLLING_HEIGHT_M:
+		return &"rolling_hill"
+	return &"basin"
+
+func surface_material_at(p: Vector2) -> StringName:
+	match surface_class_at(p):
+		&"cliff": return &"rock"
+		&"upland": return &"upland_grass"
+		&"rolling_hill": return &"meadow_soil"
+		_: return &"alluvial_soil"
+
+# --- World composition -------------------------------------------------------
+func land_use_at(p: Vector2) -> StringName:
+	if p.length() < WorldConstants.URBAN_INNER_M:
+		return &"historic_urban"
+	if water_body_at(p) != &"" or distance_to_water(p) <= WorldConstants.BANK_W + WorldConstants.FLOODPLAIN_W:
+		return &"river_corridor"
+	if bool(quarry_feature_at(p).get("inside", false)):
+		return &"quarry"
+	var site := settlement_at(p)
+	if not site.is_empty():
+		return StringName(str(site.get("kind", "rural")))
+	var b := biome_at(p)
+	if b == &"deciduous_forest" or b == &"mixed_upland_forest":
+		return &"forest"
+	if b == &"rocky_quarry":
+		return &"quarry_upland"
+	if b == &"arable_field" or b == &"pasture" or b == &"pasture_orchard" or b == &"orchard":
+		return &"rural_agriculture"
+	return &"rural"
+
+func should_materialize_city(coord: Vector2i) -> bool:
+	var rect := WorldSeed.chunk_rect(coord)
+	for p in [rect.position, Vector2(rect.end.x, rect.position.y), Vector2(rect.position.x, rect.end.y), rect.end]:
+		if p.length() >= WorldConstants.URBAN_INNER_M:
+			return false
+	return true
+
+func chunk_composition(coord: Vector2i) -> Dictionary:
+	var rect := WorldSeed.chunk_rect(coord)
+	var center := rect.get_center()
+	var city := should_materialize_city(coord)
+	var feature := quarry_feature_at(center)
+	return {
+		"coord": coord,
+		"primary_land_use": &"historic_urban" if city else land_use_at(center),
+		"city_materialized": city,
+		"urban_weight": urban_weight_at(center),
+		"water_corridor": water_body_at(center) != &"" or distance_to_water(center) <= WorldConstants.BANK_W + WorldConstants.FLOODPLAIN_W,
+		"quarry_feature": bool(feature.get("inside", false)),
+		"quarry_id": feature.get("id", ""),
+		"surface_contract": &"world_plan_surface_v1",
+	}
+
 func terrain_slope_at(p: Vector2) -> float:
 	return terrain.slope_at(p)
 
 func terrain_class_at(p: Vector2) -> StringName:
 	return terrain.terrain_class_at(p)
 
-func surface_material_at(p: Vector2) -> StringName:
+func terrain_surface_material_at(p: Vector2) -> StringName:
 	return terrain.surface_material_at(p)
 
 func is_buildable(p: Vector2, footprint: Vector2, constraints: Dictionary = {}) -> bool:

@@ -194,7 +194,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	# If we wanted separate ribbon, it would exceed budget; so we keep visual only via color.
 	var body := StaticBody3D.new()
 	body.name = "WaterBody"
-	body.collision_layer = 1
+	body.collision_layer = WorldConstants.COLLISION_WATER
 	body.collision_mask = 0
 	water_node.add_child(body)
 	var concave := ConcavePolygonShape3D.new()

@@ -113,7 +113,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var hid: int = WorldSeed.str_hash(bid)
 		var hinge_r: float = float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("rural_building_palette"), hid]) % 1000003) / 1000003.0
 		var hinge_left: bool = hinge_r < 0.5
-		var ground_y: float = world_plan.terrain_height_at(dpos) + 0.01
+		var ground_y: float = world_plan.surface_height_at(dpos) + 0.01
 		var door_width: float = 1.0
 		var door_height: float = 2.1
 		if String(b["kind"]) == "barn" or String(b["kind"]) == "stable":
@@ -161,7 +161,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var cpos2: Vector2 = crate.get("pos", Vector2.ZERO) as Vector2
 			var cyaw: float = float(crate.get("yaw", 0.0))
 			var contents: Dictionary = crate.get("contents", {}) as Dictionary
-			var ground: float = world_plan.terrain_height_at(cpos2) + 0.01
+			var ground: float = world_plan.surface_height_at(cpos2) + 0.01
 			var pos3: Vector3 = Vector3(cpos2.x, ground+0.45, cpos2.y)
 			var cm: Dictionary = {
 				"id": crate.get("id", "rural_crate_%s" % bid),
@@ -223,7 +223,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 							break
 					if not is_gate:
 						continue
-				var ground_w: float = world_plan.terrain_height_at(wpos) + 0.01
+				var ground_w: float = world_plan.surface_height_at(wpos) + 0.01
 				var pos3: Vector3 = Vector3(wpos.x, ground_w, wpos.y)
 				var wm: Dictionary = {
 					"id": w["id"],
@@ -241,7 +241,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			if rect.has_point(fpos):
 				if fpos.length() < WorldConstants.URBAN_INNER_M - 0.5:
 					continue
-				var ground_f: float = world_plan.terrain_height_at(fpos) + 0.01
+				var ground_f: float = world_plan.surface_height_at(fpos) + 0.01
 				var pos3f: Vector3 = Vector3(fpos.x, ground_f, fpos.y)
 				var fm: Dictionary = {
 					"id": f["id"],
@@ -287,7 +287,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 							break
 					if not is_gate_h:
 						continue
-				var ground_h: float = world_plan.terrain_height_at(hpos) + 0.01
+				var ground_h: float = world_plan.surface_height_at(hpos) + 0.01
 				var sz: Vector3 = h.get("size", Vector3(0.8, 0.8, 0.9)) as Vector3
 				var pos3h: Vector3 = Vector3(hpos.x, ground_h + sz.y * 0.5, hpos.y)
 				var hm: Dictionary = {
@@ -350,10 +350,10 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						break
 				if not is_gate_wb:
 					continue
-			var ground_wb: float = world_plan.terrain_height_at(wpos) + WorldConstants.WORKBENCH_LIFT_M
+			var ground_wb: float = world_plan.surface_height_at(wpos) + WorldConstants.WORKBENCH_LIFT_M
 			var pos3wb: Vector3 = Vector3(wpos.x, ground_wb + WorldConstants.RURAL_WORKBENCH_SIZE.y*0.5, wpos.y)
 # alternatively use pos3 from plan
-			var wpos3: Vector3 = w.get("pos3", pos3wb) as Vector3
+			var wpos3: Vector3 = pos3wb
 			if wpos3 == Vector3.ZERO:
 				wpos3 = pos3wb
 			var wm: Dictionary = {
@@ -395,9 +395,9 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						break
 				if not is_gate_gr:
 					continue
-			var ground_gr: float = world_plan.terrain_height_at(gpos) + WorldConstants.GRANARY_LIFT_M
+			var ground_gr: float = world_plan.surface_height_at(gpos) + WorldConstants.GRANARY_LIFT_M
 			var pos3gr: Vector3 = Vector3(gpos.x, ground_gr + WorldConstants.RURAL_GRANARY_SIZE.y*0.5, gpos.y)
-			var gpos3: Vector3 = g.get("pos3", pos3gr) as Vector3
+			var gpos3: Vector3 = pos3gr
 			if gpos3 == Vector3.ZERO:
 				gpos3 = pos3gr
 			var gm: Dictionary = {
@@ -445,7 +445,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var height: float = float(b["height"])
 		var wall_col: Color = b.get("color", COL_PLASTER) as Color
 		var roof_col: Color = b.get("roof_color", COL_ROOF_RED) as Color
-		var ground: float = world_plan.terrain_height_at(b_center) + 0.01
+		var ground: float = world_plan.surface_height_at(b_center) + 0.01
 		var eff: Vector2 = _effective_footprint(footprint, yaw)
 		var hx: float = eff.x * 0.5
 		var hz: float = eff.y * 0.5
@@ -503,7 +503,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		# Try to find building color for wall's building? Use darkened
 		var dark_col: Color = Color(base_col.r*COL_WALL_DARK_FACTOR, base_col.g*COL_WALL_DARK_FACTOR, base_col.b*COL_WALL_DARK_FACTOR)
 		# ground height at wall pos
-		var ground_w: float = world_plan.terrain_height_at(wpos) + 0.01
+		var ground_w: float = world_plan.surface_height_at(wpos) + 0.01
 		var wall_center: Vector3 = Vector3(wpos.x, ground_w + wsize.y*0.5, wpos.y)
 		var w_verts_before: int = verts.size()
 		_add_box(verts, normals, colors, indices, wall_center, wsize, dark_col)
@@ -533,7 +533,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				fcol = COL_FURNITURE_STOVE
 			_:
 				fcol = COL_FURNITURE_SHELF
-		var ground_f: float = world_plan.terrain_height_at(fpos) + 0.01
+		var ground_f: float = world_plan.surface_height_at(fpos) + 0.01
 		var f_center: Vector3 = Vector3(fpos.x, ground_f + fsize.y*0.5, fpos.y)
 		_add_box(verts, normals, colors, indices, f_center, fsize, fcol)
 		interior_vertices +=24
@@ -543,7 +543,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var well_triangles := 0
 	for w in well_manifests:
 		var wpos: Vector2 = w["pos"] as Vector2
-		var ground_w: float = world_plan.terrain_height_at(wpos) + 0.01
+		var ground_w: float = world_plan.surface_height_at(wpos) + 0.01
 		var wpos3: Vector3 = Vector3(wpos.x, ground_w + WorldConstants.RURAL_WELL_HEIGHT*0.5, wpos.y)
 		var wsize: Vector3 = Vector3(WorldConstants.RURAL_WELL_RADIUS*2, WorldConstants.RURAL_WELL_HEIGHT, WorldConstants.RURAL_WELL_RADIUS*2)
 		# Stone wall box approximation of cylinder (single box, vertex-colored wall+water)
@@ -568,7 +568,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				fcol2 = COL_FORAGE_HERB
 			_:
 				fcol2 = COL_FORAGE_BUSH
-		var ground_fo: float = world_plan.terrain_height_at(fpos) + 0.01
+		var ground_fo: float = world_plan.surface_height_at(fpos) + 0.01
 		var f_center: Vector3 = Vector3(fpos.x, ground_fo + 0.4, fpos.y)
 		var f_size: Vector3 = Vector3(0.8, 0.6, 0.8)
 		if fkind == &"mushroom_cluster":

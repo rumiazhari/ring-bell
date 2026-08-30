@@ -224,6 +224,56 @@ func _player_chunk() -> Vector2i:
 
 
 ## All coords within the warm ring around `pc` (superset of active).
+## Validates a plan-selected spawn against the materialized WALKABLE_GROUND
+## layer. The ray only confirms the WorldPlan surface after its owning chunk
+## has materialized; it cannot select roofs, walls, props, or water as ground.
+func verify_spawn_surface(candidate: Vector3) -> Dictionary:
+	if world_plan == null or not is_inside_tree() or get_world_3d() == null:
+		return {"ok": false, "reason": "world unavailable"}
+	var p := Vector2(candidate.x, candidate.z)
+	if world_plan.water_body_at(p) != &"":
+		return {"ok": false, "reason": "spawn is water"}
+	var coord := WorldSeed.chunk_coord(p.x, p.y)
+	if not _chunks.has(coord) or state_of(coord) != &"active":
+		return {"ok": false, "reason": "spawn chunk not active", "coord": coord}
+	var planned_y := world_plan.surface_height_at(p)
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var from := Vector3(p.x, planned_y + 24.0, p.y)
+	var to := Vector3(p.x, planned_y - 32.0, p.y)
+	var ground_q := PhysicsRayQueryParameters3D.create(from, to, WorldConstants.COLLISION_WALKABLE_GROUND)
+	ground_q.collide_with_bodies = true
+	ground_q.collide_with_areas = false
+	var hit: Dictionary = space.intersect_ray(ground_q)
+	if hit.is_empty():
+		return {"ok": false, "reason": "no walkable-ground collision", "planned_y": planned_y}
+	var ground_body: StaticBody3D = hit.get("collider") as StaticBody3D
+	if ground_body == null or ground_body.name not in [&"TerrainBody", &"RoadBody"]:
+		return {"ok": false, "reason": "non-ground collision selected", "collider": str(ground_body)}
+	var ground_y: float = (hit.get("position", Vector3.ZERO) as Vector3).y
+	if absf(ground_y - planned_y) > 0.35:
+		return {"ok": false, "reason": "plan/collision surface mismatch", "planned_y": planned_y, "surface_y": ground_y}
+	var feet_y := ground_y + WorldConstants.SPAWN_FEET_CLEARANCE_M
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.35
+	capsule.height = 1.7
+	var shape_q := PhysicsShapeQueryParameters3D.new()
+	shape_q.shape = capsule
+	shape_q.transform = Transform3D(Basis.IDENTITY, Vector3(p.x, feet_y + 0.85, p.y))
+	shape_q.collision_mask = 1
+	shape_q.exclude = [ground_body.get_rid()]
+	shape_q.collide_with_bodies = true
+	shape_q.collide_with_areas = false
+	var structural_hits: Array = space.intersect_shape(shape_q, 8)
+	var duplicate_ground := false
+	var second_q := PhysicsRayQueryParameters3D.create(from, to, WorldConstants.COLLISION_WALKABLE_GROUND)
+	second_q.exclude = [ground_body.get_rid()]
+	var second: Dictionary = space.intersect_ray(second_q)
+	if not second.is_empty():
+		var second_y: float = (second.get("position", Vector3.ZERO) as Vector3).y
+		duplicate_ground = absf(second_y - ground_y) < 0.01
+	return {"ok": structural_hits.is_empty() and not duplicate_ground, "planned_y": planned_y, "surface_y": ground_y, "feet_y": feet_y, "structural_overlap": not structural_hits.is_empty(), "duplicate_ground": duplicate_ground, "coord": coord}
+
+
 func _desired_set(pc: Vector2i) -> Dictionary:
 	var out := {}
 	for dx in range(-WARM_RADIUS, WARM_RADIUS + 1):
@@ -287,11 +337,13 @@ func _launch_batch_jobs() -> void:
 ## Builds city batcher + terrain manifest (if holder has terrain key) using private plans.
 func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, seed_used: int) -> void:
 	var t_all := Time.get_ticks_usec()
-	var local_plan := CityPlan.new()
-	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
-	var shared_world: WorldPlan = null
-	if holder.has("terrain") or holder.has("water") or holder.has("biome") or holder.has("road") or holder.has("rural"):
-		shared_world = WorldPlan.new(seed_used)
+	var shared_world: WorldPlan = WorldPlan.new(seed_used)
+	var composition: Dictionary = shared_world.chunk_composition(coord)
+	# CityPlan is a bounded implementation selected by WorldPlan, never an
+	# unconditional second world beneath rural / river / quarry chunks.
+	if bool(composition.get("city_materialized", false)):
+		var local_plan := CityPlan.new()
+		ChunkBuilder.fill_batcher(batcher, local_plan, coord)
 	if holder.has("terrain"):
 		var t0 := Time.get_ticks_usec()
 		var m := TerrainChunkBuilder.build_manifest(shared_world, coord)
@@ -332,10 +384,16 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["rural"] = {}
 		holder["rural_gen_ms"] = 0.0
+	holder["composition"] = composition
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
-## Legacy helper kept for direct sync tests
+## Legacy helper kept for direct sync tests. It obeys the same WorldPlan
+## composition decision as the worker path, so no alternate unconditional city
+## generator survives outside _thread_build().
 func _fill_job(batcher: MeshBatcher, coord: Vector2i) -> void:
+	var local_world := WorldPlan.new(world_plan.seed_used if world_plan != null else WorldSeed.get_world_seed())
+	if not local_world.should_materialize_city(coord):
+		return
 	var local_plan := CityPlan.new()
 	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
 
@@ -377,12 +435,14 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var road_gen_ms: float = float(job.get("road_gen_ms", 0.0))
 		var rural_manifest: Dictionary = {}
 		var rural_gen_ms: float = float(job.get("rural_gen_ms", 0.0))
+		var composition: Dictionary = {}
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
 			water_manifest = job.get("water", {})
 			biome_manifest = job.get("biome", {})
 			road_manifest = job.get("road", {})
 			rural_manifest = job.get("rural", {})
+			composition = job.get("composition", {})
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
 			terrain_manifest = holder.get("terrain", {})
@@ -395,13 +455,14 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			road_gen_ms = float(holder.get("road_gen_ms", 0.0))
 			rural_manifest = holder.get("rural", {})
 			rural_gen_ms = float(holder.get("rural_gen_ms", 0.0))
+			composition = holder.get("composition", {})
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition)
 		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -424,8 +485,9 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 			dead_doors[did] = true
 	# Exactly ONE materialization: flush meshes/static body + doors + props.
 	var include_collision := chebyshev_distance(coord, pc) <= ACTIVE_RADIUS
+	var city_materialized: bool = bool(composition.get("city_materialized", false))
 	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors,
-			include_collision)
+			include_collision, city_materialized)
 	# Materialize terrain under same chunk if manifest present
 	var tstats := {}
 	if not terrain_manifest.is_empty():
@@ -710,6 +772,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"planned_colliders": int(stats["colliders"]),
 		"doors": int(stats["doors"]),
 		"buildings": int(stats["buildings"]),
+		"city_materialized": city_materialized,
+		"composition": composition.duplicate(true),
 		"props": int(stats.get("props", 0)),
 		"terrain_vertices": terrain_verts,
 		"terrain_triangles": terrain_tris,
@@ -725,6 +789,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"biome_colliders_active": biome_cols if include_collision else 0,
 		"biome_instances": biome_instances,
 		"biome_manifest": biome_manifest,
+		"quarry_feature": bool(biome_manifest.get("quarry_feature", false)),
+		"quarry_excavation_depth": float(biome_manifest.get("quarry_excavation_depth", 0.0)),
 		"field_parcels": field_parcels,
 		"field_crops": field_crops,
 		"field_vertices": field_vertices,
@@ -947,7 +1013,7 @@ func _update_chunk_states(pc: Vector2i) -> void:
 			var water_body := get_node_or_null(NodePath("Chunk_%d_%d/Water_%d_%d/WaterBody" % [coord.x, coord.y, coord.x, coord.y]))
 			if water_body != null and is_instance_valid(water_body):
 				if desired_state == &"active":
-					(water_body as StaticBody3D).collision_layer = 1
+					(water_body as StaticBody3D).collision_layer = WorldConstants.COLLISION_WATER
 				elif previous_state == &"active":
 					(water_body as StaticBody3D).collision_layer = 0
 			# Biome ACTIVE-only physics: warm retains BiomeMesh + MultiMesh visuals but disables BiomeBody collision
@@ -961,7 +1027,7 @@ func _update_chunk_states(pc: Vector2i) -> void:
 			var road_body := get_node_or_null(NodePath("Chunk_%d_%d/Road_%d_%d/RoadBody" % [coord.x, coord.y, coord.x, coord.y]))
 			if road_body != null and is_instance_valid(road_body):
 				if desired_state == &"active":
-					(road_body as StaticBody3D).collision_layer = 1
+					(road_body as StaticBody3D).collision_layer = 1 | WorldConstants.COLLISION_WALKABLE_GROUND
 				elif previous_state == &"active":
 					(road_body as StaticBody3D).collision_layer = 0
 			# Rural ACTIVE-only physics: warm retains RuralMesh visual but disables RuralBody collision

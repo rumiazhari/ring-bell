@@ -10,19 +10,8 @@ const RESOLUTION := 9
 const SPACING := 8.0
 const CHUNK_M := 64.0
 
-static func _urban_factor(p: Vector2) -> float:
-	var d := p.length()
-	if d <= WorldConstants.URBAN_INNER_M:
-		return 0.0
-	if d >= WorldConstants.URBAN_OUTER_M:
-		return 1.0
-	return (d - WorldConstants.URBAN_INNER_M) / (WorldConstants.URBAN_OUTER_M - WorldConstants.URBAN_INNER_M)
-
-static func _masked_height(world_plan: WorldPlan, p: Vector2) -> float:
-	var h: float = world_plan.terrain_height_at(p)
-	var t := _urban_factor(p)
-	var s := t * t * (3.0 - 2.0 * t)
-	return lerpf(0.0, h, s)
+# All dressing follows WorldPlan.surface_height_at(); this builder owns no
+# local urban mask or terrain transform.
 
 static func _tilled_color(crop: StringName) -> Color:
 	match crop:
@@ -63,9 +52,9 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var b: StringName = world_plan.biome_at(p)
 			biome_ids[idx] = b
 			material_ids[idx] = b
-			class_ids[idx] = world_plan.terrain_class_at(p)
+			class_ids[idx] = world_plan.surface_class_at(p)
 			colors[idx] = world_plan.surface_tint_at(p)
-			heights[idx] = _masked_height(world_plan, p) + WorldConstants.BIOME_OVERLAY_LIFT_M
+			heights[idx] = world_plan.surface_height_at(p) + WorldConstants.BIOME_OVERLAY_LIFT_M
 			if b == &"deciduous_forest" or b == &"mixed_upland_forest":
 				has_forest = true
 			if b == &"arable_field" or b == &"pasture" or b == &"pasture_orchard" or b == &"orchard":
@@ -96,7 +85,9 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var instances: Array[Transform3D] = []
 	var instance_count := 0
 	var center := origin + size * 0.5
-	var is_urban_core: bool = center.length() < WorldConstants.URBAN_INNER_M
+	var composition: Dictionary = world_plan.chunk_composition(coord)
+	var is_urban_core: bool = bool(composition.get("city_materialized", false))
+	var quarry_feature: Dictionary = world_plan.quarry_feature_at(center)
 	if not is_urban_core:
 		var forest_samples := 0
 		for j in RESOLUTION:
@@ -134,7 +125,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				rng.seed = hsh
 				var yaw: float = rng.randf() * TAU
 				var scale: float = rng.randf_range(0.9, 1.15)
-				var y: float = _masked_height(world_plan, p)
+				var y: float = world_plan.surface_height_at(p)
 				var x: float = origin.x + float(i) * SPACING + rng.randf_range(-0.8, 0.8)
 				var z: float = origin.y + float(j) * SPACING + rng.randf_range(-0.8, 0.8)
 				if x < origin.x or x >= origin.x + CHUNK_M or z < origin.y or z >= origin.y + CHUNK_M:
@@ -171,7 +162,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 					if hx < origin.x or hx >= origin.x + CHUNK_M or hz < origin.y or hz >= origin.y + CHUNK_M:
 						hx = clampf(hx, origin.x + 0.1, origin.x + CHUNK_M - 0.1)
 						hz = clampf(hz, origin.y + 0.1, origin.y + CHUNK_M - 0.1)
-					var hy: float = _masked_height(world_plan, Vector2(hx, hz))
+					var hy: float = world_plan.surface_height_at(Vector2(hx, hz))
 					var fh: float = rng2.randf_range(0.45, 0.75)
 					var scale_v := Vector3(2.0, fh, 0.4)
 					var xf2 := Transform3D(Basis.IDENTITY.scaled(scale_v), Vector3(hx, hy + fh * 0.5, hz))
@@ -196,7 +187,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 					rngn.seed = qh
 					var qx: float = origin.x + rngn.randf_range(4.0, CHUNK_M - 4.0)
 					var qz: float = origin.y + rngn.randf_range(4.0, CHUNK_M - 4.0)
-					var qy: float = _masked_height(world_plan, Vector2(qx, qz))
+					var qy: float = world_plan.surface_height_at(Vector2(qx, qz))
 					var qs: float = rngn.randf_range(0.6, 1.0)
 					var qxf := Transform3D(Basis.IDENTITY.scaled(Vector3(qs, qs * 0.7, qs)), Vector3(qx, qy + qs * 0.35, qz))
 					instances.append(qxf)
@@ -269,7 +260,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			cur_day = GameClock.get_day()
 		var is_grown: bool = cur_day >= p_planted + WorldConstants.CROP_GROW_DAYS
 		var growth_stage: StringName = &"harvestable" if is_grown else (&"growing" if cur_day == p_planted + 1 else &"planted")
-		var h_tilled: float = _masked_height(world_plan, p_center) + WorldConstants.FIELD_PARCEL_LIFT_M
+		var h_tilled: float = world_plan.surface_height_at(p_center) + WorldConstants.FIELD_PARCEL_LIFT_M
 		var tilled_manifest := {
 			"id": pid,
 			"parcel_id": pid,
@@ -335,7 +326,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						hx = p_center.x
 						hz = p_center.y + (p_size.y * 0.5 - 0.2) * (1 if hi==0 else -1)
 						hed_yaw = p_yaw
-				var hedge_y: float = _masked_height(world_plan, Vector2(hx, hz)) + 0.0
+				var hedge_y: float = world_plan.surface_height_at(Vector2(hx, hz)) + 0.0
 				var hedge_h: float = lerpf(WorldConstants.HEDGEROW_TRUE_HEIGHT_MIN, WorldConstants.HEDGEROW_TRUE_HEIGHT_MAX, float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("field_parcel"), WorldSeed.combine([int(hx), int(hz)]), hi]) % 1000003) / 1000003.0)
 				# True-mesh hedgerow BoxMesh 2.0x0.45-0.75x0.4 not stretched
 				var scale_v := Vector3(WorldConstants.HEDGEROW_TRUE_LENGTH, hedge_h, WorldConstants.HEDGEROW_TRUE_WIDTH)
@@ -428,7 +419,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		}
 		orchard_parcel_manifests.append(orchard_manifest)
 		var fruit_id_o: String = "fruit_%s" % pid_o
-		var h_fruit: float = _masked_height(world_plan, p_center_o) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 0.01
+		var h_fruit: float = world_plan.surface_height_at(p_center_o) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 0.01
 		var fruit_pos := Vector3(p_center_o.x, h_fruit, p_center_o.y)
 		var fruit_manifest := {
 			"id": fruit_id_o,
@@ -471,7 +462,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 						hz_o = p_center_o.y + (p_size_o.y * 0.5 - 0.2) * (1 if hi==0 else -1)
 						hed_yaw_o = p_yaw_o
 				var hedge_h_o: float = lerpf(WorldConstants.HEDGEROW_TRUE_HEIGHT_MIN, WorldConstants.HEDGEROW_TRUE_HEIGHT_MAX, float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("orchard_parcel"), WorldSeed.combine([int(hx_o), int(hz_o)]), hi]) % 1000003) / 1000003.0)
-				var hedge_y_o: float = _masked_height(world_plan, Vector2(hx_o, hz_o)) + hedge_h_o * 0.5
+				var hedge_y_o: float = world_plan.surface_height_at(Vector2(hx_o, hz_o)) + hedge_h_o * 0.5
 				var scale_v_o := Vector3(WorldConstants.HEDGEROW_TRUE_LENGTH, hedge_h_o, WorldConstants.HEDGEROW_TRUE_WIDTH)
 				var basis_o := Basis(Vector3.UP, hed_yaw_o).scaled(scale_v_o)
 				var xf_o := Transform3D(basis_o, Vector3(hx_o, hedge_y_o, hz_o))
@@ -485,7 +476,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var trees_to_add := mini(int(p_tree_instances.size()), remaining_canopy)
 			for ti in trees_to_add:
 				var tpos: Vector3 = p_tree_instances[ti] as Vector3
-				var canopy_y: float = tpos.y + 1.4
+				var canopy_y: float = world_plan.surface_height_at(Vector2(tpos.x, tpos.z)) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 1.4
 				var scale_canopy := Vector3(1.4, 1.0, 1.4)
 				var xf_c := Transform3D(Basis.IDENTITY.scaled(scale_canopy), Vector3(tpos.x, canopy_y, tpos.z))
 				instances.append(xf_c)
@@ -543,6 +534,10 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"has_forest": has_forest,
 		"has_field": has_field,
 		"has_quarry": has_quarry,
+		"quarry_feature": bool(quarry_feature.get("inside", false)),
+		"quarry_feature_id": quarry_feature.get("id", ""),
+		"quarry_excavation_depth": float(quarry_feature.get("depth", 0.0)),
+		"quarry_spoil_center": quarry_feature.get("spoil_center", Vector2.ZERO),
 		"is_wet_margin": is_wet_margin,
 		"biome_vertices": vertex_count,
 		"biome_triangles": tri_count,
