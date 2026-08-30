@@ -21,10 +21,11 @@ Every autonomous role must read:
 
 ## Hard role boundary
 
-- `lunaringbell` is architect and reviewer. It designs the entire project and reviews implementation, but never edits production code/tests/scenes/assets/project settings.
-- `museringbell` is builder. It implements only the approved design, but never selects milestones or edits control state.
-- Both use `gpt-5.6-luna` via `openai-codex` with `agent.reasoning_effort=max` (Luna Ultra mapping).
+- `architect-autopilot` is architect and reviewer. It designs the entire project and reviews implementation, but never edits production code/tests/scenes/assets/project settings.
+- `builder-autopilot` is builder. It implements only the approved design, but never selects milestones or edits control state.
+- Both use `muse-spark-1.2-contributor` via `opencode-go` with `agent.reasoning_effort=max` (functional role names, not model names). Meta data-training prompt: answer "y".
 - `tools/ring_bell_autopilot_v2.py` alone creates lifecycle tasks and mutates state.
+- After every accepted milestone: builder pushes to `rumiazhari/ring-bell` (origin/master) and the controller notifies Telegram 518829299 with a human, concise, emoji summary of what completed and what is next.
 
 ## Construction discipline
 

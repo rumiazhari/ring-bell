@@ -1,0 +1,28 @@
+{
+  "decision": "authorize_build",
+  "cycle": 6,
+  "milestone_id": "P4.3-RURAL-INTERIOR-SCAVENGE",
+  "milestone_title": "Functional rural interiors with scavenge anchors inside rural shells",
+  "gameplay_value": "Turn empty road-side shells into usable shelters: deterministic partition wall, 1-3 furniture proxies and weighted FoodCrate loot per building, giving road-following exploration a recoverable shelter+loot payoff, countryside survival decisions and landmark return reasons while keeping ACTIVE-only 240/180 (400/300 dense) streaming and unlocking village economy.",
+  "spec_path": ".hermes/autopilot/specs/SPEC-C006.md",
+  "spec_sha256": "f52a8d85064e1cc9ca5c65736534a4c49d2a948dd4fd7c6234ab9976ac97380a",
+  "acceptance_criteria": [
+    "--ruraltest finishes with finished with 0 failure(s): same-seed rural+interior+crate manifests identical shuffled incl. negative coords, different seed differs >=3/9 and >=30% placements+contents, 1-6 buildings per settlement by kind (village 4-6/hamlet 2-3 strict/farmstead 1-2) aabb spacing >=8 and uniform road setback >=4, partition 0-1 inset 0.5 doorway 0.95 not overlapping door swing 1.0, furniture 1-3 against walls >=0.9, crate 0-3 per village chunk 1 per hamlet 1-4 items ItemDB 40/25/20/15, door faces road/settlement and obeys Door contract.",
+    "Geographic validity for canonical +4 alternate seeds: villages only where slope <14 and distance_to_water > BANK+FLOOD+14 outside floodplain/forest, farmsteads only where slope < BUILDABLE_MAX and not cliff/water, rural buildings only where terrain_class != cliff and slope < BUILDABLE_MAX (<14 village houses) and distance_to_water > BANK+2 and setback >=4 never on is_bridge, interiors only where building exists inside inset 0.5 with furniture >=0.9 from furniture and crate >=0.7/1.2 from wall/door — real WorldConstants thresholds, macro-cell non-speckling clustered not speckled.",
+    "Rural materialization budgets and seams with interiors: manifests byte-identical shuffled, building center ownership no duplication at + and - and -Z borders shared road centerline 0.02, each chunk <=1 rural shell+interior collider (0 if none) warm collision_layer 0, verts <=400 tris <=300 per chunk (typical <=240/180 hamlet/farmstead), doors <=6 per village crates <=3 per village furniture <=6 per village, 3x3 ACTIVE <=9 rural colliders, t_rural_gen/t_rural_mat in stats within FRAME_BUDGET_MS 12, at least 9 resident rural chunks around hamlet+road+bridge transect with interior wall gap 0.90-1.10 and crate ItemDB vocab.",
+    "ChunkManager streams rural shells+interiors+crates with city+terrain+water+biome+road without duplication: 3x3 ACTIVE around hamlet near road+bridge claims active rural <=9 and active crates == resident crates enabled only when ACTIVE, walking 480 m beyond UNLOAD_RADIUS unloads rural chunks and returning regenerates identical manifests (counts/footprints/yaws/colors/interior walls/furniture/crate pos/contents/shell verts/tris/colliders/doors) and debug stats contain t_rural_gen/t_rural_mat and crates/furniture, generated rural excluded from save_state() except deltas.crates.",
+    "Determinism and buildability preserved after interiors: GENERATOR_VERSION stays 2 additive, WorldPlan pure, CityPlan IDs and TerrainPlan 17x17 and hydrology CX/width 530-710/72/38-50 and biome contiguity >=192 m and road seam 0.02 and 9 resident road chunks unchanged — proved by --citytest + --terrainmaterialtest + --hydrotest + --biometest + --roadtest each finished with 0 failure(s) with retained seams.",
+    "Existing budgets not weakened: --citytest, --terrainmaterialtest, --hydrotest, --biometest, --roadtest, --cityruntime, --walkthrough, --havoctest, --smoke each finished with 0 failure(s) (3221225477 with marker not failure; ObjectDB inside_tree guards extended to crate path); closed leaf still blocks, FoodCrate prompt Search shelves (Canned Food xN) updates and is_empty disables, walkthrough climbs 5 storeys no teleports, havoctest clear-shot honest, city 9/terrain 9/water <=9/biome <=9/road <=9/rural <=9 shell colliders intact (<=54 peak, <=63 with 9 active crates ACTIVE-only) t_rural_gen/mat within 12 ms.",
+    "Windowed player-facing proof archived: normal windowed CITY run shows WASD/E door closed blocks/open clears without RID exclusion/swung collidable, stair to roof camera following, F3 overlay with active rural + t_rural_gen/t_rural_mat and crates alongside active road/biome/water/terrain, then 600-900 m east along rural road corridor to river valley showing continuous rural shells 2-6 low-rise vertex-colored with working doors set back from road ribbon 7.0/5.0/3.5 lift 0.04 plus visible bridge deck +0.35 over teal water 4a7a94 bank 9 floodplain 26 without seam cracks/flicker and through open door partition 0.95 plus furniture silhouette plus crate Search shelves (Canned Food x1) via E takes one item prompt updates. PNG+log under .hermes/autopilot/reports/SPEC-C006-windowed.* referenced; ARCHITECTURE.md/DEVELOPMENT.md updated for ACTIVE-only including crate, t_rural_* interior, 240/180 400/300 justification, furniture <=6 crates <=3 ItemDB 40/25/20/15, streaming pacing 1-per-frame + freed-Zombie guard, run_suite 400 timeout, WORLD-CONTRACT §15, folding C001-C005 deferred docs."
+  ],
+  "required_tests": [
+    "python tools/run_suite.py --ruraltest 400",
+    "python tools/run_suite.py --roadtest 400",
+    "python tools/run_suite.py --hydrotest 300",
+    "python tools/run_suite.py --citytest 400",
+    "python tools/run_suite.py --terrainmaterialtest 300",
+    "python tools/run_suite.py --biometest 300",
+    "python tools/run_suite.py --cityruntime 300",
+    "python tools/run_suite.py --walkthrough 360"
+  ]
+}

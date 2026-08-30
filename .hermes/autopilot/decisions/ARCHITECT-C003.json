@@ -1,0 +1,28 @@
+{
+  "decision": "authorize_build",
+  "cycle": 3,
+  "milestone_id": "P3.1-RURAL-MOSAIC",
+  "milestone_title": "Czech rural mosaic: deterministic biomes, geology and streamed field/forest dressing",
+  "gameplay_value": "Turn the homogeneous hinterland into a readable Bohemian mosaic — floodplain/wet meadow along the river, arable fields with hedgerows, pasture/orchard, contiguous deciduous/mixed upland forest and sparse quarry outcrops governed by geology — streamed at 9x9/81/128 and ACTIVE-only budgets so the player gains landmark-driven exploration, cover and route choices, and a foundation that unlocks future farms, villages, roads and quarries.",
+  "spec_path": ".hermes/autopilot/specs/SPEC-C003.md",
+  "spec_sha256": "147f02c82e4f246d5b512f6f41fc7fcaa760bc78bcc61a76ccf6d3d5dcf4295d",
+  "acceptance_criteria": [
+    "--biometest finishes with finished with 0 failure(s): same-seed geology and biome queries identical shuffled incl. negative coords, different seed materially differs >=3/9, 40 probes show contiguous forest/field clusters run-length >=192 m (3 chunks) with no speckling, vocab subset of WorldConstants.BIOME_VOCAB.",
+    "Geographic validity for canonical +4 alternate seeds: river_floodplain/wet_meadow only within BANK_W+FLOODPLAIN_W +16 m where slope < BUILDABLE_MAX and not cliff, forest only on slope/elevation-compatible outside water/floodplain (mixed only on upland >=38 m), arable/pasture only on gentle <12-14deg and fertility gate outside floodplain/forest, quarry only where quarry_suitability >0.72 and slope >=28 or cliff/limestone upland — using real WorldConstants thresholds.",
+    "Rural materialization budgets and seams proven: manifests byte-identical shuffled, shared-edge biome agreement >=7/9 samples at + and - boundaries, each chunk <=1 biome collider (0 if no proxies), instances <=48 forest / <=12 field hedgerow / <=6 quarry, 3x3 ACTIVE <=9 biome colliders, each overlay 81 verts / <=128 tris (9x9) with biome_mat_ms measured, at least 9 resident biome chunks around rural transect.",
+    "ChunkManager streams biome with terrain/water/city without duplication: 3x3 ACTIVE around field/forest edge claims active biome <=9, walking 480 m beyond UNLOAD_RADIUS unloads biome chunks and returning regenerates identical manifests (colors/instances/verts/tris/colliders), debug stats contain t_biome_gen/t_biome_mat, generated biome excluded from save_state().",
+    "Determinism and buildability preserved after biome: GENERATOR_VERSION stays 2 (additive), WorldPlan pure, CityPlan IDs unchanged, TerrainPlan 17x17 and hydrology CX/width still 530-710/72/38-50, spawn still urban_basin dry — proved by --citytest + --terrainmaterialtest + --hydrotest each finished with 0 failure(s) with retained overlap/door/stair/facade/seam assertions.",
+    "Existing budgets not weakened: --citytest, --terrainmaterialtest, --hydrotest, --cityruntime, --walkthrough, --havoctest, --smoke each finished with 0 failure(s) (3221225477 with marker is not failure; ObjectDB inside_tree noise reduced with guards); closed leaf still blocks, walkthrough climbs 5 storeys no teleports, havoctest clear-shot honest, city 9/terrain 9/water <=9 colliders intact.",
+    "Windowed player-facing proof archived: normal windowed CITY run shows WASD/E door (closed blocks/open clears without RID exclusion/swung collidable), stair to roof camera following, F3 overlay with active biome + t_biome_gen/t_biome_mat alongside active water/terrain, then 600-900 m east walk to river valley showing continuous biome tint field->wet meadow->floodplain->teal water 4a7a94 bank 9 m floodplain 26 m plus hedgerow/tree proxies without seam cracks/flicker. PNG+log stored under .hermes/autopilot/reports/SPEC-C003-windowed.* and referenced; ARCHITECTURE.md/DEVELOPMENT.md updated for ACTIVE-only biome and water district_hint + bank ribbon budgeted decision, folding C001/C002 deferred docs."
+  ],
+  "required_tests": [
+    "python tools/run_suite.py --biometest 300",
+    "python tools/run_suite.py --hydrotest 300",
+    "python tools/run_suite.py --citytest 300",
+    "python tools/run_suite.py --terrainmaterialtest 300",
+    "python tools/run_suite.py --cityruntime 300",
+    "python tools/run_suite.py --walkthrough 360",
+    "python tools/run_suite.py --havoctest 240",
+    "python tools/run_suite.py --smoke 180"
+  ]
+}

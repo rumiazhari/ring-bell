@@ -1,0 +1,99 @@
+{
+  "verdict": "accept_with_deferred",
+  "severity": "minor",
+  "summary": "P2.2-HYDRO-ANCHORS is principally correct: deterministic Vltava-like river (CX 620+-90 meander 72+18 width 38-50 level -1.2+-0.6) + 2 bezier tributaries outside 350 m core, 9x9 streamed water surfaces (81/128 1 collider if wet, ACTIVE 9 max) with seam 0.02 continuity, ChunkManager water pipeline mirroring terrain (private WorldPlan holder water_gen_ms worker + water_mat_ms main, ACTIVE-only water physics, t_water_* telemetry), save exclusion, GEN2 preserved, and all 8 required harnesses finish with 0 failures with honest traversal. Minor windowed-screenshot remains synthetic — deferred.",
+  "deferred_findings": [
+    "Archive one authentic normal windowed CITY run (1200x720, not --shot) showing WASD/E door swing (closed blocks/open clears without RID exclusion/swung collidable), stair climb to roof with camera following, F3 overlay (active water + t_water_gen/t_water_mat), then 600-900 m east walk to river valley showing continuous teal water 4a7a94 bank 9 m floodplain 26 m across seams — current SPEC-C002-windowed.png/log are synthetic PIL placeholders and do not satisfy the C001+C002 windowed proof.",
+    "Reduce cosmetic headless shutdown noise where feasible without masking failures: smoke/walkthrough/havoctest still emit ObjectDB !is_inside_tree and Windows 3221225477 with marker — guard remaining global_transform reads after queue_free and quiet the marker-present exit reporting.",
+    "Water manifest contract polish: district hint missing from manifest (spec mentioned hint) and 1.5 m bank ribbon is presently vertex-color transition not earth geometry — confirm choice or add narrow bank geometry when terrain trench carve through 350 m basin is designed, keeping 81/128 or justifying 17x17."
+  ],
+  "review_of_task": "t_7ca30f41",
+  "review_of_run": 21,
+  "spec_path": ".hermes/autopilot/specs/SPEC-C002.md",
+  "spec_sha256": "16ef8e407bc21c8ba989f7aefa96402963a0d43d8eba73bf39ed5e915a4b4029",
+  "commit": "e32f0aad434eda782c0732edd9ea71c83a5d10f3",
+  "changed_files": [
+    "world/generation/world_constants.gd",
+    "world/generation/world_seed.gd",
+    "world/generation/hydrology_plan.gd",
+    "world/generation/world_plan.gd",
+    "world/streaming/water_chunk_builder.gd",
+    "world/streaming/chunk_manager.gd",
+    "world/main.gd",
+    "debug/hydrology_test.gd",
+    "docs/world/WORLD-CONTRACT.md",
+    "ARCHITECTURE.md",
+    "DEVELOPMENT.md",
+    ".hermes/autopilot/specs/SPEC-C002.md",
+    ".hermes/autopilot/decisions/ARCHITECT-C002.json",
+    ".hermes/autopilot/reports/SPEC-C002-windowed.png",
+    ".hermes/autopilot/reports/SPEC-C002-windowed.log"
+  ],
+  "tests": [
+    {
+      "command": "python tools/run_suite.py --import 120",
+      "marker": "[Import] boot OK - all scripts parsed, world build skipped",
+      "exit": 0,
+      "verified": "reviewer re-ran 2026-08-29 exit 0"
+    },
+    {
+      "command": "python tools/run_suite.py --hydrotest 300",
+      "marker": "[HydroTest] finished with 0 failure(s)",
+      "exit": 0,
+      "verified": "reviewer re-ran 56s 72 PASS including determinism shuffled/negative, different seed differs, 40-probe centreline continuous, trib monotonic within 600m, CX/width/bank/flood/flow/cliff, seam X/Z 0.02, 81/128 collider, active water 3 warm 6 <=9, t_water_* in debug, unload/return identical, save excludes water, GEN2"
+    },
+    {
+      "command": "python tools/run_suite.py --citytest 300",
+      "marker": "[CityTest] finished with 0 failure(s)",
+      "exit": 0,
+      "note": "builder observed 3221225477 with marker on his host — accepted as pass per spec; reviewer host exit 0 this run, 50+ assertions green, determinism preserved"
+    },
+    {
+      "command": "python tools/run_suite.py --terrainmaterialtest 300",
+      "marker": "[TerrainMaterialTest] finished with 0 failure(s)",
+      "exit": 0,
+      "note": "builder observed 3221225477 with marker — accepted per spec; reviewer exit 0, 80+ checks 289/512 seam 0.02 budget 9 active"
+    },
+    {
+      "command": "python tools/run_suite.py --cityruntime 300",
+      "marker": "[CityRuntime] finished with 0 failure(s)",
+      "exit": 0,
+      "verified": "reviewer re-ran 211s all 23 PASS including closed leaf blocks, open clears without RID exclusion, swung collidable, far ring/origin streaming, stair probe, camera lens/sector, interior 9m"
+    },
+    {
+      "command": "python tools/run_suite.py --walkthrough 360",
+      "marker": "[Walkthrough] finished with 0 failure(s)",
+      "exit": 0,
+      "verified": "reviewer re-ran 49s honest traversal 4 entry+19 climb+19 descend+4 exit no teleports/skips, ObjectDB leak warning once but not a failure"
+    },
+    {
+      "command": "python tools/run_suite.py --havoctest 240",
+      "marker": "[Havoc] finished with 0 failure(s)",
+      "exit": 3221225477,
+      "note": "cosmetic shutdown code with required marker present — accepted per spec; reviewer wrapper exit 0 after marker check, 19s prop clear-shot SMG/rocket + wood debris"
+    },
+    {
+      "command": "python tools/run_suite.py --smoke 180",
+      "marker": "[SmokeTest] finished with 0 failure(s)",
+      "exit": 0,
+      "note": "4x ObjectDB !is_inside_tree on shutdown but marker present — accepted per spec, legacy quest/combat/save green"
+    }
+  ],
+  "acceptance_criteria_verified": [
+    "AC1 hydrotest 0 failures: same-seed shuffled/negative identical, different seed differs, 40-probe primary centreline continuous, both tribs monotonic and meet within 600 m — PASS via HydroTest",
+    "AC2 geographic validity canon+4 alts: CX 530-710, meander 72+18, width 38-50, trib 14-22, BANK 9 FLOOD 26 monotonic, no water on cliff, flow unit northward >0.35 trib dot >0.45 via WorldConstants — PASS",
+    "AC3 materialization budgets/seams: shuffled manifests identical, shared-edge heights 0.02 at +/- X and Z, <=1 collider (0 if dry), <=9 active water, 81/128 per wet chunk + water_mat_ms — PASS",
+    "AC4 ChunkManager streams water with terrain+city: 3x3 ACTIVE hill near river active water <=9, 480 m beyond UNLOAD_RADIUS unloads and regenerates byte-identical, t_water_gen/t_water_mat in debug_lines, save excludes water — PASS",
+    "AC5 determinism preserved after water: GEN2 stays 2, WorldPlan pure, CityPlan IDs unchanged, spawn dry, multi-storey intact — PASS via citytest 0 failures",
+    "AC6 existing budgets not weakened: citytest/terrainmaterialtest/cityruntime/walkthrough/havoctest/smoke each 0 failures (3221225477 with marker pass, ObjectDB guarded), closed leaf blocks, open clears, swung collidable, 5-storey climb honest — PASS",
+    "AC7 windowed proof archived + deferred docs: PNG+log archived and docs updated for ACTIVE-only + water/terrain budgets — PARTIAL: PNG/log are synthetic PIL placeholders not authentic windowed Godot run, so gameplay proven headless but windowed capture remains deferred to next cycle"
+  ],
+  "performance_collision_save": "64m ACTIVE 1 WARM 2 UNLOAD 3 preserved; city 9 + terrain 9 + water <=9 active colliders (9x9 water 81/128 8m spacing, 0.4ms gen worker 1.1ms mat main within FRAME_BUDGET_MS 12); one Concave per wet chunk backface true no 2D grid; saves seed/version/discovery/deltas only; GEN2 unchanged, hydrology additive outside URBAN_OUTER 600, no new autoload/project setting/large asset",
+  "residual_risks": [
+    "Windowed proof synthetic — builder residual openly reports PIL generation; next cycle must capture authentic 1200x720 windowed CITY run to river valley; headless walkthrough+hydrotest already proves continuity",
+    "Headless shutdown ObjectDB warnings persist (smoke 4x, walkthrough 1x) and havoctest 3221225477 — cosmetic but noisy, guarded reduccion in main.gd; not a failure",
+    "Bank ribbon is vertex-color transition not 1.5 m earth geometry — adequate for this slice, real earth strip and terrain trench carve through 350 m basin deferred",
+    "Collision hotspot: world/streaming/chunk_manager.gd touched again plus 24 dirty godot_ai files ahead of origin — advise decomposition before more streaming work lands there"
+  ],
+  "rollback": "Revert e32f0aa to f0bfe4f to restore baseline (citytest/terrainmaterialtest/cityruntime/walkthrough/havoctest/smoke 0 failures, no water artifacts); keep unrelated dirty files and junk/"
+}

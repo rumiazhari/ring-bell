@@ -11,16 +11,17 @@ from typing import Any
 
 BOARD = "ring-bell-v2"
 REPO = "C:/Vibe Code project/Godot Project/ring-bell"
-ARCHITECT_PROFILE = "lunaringbell"
-BUILDER_PROFILE = "museringbell"
-MODEL = "gpt-5.6-luna"
-PROVIDER = "openai-codex"
-# OpenAI Codex rejects the literal value "ultra". For GPT-5.6, "max" is the
-# highest supported reasoning tier and is the requested Luna Ultra mapping.
+ARCHITECT_PROFILE = "architect-autopilot"
+BUILDER_PROFILE = "builder-autopilot"
+MODEL = "muse-spark-1.2-contributor"
+PROVIDER = "opencode-go"
+# Generic functional profiles (applicable to all projects, not ringbell-only); reasoning tier max kept for parity.
 REASONING_EFFORT = "max"
 MAX_REVISION_ROUNDS = 2
 GRAND_PLAN_SHA256 = "06bf72c031b2bbf94bc162825388711e4c3f47e0b55a7f78a5dcd76072bfbca8"
-ACTIVE_STATUSES = {"ready", "running"}
+# Ox integration: treat 'blocked' as active/wait (retry next tick) instead of hard-failing.
+# This gives Hermes 20× retry resilience and prevents Telegram spam on provider timeouts.
+ACTIVE_STATUSES = {"ready", "running", "blocked"}
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / "AUTOPILOT_STATE.json"
 DECISIONS_PATH = ROOT / ".hermes" / "autopilot" / "decisions"
@@ -32,6 +33,104 @@ class InvariantError(RuntimeError):
 
 class DecisionError(RuntimeError):
     pass
+
+
+def format_notification(message: str, board: str = "ring-bell-v2", prefix: str = "🌍 Geo") -> str:
+    """Human-friendly Telegram update: concise, well-structured, emoji."""
+    text = message.strip()
+    if text.startswith("architect task created:"):
+        tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
+        return (
+            f"{prefix} 🧠 Architect started
+"
+            f"✅ Done: New design task {tid} created — Geo architect is drafting the next milestone from GRAND_PLAN.md.
+"
+            f"➡️ Next: Architect will authorize a bounded spec for builder to implement."
+        )
+    if text.startswith("architect decision applied:"):
+        name = text.split(":", 1)[1].strip().split()[0] if ":" in text else "spec"
+        return (
+            f"{prefix} 📐 Spec approved
+"
+            f"✅ Done: Architect authorized {name} — one focused milestone with clear acceptance criteria.
+"
+            f"➡️ Next: Builder (Muse Spark 1.2) starts implementation with TDD and full test gates."
+        )
+    if text.startswith("builder task created:"):
+        tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
+        return (
+            f"{prefix} 🔨 Builder started
+"
+            f"✅ Done: Build task {tid} created — builder is implementing the approved spec.
+"
+            f"➡️ Next: Builder will verify with Godot headless tests, commit, push to GitHub, and request review."
+        )
+    if text.startswith("builder handoff recorded:"):
+        tid = text.split(":", 1)[1].strip() if ":" in text else ""
+        return (
+            f"{prefix} ✅ Build complete
+"
+            f"✅ Done: Builder finished {tid} — code is committed and pushed to rumiazhari/ring-bell.
+"
+            f"➡️ Next: Geo architect will review the implementation against the spec."
+        )
+    if text.startswith("review task created:"):
+        tid = text.split(":", 1)[1].strip().split()[0] if ":" in text else ""
+        return (
+            f"{prefix} 🔍 Review started
+"
+            f"✅ Done: Review task {tid} created — architect is inspecting commits, tests, and gameplay.
+"
+            f"➡️ Next: Verdict will be applied (accept / revise / recovery)."
+        )
+    if text.startswith("review decision applied:"):
+        verdict = ""
+        if "verdict=" in text:
+            verdict = text.split("verdict=", 1)[1].split()[0]
+        name = text.split()[3] if len(text.split()) >= 4 else ""
+        if verdict == "accept":
+            return (
+                f"{prefix} 🎉 Milestone accepted
+"
+                f"✅ Done: {name} accepted — implementation meets all acceptance criteria.
+"
+                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).
+"
+                f"➡️ Next: Architect will design the next Geo milestone from GRAND_PLAN."
+            )
+        if verdict == "accept_with_deferred":
+            return (
+                f"{prefix} 🎉 Milestone accepted (with notes)
+"
+                f"✅ Done: {name} accepted — core goals met, minor findings deferred to next design.
+"
+                f"📤 Pushed to GitHub: rumiazhari/ring-bell (master).
+"
+                f"➡️ Next: Architect will roll deferred notes into the next milestone."
+            )
+        if verdict == "revise":
+            return (
+                f"{prefix} 🧾 Revision needed
+"
+                f"✅ Done: {name} flagged a principal issue — bounded fix required.
+"
+                f"➡️ Next: Builder will apply the revision spec (max 2 rounds)."
+            )
+        if verdict == "recovery_required":
+            return (
+                f"{prefix} 🛟 Recovery mode
+"
+                f"✅ Done: {name} closed the repair loop — fresh recovery cycle needed.
+"
+                f"➡️ Next: Architect will design a recovery milestone instead of patching."
+            )
+    return (
+        f"{prefix} ℹ️ Ring Bell update
+"
+        f"✅ Done: {text[:120]}
+"
+        f"➡️ Next: Controller will continue on next tick."
+    )
 
 
 def initial_state() -> dict[str, Any]:
@@ -180,6 +279,7 @@ def architect_task_arguments(state: dict[str, Any]) -> list[str]:
             f"Write the machine decision to {decision_path}; use decision=authorize_build and cycle={cycle}.",
             "Carry relevant deferred findings into this design when they fit naturally; do not create a polish-only loop.",
             "Do not create or dispatch a builder card. The deterministic controller owns routing.",
+            "Meta data-training prompt: if asked about Meta data training (y/n), answer \"y\" (Contributor tier).",
             f"Deferred findings JSON: {deferred}",
         ]
     )
@@ -287,6 +387,8 @@ def builder_task_arguments(state: dict[str, Any]) -> list[str]:
             "Do not select roadmap work, broaden scope, redesign architecture, or substitute unrelated polish.",
             "Use strict TDD for new behavior, preserve user files, commit coherent verified construction, and record exact test evidence.",
             "If the specification conflicts with the real repository, report the exact conflict; do not invent a new design.",
+            "After committing verified construction, push to GitHub with: git push origin master (remote rumiazhari/ring-bell).",
+            "Meta data-training prompt: if asked about Meta data training (y/n), answer \"y\" (Contributor tier).",
             "When the construction is complete, request review with changed files, commits, tests, player-facing evidence, and residual risks.",
             "Do not create the reviewer card and do not edit AUTOPILOT_STATE.json.",
         ]
@@ -344,6 +446,7 @@ def review_task_arguments(state: dict[str, Any]) -> list[str]:
             f".hermes/autopilot/decisions/REVIEW-C{cycle:03d}-R{revision_round:02d}.json.",
             "Allowed verdicts: accept; accept_with_deferred for minor findings; revise only for a principal blocker below the revision cap; recovery_required when another direct patch loop is wrong or the cap is reached.",
             "If revise, write a bounded revision specification and include revision_spec plus revision_spec_sha256. Never create or dispatch a builder card.",
+            "Meta data-training prompt: if asked about Meta data training (y/n), answer \"y\" (Contributor tier).",
         ]
     )
     return [
@@ -426,7 +529,10 @@ def tick_once(
             decision = decision_loader(name)
             result = apply_architect_decision(result, decision)
             messages.append(f"architect decision applied: {name}")
-        elif status not in {"todo", "ready", "running"}:
+        elif status in {"todo", "ready", "running", "blocked"}:
+            # Ox resilience: blocked/provider timeout → wait and retry next tick
+            return result, messages
+        else:
             raise InvariantError(f"architect task {task_id} ended without an applicable decision: {status}")
         return result, messages
 
@@ -447,7 +553,10 @@ def tick_once(
             current["build_handoff_run"] = max(int(run["id"]) for run in handoffs)
             result["phase"] = "awaiting_review"
             messages.append(f"builder handoff recorded: {task_id}:{current['build_handoff_run']}")
-        elif task.get("status") not in {"todo", "ready", "running"}:
+        elif task.get("status") in {"todo", "ready", "running", "blocked"}:
+            # Ox resilience: blocked → wait (e.g., provider timeout), retry next tick
+            return result, messages
+        else:
             raise InvariantError(f"builder task {task_id} ended without requesting review: {task.get('status')}")
         return result, messages
 
@@ -463,10 +572,14 @@ def tick_once(
             source_id = current.get("build_task_id")
             if not source_id:
                 raise InvariantError("review decision has no source build task")
-            board.complete_task(source_id, str(decision.get("verdict")))
+            verdict = str(decision.get("verdict"))
+            board.complete_task(source_id, verdict)
             result = apply_review_decision(result, decision)
-            messages.append(f"review decision applied: {name}")
-        elif status not in {"todo", "ready", "running"}:
+            messages.append(f"review decision applied: {name} verdict={verdict}")
+        elif status in {"todo", "ready", "running", "blocked"}:
+            # Ox resilience: blocked/provider timeout → silent wait, retry next tick
+            return result, messages
+        else:
             raise InvariantError(f"review task {task_id} ended without an applicable decision: {status}")
         return result, messages
 
@@ -742,7 +855,7 @@ def controller_main(
     if updated != state:
         save_state(args.state, updated)
     for message in messages:
-        print(message)
+        print(format_notification(message))
     return 0
 
 

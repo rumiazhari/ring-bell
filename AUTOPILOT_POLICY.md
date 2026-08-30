@@ -13,15 +13,15 @@ There is no legacy Markdown state, second controller, root lock, health-controll
 
 ## Roles
 
-### Architect and reviewer — `lunaringbell`
+### Architect and reviewer — `architect-autopilot`
 
-- Uses `gpt-5.6-luna` through `openai-codex` at reasoning effort `max` (the highest Codex-supported GPT-5.6 tier; this is the configured Luna Ultra mapping).
+- Uses `muse-spark-1.2-contributor` through `opencode-go` at reasoning effort `max` (functional role, not model-named; Ox-like resilience with v2 rigor).
 - Owns the architecture of the entire game, milestone selection, technical construction design, interfaces, sequencing, acceptance criteria, rollback design, and implementation review.
 - Expands the grand plan one bounded milestone at a time according to the actual repository and player experience.
 - May edit only specifications, decisions, reports, and control documentation.
 - Must not edit production code, tests, scenes, assets, or project settings.
 
-### Builder — `museringbell`
+### Builder — `builder-autopilot`
 
 - Uses the same exact model/provider/reasoning pin.
 - Implements only the architect-approved specification and bounded revision specifications.
@@ -92,7 +92,12 @@ It does **not** mean overlapping writers, infinite retries, hidden test failures
 
 ## No-start gate
 
-Current state is `enabled=false`, `phase=paused`. Configuration, validation, audit, and dry-run inspection are allowed. No architect, builder, reviewer, dispatcher, or scheduled controller may run until the user explicitly authorizes start.
+The controller starts in `enabled=false`, `phase=paused`. Configuration,
+validation, audit, and dry-run inspection are allowed in that state. No
+architect, builder, reviewer, dispatcher, or scheduled controller may run until
+the user explicitly authorizes start. After authorization, `AUTOPILOT_STATE.json`
+is the live source of truth and the same gate remains fail-closed whenever the
+state returns to `phase=paused`.
 
 ## File preservation
 

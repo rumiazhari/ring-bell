@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import random
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,10 @@ def should_dispatch(state: dict[str, Any]) -> bool:
 
 
 def main() -> int:
+    # Jitter 2-6s to spread from character controller (10-16s) and doctor 12-22s, avoiding fire-claim overlap at 00s
+    try:
+        time.sleep(random.randint(2, 6))
+    except: pass
     state = json.loads(STATE.read_text(encoding="utf-8"))
     if not should_dispatch(state):
         return 0
