@@ -258,7 +258,7 @@ def architect_task_arguments(state: dict[str, Any]) -> list[str]:
             "Carry relevant deferred findings into this design when they fit naturally; do not create a polish-only loop.",
             "Do not create or dispatch a builder card. The deterministic controller owns routing.",
             "Meta data-training prompt: if asked about Meta data training (y/n), answer \"y\" (Contributor tier).",
-            f"Deferred findings JSON: {deferred}",
+            f"Deferred findings: {len(deferred)} items in AUTOPILOT_STATE.json deferred_findings (read the file); latest 5: {json.dumps(deferred[-5:], ensure_ascii=False)[:3000] if deferred else 'none'}",
         ]
     )
     return [
