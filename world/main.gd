@@ -14,8 +14,18 @@ extends Node3D
 ##   - spawn population (or restore from a save)
 ##   - wire player controls, dialogue opening
 ##   - implement save_state()/load_state() as SaveManager's world provider
+##
+## SPAWN MENU (additive, Option A):
+##   In windowed interactive runs (no --headless / no test flags) _ready()
+##   shows MainMenu and DEFILES world streaming until the player picks a spawn
+##   kind. Only after pick does the LoadingScreen appear, the city streams
+##   fully (gate wait), then gameplay starts — avoids first-frame spike.
+##   Headless and all --*test paths bypass the menu entirely and behave exactly
+##   as before, so existing harnesses stay green.
 
 enum WorldMode { LEGACY_BLOCK, STREAMED_CITY }
+
+const SpawnPoints = preload("res://world/spawn_points.gd")
 
 var hud: HUD
 var dialogue_ui: DialogueUI
@@ -36,6 +46,12 @@ var city_plan: CityPlan
 var chunk_manager: ChunkManager
 var city_spawner: CitySpawner
 var _city_spawn_gate_active := false
+
+# --- Deferred menu/loading state (additive) ---
+var _main_menu: CanvasLayer = null
+var _loading_screen: CanvasLayer = null
+var _pending_spawn_kind: StringName = &""
+var _game_started := false
 
 
 func _ready() -> void:
@@ -63,24 +79,18 @@ func _ready() -> void:
 		add_child(streaming_tester)
 		return
 
+	# Deferred menu: windowed interactive only — headless/tests go straight through
+	if _should_show_main_menu(args):
+		_show_main_menu()
+		return
+
+	# Original immediate startup (tests, legacy, headless)
 	if _mode == WorldMode.LEGACY_BLOCK:
 		_build_legacy_block()
 	else:
 		_build_streamed_city()
 
-	hud = HUD.new()
-	add_child(hud)
-
-	dialogue_ui = DialogueUI.new()
-	add_child(dialogue_ui)
-	dialogue_ui.dialogue_opened.connect(_on_dialogue_opened)
-	dialogue_ui.dialogue_closed.connect(_on_dialogue_closed)
-
-	day_night = DayNightController.new()
-	add_child(day_night)
-
-	camera_rig = FollowCamera.new()
-	add_child(camera_rig)
+	_create_game_ui()
 
 	if _mode == WorldMode.LEGACY_BLOCK:
 		_spawn_from_manifest()
@@ -154,11 +164,203 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _city_spawn_gate_active:
 		_release_city_spawn_gate_when_ready()
+		if _loading_screen != null and is_instance_valid(_loading_screen):
+			_update_loading_progress()
+	# no interior updates until game actually started (menu showing)
+	if not _game_started and _main_menu != null and is_instance_valid(_main_menu):
+		return
+	# also wait until hud/camera exist when deferred
+	if hud == null or camera_rig == null:
+		return
 	match _mode:
 		WorldMode.LEGACY_BLOCK:
 			_update_roof_visibility()
 		WorldMode.STREAMED_CITY:
 			_update_city_interior()
+
+# ---------- Menu / loading gate ----------
+
+func _should_show_main_menu(args: PackedStringArray) -> bool:
+	if DisplayServer.get_name() == "headless":
+		return false
+	if OS.has_feature("headless"):
+		return false
+	# Any test flag bypasses menu
+	var test_flags: Array[String] = [
+		"--smoke", "--soak", "--legacy-block",
+		"--citytest", "--cityruntime", "--walkthrough", "--havoctest",
+		"--terraintest", "--terrainmaterialtest",
+		"--hydrotest", "--hydromaterialtest",
+		"--biometest", "--biomaterialtest",
+		"--roadtest", "--settlementtest", "--roadmaterialtest",
+		"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
+		"--animationtest", "--streamingregressiontest",
+		"--import", "--shot", "--doortest"
+	]
+	for f in test_flags:
+		if args.has(f):
+			return false
+	return true
+
+func _show_main_menu() -> void:
+	if _main_menu != null and is_instance_valid(_main_menu):
+		return
+	var script: Script = load("res://ui/main_menu.gd") as Script
+	if script == null:
+		push_error("Main: ui/main_menu.gd not found — falling back to city spawn")
+		_build_streamed_city()
+		_create_game_ui()
+		_spawn_city_population()
+		return
+	_main_menu = (script.new() as CanvasLayer)
+	_main_menu.name = "MainMenu"
+	add_child(_main_menu)
+	if _main_menu.has_signal("spawn_selected"):
+		_main_menu.connect("spawn_selected", _on_spawn_selected)
+	if _main_menu.has_signal("load_game_requested"):
+		_main_menu.connect("load_game_requested", _on_load_game_requested)
+
+func _on_spawn_selected(kind: StringName) -> void:
+	_pending_spawn_kind = kind
+	if _main_menu != null and is_instance_valid(_main_menu):
+		_main_menu.queue_free()
+		_main_menu = null
+	_show_loading_screen("Spawning at %s..." % SpawnPoints.label_for(kind))
+	_start_game_with_spawn(kind)
+
+func _on_load_game_requested() -> void:
+	if not SaveManager.has_save():
+		# menu will show disabled, but guard anyway
+		print("[Main] no save to load")
+		return
+	if _main_menu != null and is_instance_valid(_main_menu):
+		_main_menu.queue_free()
+		_main_menu = null
+	_show_loading_screen("Loading save...")
+	_mode = WorldMode.STREAMED_CITY
+	_build_streamed_city()
+	_create_game_ui()
+	# defer one frame so ChunkManager is in tree before SaveManager restores seed
+	await get_tree().process_frame
+	var ok: bool = SaveManager.load_game()
+	if not ok:
+		push_warning("Main: SaveManager.load_game failed")
+		_hide_loading_screen()
+		_show_main_menu()
+		return
+	# SaveManager.load_game queues _respawn_after_load deferred — wait for player + gate
+	_wait_for_save_load_async()
+
+func _wait_for_save_load_async() -> void:
+	# player is spawned via _respawn_after_load deferred; wait for it
+	var t := 0.0
+	while t < 14.0:
+		await get_tree().process_frame
+		if player != null and is_instance_valid(player):
+			if _city_spawn_gate_active:
+				_release_city_spawn_gate_when_ready()
+			_update_loading_progress()
+			if not _city_spawn_gate_active:
+				# extra settle frames
+				for i in 3:
+					await get_tree().process_frame
+				break
+		t += get_process_delta_time()
+		if _loading_screen != null and is_instance_valid(_loading_screen) and _loading_screen.has_method("set_progress"):
+			_loading_screen.call("set_progress", clampf(18.0 + t * 6.0, 18.0, 88.0), "")
+	_hide_loading_screen()
+	_game_started = true
+
+func _start_game_with_spawn(kind: StringName) -> void:
+	if _mode == WorldMode.LEGACY_BLOCK:
+		_build_legacy_block()
+		_create_game_ui()
+		_spawn_from_manifest()
+	else:
+		_build_streamed_city()
+		_create_game_ui()
+		_spawn_city_population_with_override(kind)
+	_wait_for_initial_chunks_async()
+
+func _wait_for_initial_chunks_async() -> void:
+	var t := 0.0
+	while _city_spawn_gate_active and t < 14.0:
+		await get_tree().process_frame
+		_release_city_spawn_gate_when_ready()
+		_update_loading_progress()
+		t += get_process_delta_time()
+		if _loading_screen != null and is_instance_valid(_loading_screen) and _loading_screen.has_method("set_progress"):
+			var pct := clampf(34.0 + t * 8.0, 34.0, 86.0)
+			if not _city_spawn_gate_active:
+				pct = 90.0
+			_loading_screen.call("set_progress", pct, "")
+	# let streaming fill 3x3 a few frames
+	for i in 4:
+		await get_tree().process_frame
+		_update_loading_progress()
+	if _loading_screen != null and is_instance_valid(_loading_screen) and _loading_screen.has_method("set_progress"):
+		_loading_screen.call("set_progress", 100.0, "World ready")
+	await get_tree().create_timer(0.18).timeout
+	_hide_loading_screen()
+	_game_started = true
+
+func _create_game_ui() -> void:
+	if hud == null:
+		hud = HUD.new()
+		add_child(hud)
+	if dialogue_ui == null:
+		dialogue_ui = DialogueUI.new()
+		add_child(dialogue_ui)
+		dialogue_ui.dialogue_opened.connect(_on_dialogue_opened)
+		dialogue_ui.dialogue_closed.connect(_on_dialogue_closed)
+	if day_night == null:
+		day_night = DayNightController.new()
+		add_child(day_night)
+	if camera_rig == null:
+		camera_rig = FollowCamera.new()
+		add_child(camera_rig)
+
+func _show_loading_screen(text: String) -> void:
+	if _loading_screen != null and is_instance_valid(_loading_screen):
+		if _loading_screen.has_method("set_progress"):
+			_loading_screen.call("set_progress", 6.0, text)
+		return
+	var script: Script = load("res://ui/loading_screen.gd") as Script
+	if script == null:
+		push_warning("Main: loading_screen.gd missing")
+		return
+	_loading_screen = (script.new() as CanvasLayer)
+	_loading_screen.name = "LoadingScreen"
+	add_child(_loading_screen)
+	if _loading_screen.has_method("set_progress"):
+		_loading_screen.call("set_progress", 6.0, text)
+
+func _hide_loading_screen() -> void:
+	if _loading_screen != null and is_instance_valid(_loading_screen):
+		_loading_screen.queue_free()
+		_loading_screen = null
+
+func _update_loading_progress() -> void:
+	if _loading_screen == null or not is_instance_valid(_loading_screen):
+		return
+	var pct := 46.0
+	var sub := ""
+	if chunk_manager != null:
+		if _city_spawn_gate_active:
+			pct = 52.0
+			sub = "Waiting for terrain collision..."
+		else:
+			pct = 90.0
+			sub = "Finalizing streaming..."
+		if chunk_manager.has_method("debug_lines"):
+			var lines: PackedStringArray = chunk_manager.debug_lines()
+			if not lines.is_empty():
+				# first line is most informative for debug
+				sub = String(lines[0])
+	if _loading_screen.has_method("set_progress"):
+		_loading_screen.call("set_progress", pct, "")
+	if _loading_screen.has_method("set_sub_text"):
+		_loading_screen.call("set_sub_text", sub)
 
 
 # --- Legacy block ------------------------------------------------------------
@@ -245,6 +447,35 @@ func _spawn_city_population() -> void:
 	city_spawner.setup(city_plan, chunk_manager)
 	add_child(city_spawner)
 
+## Spawn with explicit kind via SpawnPoints (additive, for menu testing)
+func _spawn_city_population_with_override(kind: StringName) -> void:
+	var entry: Dictionary = Population.PLAYER_ENTRY.duplicate(true)
+	var wplan: WorldPlan = chunk_manager.world_plan if chunk_manager != null and chunk_manager.world_plan != null else WorldPlan.new(city_plan.seed_used if city_plan != null else WorldSeed.get_world_seed())
+	var spawn_pos: Vector3 = SpawnPoints.get_spawn_position(kind, wplan, city_plan)
+	# SpawnPoints already returns y = terrain + 0.15, so use directly.
+	# Guard against water: if still in water, fallback to city center.
+	if wplan.water_body_at(Vector2(spawn_pos.x, spawn_pos.z)) != &"":
+		var fallback: Vector3 = SpawnPoints.get_spawn_position(&"city_center", wplan, city_plan)
+		spawn_pos = fallback
+	entry["position"] = spawn_pos
+	print("[Main] spawn kind=%s pos=(%.1f, %.1f, %.1f)" % [kind, spawn_pos.x, spawn_pos.y, spawn_pos.z])
+	_spawn_survivor(entry, {})
+	player = ActorRegistry.get_actor(&"player")
+	if player != null:
+		chunk_manager.set_player(player)
+		_wire_player(player)
+		_city_spawn_gate_active = true
+		player.process_mode = Node.PROCESS_MODE_DISABLED
+	else:
+		chunk_manager.set_player(null)
+
+	if city_spawner != null and is_instance_valid(city_spawner):
+		city_spawner.queue_free()
+	city_spawner = CitySpawner.new()
+	city_spawner.name = "CitySpawner"
+	city_spawner.setup(city_plan, chunk_manager)
+	add_child(city_spawner)
+
 
 ## Keep the initial CITY survivor stationary until its spawn chunk's
 ## asynchronous materialization has installed the real terrain collision.
@@ -275,17 +506,20 @@ func _wire_player(p: Survivor) -> void:
 	p.died.connect(_on_player_died)
 	_player_controller = PlayerController.new()
 	p.add_child(_player_controller)
-	_player_controller.setup(hud)
-	camera_rig.set_target(p)
+	if hud != null:
+		_player_controller.setup(hud)
+	if camera_rig != null:
+		camera_rig.set_target(p)
 
 
 func _on_survivor_interacted(interactor: Node3D, npc: Survivor) -> void:
-	if not dialogue_ui.is_open():
+	if dialogue_ui != null and not dialogue_ui.is_open():
 		dialogue_ui.open_for(npc, interactor)
 
 
 func _on_player_died(_p: Survivor) -> void:
-	hud.show_death_screen()
+	if hud != null:
+		hud.show_death_screen()
 
 
 func _on_dialogue_opened() -> void:
@@ -413,7 +647,8 @@ func save_state() -> Dictionary:
 
 
 func load_state(data: Dictionary) -> void:
-	dialogue_ui.close()
+	if dialogue_ui != null and is_instance_valid(dialogue_ui):
+		dialogue_ui.close()
 	for node in get_tree().get_nodes_in_group(&"survivors"):
 		node.queue_free()
 	for node in get_tree().get_nodes_in_group(&"zombies"):
@@ -468,5 +703,6 @@ func _respawn_after_load(data: Dictionary) -> void:
 	if player != null:
 		_wire_player(player)
 
-	hud.hide_death_screen()
-	hud.refresh_quest_tracker()
+	if hud != null:
+		hud.hide_death_screen()
+		hud.refresh_quest_tracker()
