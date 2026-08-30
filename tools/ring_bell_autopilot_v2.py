@@ -534,6 +534,71 @@ def tick_once(
         elif task.get("status") in {"todo", "ready", "running", "blocked"}:
             # Ox resilience: blocked → wait (e.g., provider timeout), retry next tick
             return result, messages
+        elif task.get("status") == "done":
+            # Resilience: builder was manually completed before controller recorded handoff
+            # Try to recover via existing review_requested run or linked review task
+            handoffs = [
+                run
+                for run in (wrapper.get("runs") or [])
+                if run.get("status") == "review" and run.get("outcome") == "review_requested"
+            ]
+            if handoffs:
+                current["build_handoff_run"] = max(int(run["id"]) for run in handoffs)
+                # Look for an existing review task linked to this build (avoid duplicate)
+                try:
+                    tasks = board.list_tasks()
+                    linked = [
+                        t for t in tasks
+                        if t.get("id") != task_id
+                        and f"review_of_task: {task_id}" in (t.get("body") or "")
+                    ]
+                    # Prefer a review task that is already done or active
+                    done_reviews = [t for t in linked if t.get("status") == "done"]
+                    active_reviews = [t for t in linked if t.get("status") in {"todo", "ready", "running", "blocked"}]
+                    if done_reviews:
+                        # Jump directly to reviewing with the done review
+                        best = max(done_reviews, key=lambda x: x.get("created_at", 0))
+                        current["review_task_id"] = best["id"]
+                        result["phase"] = "reviewing"
+                        messages.append(f"builder handoff recovered (done): {task_id}:{current['build_handoff_run']} -> reviewing {best['id']}")
+                        return result, messages
+                    if active_reviews:
+                        best = max(active_reviews, key=lambda x: x.get("created_at", 0))
+                        current["review_task_id"] = best["id"]
+                        result["phase"] = "reviewing"
+                        messages.append(f"builder handoff recovered (done): {task_id}:{current['build_handoff_run']} -> reviewing {best['id']}")
+                        return result, messages
+                except Exception:
+                    pass
+                result["phase"] = "awaiting_review"
+                messages.append(f"builder handoff recovered (done): {task_id}:{current['build_handoff_run']}")
+            else:
+                # No handoff at all but task is done — could be a manual close without review
+                # Check if a review decision file exists for this cycle and task result matches verdict
+                try:
+                    name = f"REVIEW-C{int(current['cycle']):03d}-R{int(current['revision_round']):02d}.json"
+                    decision = decision_loader(name)
+                    verdict = str(decision.get("verdict"))
+                    task_result = str(task.get("result") or "")
+                    if task_result and task_result == verdict:
+                        # Treat as already reviewed — advance via reviewing path
+                        # Find linked review task if any, or synthesize transition
+                        tasks = board.list_tasks()
+                        linked = [t for t in tasks if f"review_of_task: {task_id}" in (t.get("body") or "")]
+                        if linked:
+                            best = max(linked, key=lambda x: x.get("created_at", 0))
+                            current["review_task_id"] = best["id"]
+                        else:
+                            # No linked review task but decision exists — synthesize reviewing then apply
+                            # create a placeholder id to satisfy apply path, will be resolved next tick
+                            current["build_handoff_run"] = current.get("build_handoff_run") or 0
+                            current["review_task_id"] = f"synthetic-{task_id}"
+                        result["phase"] = "reviewing"
+                        messages.append(f"builder done recovered via verdict match: {task_id} {task_result} -> reviewing")
+                        return result, messages
+                except Exception:
+                    pass
+                raise InvariantError(f"builder task {task_id} ended without requesting review: {task.get('status')} (no handoff to recover)")
         else:
             raise InvariantError(f"builder task {task_id} ended without requesting review: {task.get('status')}")
         return result, messages
@@ -551,7 +616,24 @@ def tick_once(
             if not source_id:
                 raise InvariantError("review decision has no source build task")
             verdict = str(decision.get("verdict"))
-            board.complete_task(source_id, verdict)
+            try:
+                board.complete_task(source_id, verdict)
+            except Exception as e:
+                # Resilience: builder already completed (manual close). Verify verdict matches, then continue.
+                try:
+                    sw = board.show_task(source_id)
+                    st = _task_record(sw).get("status")
+                    rs = str(_task_record(sw).get("result") or "")
+                    if st == "done" and rs == verdict:
+                        pass  # idempotent - already correct
+                    elif st == "done":
+                        raise InvariantError(f"builder task {source_id} already done with mismatched verdict {rs} vs {verdict}: {e}")
+                    else:
+                        raise
+                except InvariantError:
+                    raise
+                except Exception:
+                    raise InvariantError(f"failed to complete builder task {source_id}: {e}")
             result = apply_review_decision(result, decision)
             messages.append(f"review decision applied: {name} verdict={verdict}")
         elif status in {"todo", "ready", "running", "blocked"}:
