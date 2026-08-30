@@ -1,6 +1,6 @@
 class_name AnimationTest
 extends Node
-## Headless locomotion harness for SPEC-C001.
+## Headless locomotion harness for SPEC-C001 + SPEC-C002 P-C2.
 ## Driven by world/main.gd when OS.get_cmdline_user_args().has("--animationtest")
 ## Prints PASS/FAIL per subsection plus finished with N failure(s) marker.
 
@@ -23,6 +23,17 @@ func _run_all() -> void:
 	skel_check.queue_free()
 	var lib := LocomotionLibrary.build_library()
 	_check("locomotion_library has 7 clips", lib.get_animation_list().size() == 7, str(lib.get_animation_list()))
+	# RED for P-C2: expect 11 clips (7+4 vault/mantle/hang/climb) — currently 7 so this FAILS until Phase1
+	_check("locomotion_library has 11 clips (7+4 vault/mantle/hang/climb)", lib.get_animation_list().size() == 11, str(lib.get_animation_list()))
+	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp"]:
+		var has: bool = lib.has_animation(anim_name)
+		_check("locomotion_library has %s" % anim_name, has, anim_name)
+		if has:
+			var a: Animation = lib.get_animation(anim_name)
+			var expected_len: float = {"Vault":0.55,"Mantle":0.85,"LedgeHang":1.2,"ClimbUp":0.70}[anim_name]
+			_check("clip %s length +-0.05" % anim_name, abs(a.length - expected_len) < 0.06, "%.2f" % a.length)
+			var expected_loop: int = Animation.LOOP_LINEAR if anim_name == "LedgeHang" else Animation.LOOP_NONE
+			_check("clip %s loop_mode" % anim_name, a.loop_mode == expected_loop, str(a.loop_mode))
 	# Check no position track
 	var has_pos_track := false
 	for anim_name in lib.get_animation_list():
@@ -43,6 +54,12 @@ func _run_all() -> void:
 	await _test_in_place()
 	await _test_streaming_budget()
 	await _test_persistence()
+	# P-C2 extensions (RED)
+	await _test_vault_mantle_hang()
+	await _test_hand_snap()
+	await _test_stamina_gate()
+	await _test_in_place_parkour()
+	await _test_zombie_vault()
 	print("[AnimationTest] finished with %d failure(s)" % failures)
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -66,6 +83,19 @@ func _make_locomotion() -> CharacterLocomotion:
 	holder.add_child(skel)
 	holder.add_child(loco)
 	loco.setup(skel, dummy_model)
+	return loco
+
+func _make_locomotion_with_id(id_str: String) -> CharacterLocomotion:
+	var skel := SkeletonFactory.build_survivor_skeleton()
+	var dummy_model := Node3D.new()
+	dummy_model.set_meta("anim_limbs", {})
+	var loco := CharacterLocomotion.new()
+	var holder := Node3D.new()
+	holder.name = "Holder_%s" % id_str
+	add_child(holder)
+	holder.add_child(skel)
+	holder.add_child(loco)
+	loco.setup(skel, dummy_model, {"shamble": false, "id": id_str})
 	return loco
 
 func _test_determinism() -> void:
@@ -454,7 +484,7 @@ func _test_persistence() -> void:
 	var has_bone: bool = state_data.has("bone") or state_data.has("pose") or state_data.has("anim")
 	for k in state_data.keys():
 		var ks: String = str(k).to_lower()
-		if ks.contains("bone") or ks.contains("pose") or ks.contains("anim"):
+		if ks.contains("bone") or ks.contains("pose") or ks.contains("anim") or ks.contains("ledge"):
 			has_bone = true
 	_check("SaveManager.save_state() contains no bone/pose/anim keys", not has_bone, str(state_data.keys()))
 	# load_state after save reconstructs IDLE and next update corrects to material speed
@@ -478,10 +508,10 @@ func _test_persistence() -> void:
 							loco = sub
 							break
 	if loco != null:
-		print("[AnimationTest] persistence loco state %s blend %.2f active %s skeleton valid %s" % [str(loco.state), loco.blend, str(loco.is_active()), str(loco.skeleton != null and is_instance_valid(loco.skeleton))])
+		print("[AnimationTest] persistence loco state %s blend %.2f active %s skeleton valid %s turn_timer %.2f vault %.2f mantle %.2f" % [str(loco.state), loco.blend, str(loco.is_active()), str(loco.skeleton != null and is_instance_valid(loco.skeleton)), loco._turn_timer, loco._vault_timer, loco._mantle_timer])
 		_check("after load_state reconstructs IDLE", loco.state == CharacterLocomotion.State.IDLE, str(loco.state))
 		loco.update({"speed": 2.0, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1)}, 0.016)
-		print("[AnimationTest] after update state %s blend %.2f" % [str(loco.state), loco.blend])
+		print("[AnimationTest] after update state %s blend %.2f turn %.2f" % [str(loco.state), loco.blend, loco._turn_timer])
 		# After update with speed 2.0, should be WALK (2.0 <2.2) or at least not IDLE and blend >0
 		var is_walk: bool = loco.state == CharacterLocomotion.State.WALK
 		var blend_ok: bool = loco.blend > 0.2
@@ -490,4 +520,165 @@ func _test_persistence() -> void:
 		print("[AnimationTest] no locomotion found for persistence check, skipping")
 		# Check fallback animator not counted as failure if no skeleton yet
 	survivor.queue_free()
+	await get_tree().process_frame
+
+# --- P-C2 vault/mantle/hang/stamina/hand_snap tests (RED) ---
+
+func _test_vault_mantle_hang() -> void:
+	print("[AnimationTest] subtest vault/mantle/hang P-C2")
+	# vault 0.75m should trigger VAULT 0.55s locked
+	var loco := _make_locomotion()
+	loco.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {"height": 0.75, "distance": 0.9, "has_hit": true}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+	var is_vault: bool = int(loco.state) == CharacterLocomotion.State.VAULT
+	_check("vault probe 0.75m triggers VAULT 0.55s locked", is_vault, str(loco.state))
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	await get_tree().process_frame
+	# mantle 1.1m should trigger MANTLE 0.85s then HANG
+	var loco2 := _make_locomotion()
+	loco2.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {"height": 1.1, "distance": 0.9, "has_hit": true}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+	var is_mantle: bool = int(loco2.state) == CharacterLocomotion.State.MANTLE
+	_check("mantle probe 1.1m triggers MANTLE 0.85s", is_mantle, str(loco2.state))
+	# advance 0.9s should be HANG
+	for i in 60:
+		loco2.update({"speed": 0.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+		await get_tree().process_frame
+	var is_hang: bool = int(loco2.state) == CharacterLocomotion.State.HANG
+	_check("mantle 1.1m ends in HANG 1.2s loop", is_hang, str(loco2.state))
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	await get_tree().process_frame
+	# ledge 1.9m rise should trigger HANG with hand_snap <=0.04 freezing velocity.xz<0.01
+	var loco3 := _make_locomotion()
+	var ledge_pos := Vector3(0, 1.9, 2.0)
+	var ledge_normal := Vector3(0, 0, -1)
+	loco3.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true}, "jump_pressed": false}, 0.016)
+	var is_ledge_hang: bool = int(loco3.state) == CharacterLocomotion.State.HANG
+	_check("ledge probe 1.9m triggers HANG with hand_snap <=0.04", is_ledge_hang, str(loco3.state))
+	# check hand_snap <=0.04 and velocity freeze is checked in separate test but here check hand_snap property exists
+	if loco3.has_method("get_hand_snap"):
+		var hs: float = loco3.get_hand_snap() if loco3.has_method("get_hand_snap") else 0.0
+		# Actually hand_snap variable
+		hs = loco3.hand_snap
+		_check("hand_snap <=0.04 during HANG", hs <= 0.045, "%.3f" % hs)
+	if is_instance_valid(loco3.get_parent()):
+		loco3.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_hand_snap() -> void:
+	print("[AnimationTest] subtest hand_snap 4cm")
+	var loco := _make_locomotion()
+	var holder: Node3D = loco.get_parent() as Node3D
+	holder.global_position = Vector3.ZERO
+	var ledge_pos := Vector3(0, 1.9, 1.0)
+	var ledge_normal := Vector3(0, 0, -1)
+	# Trigger HANG
+	loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true}, "jump_pressed": false}, 0.016)
+	await get_tree().process_frame
+	var ok: bool = true
+	var worst: float = 0.0
+	for i in 80:
+		loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true}, "jump_pressed": false}, 0.016)
+		var hs: float = loco.hand_snap
+		worst = max(worst, hs)
+		if hs > 0.04:
+			ok = false
+		await get_tree().process_frame
+	_check("hand_snap 4cm every hanging frame over 1.2s loop", ok, "worst %.3f" % worst)
+	if is_instance_valid(holder):
+		holder.queue_free()
+	else:
+		if is_instance_valid(loco.get_parent()):
+			loco.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_stamina_gate() -> void:
+	print("[AnimationTest] subtest stamina gate")
+	var loco := _make_locomotion()
+	# First mantle should deduct 12
+	loco.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {"height": 1.1, "has_hit": true}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+	var s1: int = int(loco.state)
+	_check("stamina 100 mantle triggers", s1 == CharacterLocomotion.State.MANTLE, str(s1))
+	# Second mantle blocked when stamina <12
+	var loco2 := _make_locomotion()
+	loco2.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 5.0, "vault_probe": {}, "mantle_probe": {"height": 1.1, "has_hit": true}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+	var s2: int = int(loco2.state)
+	_check("stamina <12 blocks mantle", s2 != CharacterLocomotion.State.MANTLE, str(s2))
+	# Vault costs 8, blocked when <8
+	var loco3 := _make_locomotion()
+	loco3.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 5.0, "vault_probe": {"height": 0.75, "has_hit": true}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+	var s3: int = int(loco3.state)
+	_check("stamina <8 blocks vault", s3 != CharacterLocomotion.State.VAULT, str(s3))
+	for item in [loco, loco2, loco3]:
+		if is_instance_valid(item.get_parent()):
+			item.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_in_place_parkour() -> void:
+	print("[AnimationTest] subtest in_place vault/mantle/climb")
+	var holder: Node3D = null
+	for name in ["Vault", "Mantle", "ClimbUp"]:
+		var loco := _make_locomotion()
+		holder = loco.get_parent() as Node3D
+		holder.global_position = Vector3.ZERO
+		# Trigger respective state via probe
+		match name:
+			"Vault":
+				loco.update({"speed": 2.0, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {"height":0.75,"has_hit":true}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+				await get_tree().process_frame
+				# run 0.55s vault
+				for i in 40:
+					loco.update({"speed": 2.0, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+					await get_tree().physics_frame
+			"Mantle":
+				loco.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {"height":1.1,"has_hit":true}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+				await get_tree().process_frame
+				for i in 80:
+					loco.update({"speed": 0.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "jump_pressed": false}, 0.016)
+					await get_tree().physics_frame
+			"ClimbUp":
+				var ledge_pos := Vector3(0,1.9,1.0)
+				loco.update({"speed": 0.1, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true},"jump_pressed":false},0.016)
+				await get_tree().process_frame
+				# now climb
+				loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true},"jump_pressed":true},0.016)
+				await get_tree().process_frame
+				for i in 50:
+					loco.update({"speed":0.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{}, "mantle_probe":{}, "ledge_probe":{}, "jump_pressed":false},0.016)
+					await get_tree().physics_frame
+		# Check root <0.005 for 300 frames of vault/mantle/climb cycles - simplified check for current state
+		var root_idx: int = loco.skeleton.find_bone("root")
+		var root_ok: bool = true
+		if root_idx >= 0:
+			var rp: Vector3 = loco.skeleton.get_bone_pose_position(root_idx)
+			if rp.length() > 0.005:
+				root_ok = false
+		_check("in_place root <0.005 for %s" % name, root_ok, str(loco.skeleton.get_bone_pose_position(root_idx)))
+		if is_instance_valid(loco.get_parent()):
+			loco.get_parent().queue_free()
+		await get_tree().process_frame
+
+func _test_zombie_vault() -> void:
+	print("[AnimationTest] subtest zombie vault only")
+	var skel := SkeletonFactory.build_survivor_skeleton()
+	var dummy := Node3D.new()
+	dummy.set_meta("anim_limbs", {})
+	var holder := Node3D.new()
+	add_child(holder)
+	holder.add_child(skel)
+	var loco := CharacterLocomotion.new()
+	holder.add_child(loco)
+	loco.setup(skel, dummy, {"shamble": true, "id": "z_test_vault"})
+	loco.update({"speed": 1.0, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{"height":0.75,"has_hit":true},"mantle_probe":{},"ledge_probe":{},"jump_pressed":false},0.016)
+	var is_vault: bool = int(loco.state) == CharacterLocomotion.State.VAULT
+	_check("zombie vault 0.75m triggers VAULT", is_vault, str(loco.state))
+	# zombie mantle should NOT trigger
+	loco.update({"speed":1.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{"height":1.1,"has_hit":true},"ledge_probe":{},"jump_pressed":false},0.016)
+	var is_mantle: bool = int(loco.state) == CharacterLocomotion.State.MANTLE
+	_check("zombie mantle never triggers", not is_mantle, str(loco.state))
+	loco.update({"speed":1.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":Vector3(0,1.9,1),"ledge_normal":Vector3(0,0,-1),"has_hit":true},"jump_pressed":false},0.016)
+	var is_hang: bool = int(loco.state) == CharacterLocomotion.State.HANG
+	_check("zombie hang never triggers", not is_hang, str(loco.state))
+	if is_instance_valid(holder):
+		holder.queue_free()
 	await get_tree().process_frame

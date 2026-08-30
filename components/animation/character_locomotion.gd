@@ -3,7 +3,7 @@ extends Node
 ## Owns AnimationPlayer + AnimationTree (StateMachine), update() contract, foot_slide telemetry
 ## Capsule drives position; skeleton drives pose; ACTIVE-only tick.
 
-enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180 }
+enum State { IDLE, WALK, RUN, SPRINT, TURN_L90, TURN_R90, TURN_180, VAULT, MANTLE, HANG, CLIMB_UP }
 
 signal state_changed(new_state: State)
 
@@ -12,6 +12,16 @@ var blend: float = 0.0
 var strafe: float = 0.0
 var slope_deg: float = 0.0
 var foot_slide: float = 0.0
+var hand_snap: float = 0.0
+var stamina: float = 100.0
+var ledge_pos: Vector3 = Vector3.ZERO
+var ledge_normal: Vector3 = Vector3.ZERO
+
+# Parkour timers (stubs for RED)
+var _vault_timer: float = 0.0
+var _mantle_timer: float = 0.0
+var _climb_timer: float = 0.0
+var _hang_timer: float = 0.0
 
 var skeleton: Skeleton3D = null
 var model_root: Node3D = null
@@ -558,3 +568,9 @@ func get_anim_ms() -> float:
 
 func is_active() -> bool:
 	return _was_active
+
+func get_hand_snap() -> float:
+	return hand_snap
+
+func get_stamina() -> float:
+	return stamina
