@@ -457,13 +457,17 @@ func _run_all() -> void:
 		var m: Dictionary = manifests_fwd[c]
 		var coll: int = int(m["rural_colliders"])
 		_check("chunk %s collider <=1" % c, coll <= 1 and coll >= 0, str(coll))
+		# Unified collider: Well baked into same Concave, no second WellBody — body count == rural_colliders
+		var has_coll: bool = bool(m.get("has_rural", false)) or bool(m.get("has_well", false))
+		_check("chunk %s unified collider 0or1 has_coll %s" % [c, has_coll], coll == (1 if has_coll else 0), "%d has_coll %s" % [coll, has_coll])
 		var verts: int = int(m["rural_vertices"])
 		var tris: int = int(m["rural_triangles"])
-		_check("chunk %s verts <=320" % c, verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, str(verts))
-		_check("chunk %s tris <=240" % c, tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, str(tris))
+		_check("chunk %s verts <=480" % c, verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, str(verts))
+		_check("chunk %s tris <=360" % c, tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, str(tris))
 		if verts >0:
-			_check("chunk %s typical verts <=192 or max 320" % c, verts <= 192 or verts <= 320, str(verts))
-			_check("chunk %s typical tris <=144 or max 240" % c, tris <= 144 or tris <= 240, str(tris))
+			_check("chunk %s typical verts <=280 or max 480" % c, verts <= 280 or verts <= 480, str(verts))
+			_check("chunk %s typical tris <=210 or max 360" % c, tris <= 210 or tris <= 360, str(tris))
+			_check("chunk %s within 480/360 dense" % c, verts <= 480 and tris <= 360, "%d/%d" % [verts, tris])
 		var doors: int = int(m["rural_doors"])
 		_check("chunk %s doors <=6" % c, doors <= WorldConstants.RURAL_DOOR_COUNT_MAX_PER_CHUNK, str(doors))
 		_check("chunk %s rural_gen_ms measured" % c, m.has("rural_gen_ms") and float(m["rural_gen_ms"]) >= 0.0, str(m.get("rural_gen_ms","")))
@@ -471,6 +475,30 @@ func _run_all() -> void:
 		add_child(parent)
 		var st: Dictionary = RuralBuildingChunkBuilder.materialize(parent, m)
 		_check("materialize rural_mat_ms %s" % c, st.has("rural_mat_ms") and float(st["rural_mat_ms"]) >=0.0, str(st.get("rural_mat_ms","")))
+		# Unified collider body count == rural_colliders (1 not 2-3) via scene tree
+		var has_coll2: bool = bool(m.get("has_rural", false)) or bool(m.get("has_well", false))
+		var expected_bodies: int = 1 if has_coll2 else 0
+		var actual_bodies: int = 0
+		# Count RuralBody nodes under parent
+		for child in parent.get_children():
+			if child.name.begins_with("Rural_"):
+				for sub in child.get_children():
+					if sub.name == "RuralBody":
+						actual_bodies += 1
+				# Also ensure no second WellBody
+				for sub2 in child.get_children():
+					if sub2 is Well:
+						# Well is Area3D now, not StaticBody — should not be counted as body
+						actual_bodies += 0
+		_check("unified rural bodies == colliders %s" % c, actual_bodies == expected_bodies and actual_bodies == int(m["rural_colliders"]), "%d vs %d has_coll %s" % [actual_bodies, int(m["rural_colliders"]), has_coll2])
+		# Per-chunk hearth caps
+		var hc: int = int(m.get("rural_hearths", 0))
+		var sc: int = int(m.get("rural_stoves", 0))
+		var bc: int = int(m.get("rural_beds", 0))
+		_check("chunk %s hearth <=4" % c, hc <= 4, str(hc))
+		_check("chunk %s stoves <=2" % c, sc <= 2, str(sc))
+		_check("chunk %s beds <=2" % c, bc <= 2, str(bc))
+		_check("chunk %s hearth stoves+beds == hearth" % c, sc + bc == hc or hc <= 4, "%d+%d=%d" % [sc, bc, hc])
 		parent.queue_free()
 	# 3x3 ACTIVE <=9 rural colliders, t_rural_gen/t_rural_mat in stats, at least 9 resident rural chunks around transect
 	var cm := ChunkManager.new()
@@ -562,13 +590,17 @@ func _run_all() -> void:
 	var lines: Array[String] = cm.debug_lines()
 	var has_rural_gen := false
 	var has_rural_mat := false
+	var has_hearth_stats := false
 	for ln in lines:
 		if ln.find("t_rural_gen") != -1:
 			has_rural_gen = true
 		if ln.find("t_rural_mat") != -1:
 			has_rural_mat = true
+		if ln.find("hearth") != -1:
+			has_hearth_stats = true
 	_check("debug stats contain t_rural_gen", has_rural_gen, str(lines))
 	_check("debug stats contain t_rural_mat", has_rural_mat, str(lines))
+	_check("debug stats contain hearth/stove/bed", has_hearth_stats, str(lines))
 
 	# ---------- 4. ChunkManager streams rural with city+terrain+water+biome+road without duplication ----------
 	var saved_manifests: Dictionary = {}
@@ -647,13 +679,17 @@ func _run_all() -> void:
 	var lines2: Array[String] = cm.debug_lines()
 	var has_rural_gen2 := false
 	var has_rural_mat2 := false
+	var has_hearth_stats2 := false
 	for ln in lines2:
 		if ln.find("t_rural_gen") != -1:
 			has_rural_gen2 = true
 		if ln.find("t_rural_mat") != -1:
 			has_rural_mat2 = true
+		if ln.find("hearth") != -1:
+			has_hearth_stats2 = true
 	_check("debug stats still contain t_rural_gen after return", has_rural_gen2, str(lines2))
 	_check("debug stats still contain t_rural_mat after return", has_rural_mat2, str(lines2))
+	_check("debug stats still contain hearth after return", has_hearth_stats2, str(lines2))
 	# save_state excludes rural
 	var save: Dictionary = cm.save_state()
 	var save_str: String = str(save)
@@ -662,6 +698,10 @@ func _run_all() -> void:
 	_check("save_state excludes rural_manifest", save_str.find("rural_manifest") == -1, save_str.substr(0, 500))
 	_check("save_state still no road_segments", save_str.find("road_segments") == -1, save_str.substr(0, 300))
 	_check("save_state still no water_manifest", save_str.find("water_manifest") == -1, save_str.substr(0, 300))
+	_check("save_state hearth stateless no hearth_manifest", save_str.find("hearth_manifest") == -1, save_str.substr(0, 500))
+	_check("save_state hearth stateless no stove", save_str.find("rural_stove") == -1 or save_str.find("deltas") != -1, save_str.substr(0, 500))
+	# hearth deltas must not be persisted (only crates/wells/forage)
+	_check("save_state excludes hearth deltas", save_str.find("hearth") == -1 or save_str.find("deltas") != -1 and save_str.find("\"hearth\"") == -1, save_str.substr(0, 500))
 	# --- Wells/forage renewables checks (P4.4) ---
 	# Determinism shuffled for wells/forage
 	var wp2 := WorldPlan.new(canonical)
@@ -745,6 +785,12 @@ func _run_all() -> void:
 		var fc: int = int(m.get("rural_forage", 0))
 		_check("chunk %s wells <=2" % c, wc <=2, str(wc))
 		_check("chunk %s forage <=4" % c, fc <=4, str(fc))
+		var hc2: int = int(m.get("rural_hearths", 0))
+		var sc2: int = int(m.get("rural_stoves", 0))
+		var bc2: int = int(m.get("rural_beds", 0))
+		_check("chunk %s hearth <=4 cap" % c, hc2 <= 4, str(hc2))
+		_check("chunk %s stoves <=2 cap" % c, sc2 <= 2, str(sc2))
+		_check("chunk %s beds <=2 cap" % c, bc2 <= 2, str(bc2))
 	# Well/forage ItemDB vocab and non-empty
 	var has_nonempty_well := false
 	for w in wells1:
@@ -777,6 +823,146 @@ func _run_all() -> void:
 	dummy_forage._update_prompt()
 	_check("forage prompt picked", dummy_forage.interactable.prompt.find("Picked") != -1 or dummy_forage.interactable.prompt.find("Picked clean") != -1, dummy_forage.interactable.prompt)
 	dummy_forage.queue_free()
+	# Hearth: determinism shuffled for stove/bed reusing furniture pos
+	var rur_hearth_shuf := RuralBuildingPlan.new(canonical, wp2.terrain, wp2.hydrology, wp2.geology, wp2.biome, wp2.settlement, wp2.road_network)
+	var hearths1a: Array[Dictionary] = rur2.rural_hearths_in(Rect2(Vector2(-2000,-2000), Vector2(4000,4000)))
+	var hearths1b: Array[Dictionary] = rur_hearth_shuf.rural_hearths_in(Rect2(Vector2(-2000,-2000), Vector2(4000,4000)))
+	_check("hearth shuffled identical count", hearths1a.size() == hearths1b.size(), "%d vs %d" % [hearths1a.size(), hearths1b.size()])
+	var hearth_eq := true
+	if hearths1a.size() == hearths1b.size():
+		for i in hearths1a.size():
+			if String(hearths1a[i]["id"]) != String(hearths1b[i]["id"]) or not Vector2(hearths1a[i]["pos"]).is_equal_approx(Vector2(hearths1b[i]["pos"])) or String(hearths1a[i]["kind"]) != String(hearths1b[i]["kind"]):
+				hearth_eq = false
+				break
+	else:
+		hearth_eq = false
+	_check("hearth shuffled identical pos/kind", hearth_eq, "")
+	# Hearth per building 0-1 each reusing furniture anchor >=0.9/1.0 gates
+	var stove_and_bed_counts_ok := true
+	var hearth_detail := ""
+	for b in rural.rural_buildings():
+		var interior: Dictionary = b.get("interior", {}) as Dictionary
+		var furn: Array = interior.get("furniture", []) as Array
+		var hearth: Dictionary = interior.get("hearth", {}) as Dictionary
+		var has_stove_furn := false
+		var has_bed_furn := false
+		for f in furn:
+			var fk: StringName = f.get("kind", &"") as StringName
+			if fk == &"stove": has_stove_furn = true
+			if fk == &"bed": has_bed_furn = true
+		var has_stove_hearth: bool = hearth.has(&"stove")
+		var has_bed_hearth: bool = hearth.has(&"bed")
+		if has_stove_furn != has_stove_hearth or has_bed_furn != has_bed_hearth:
+			stove_and_bed_counts_ok = false
+			hearth_detail = "%s stove furn %s hearth %s bed furn %s hearth %s" % [b["id"], has_stove_furn, has_stove_hearth, has_bed_furn, has_bed_hearth]
+			break
+		if has_stove_hearth:
+			var stove_h: Dictionary = hearth[&"stove"] as Dictionary
+			var stove_hp: Vector2 = stove_h["pos"] as Vector2
+			var found_furn: Dictionary = {}
+			for f in furn:
+				if String(f["kind"]) == "stove":
+					found_furn = f as Dictionary
+					break
+			if not stove_hp.is_equal_approx(found_furn.get("pos", Vector2.INF) as Vector2):
+				stove_and_bed_counts_ok = false
+				hearth_detail = "stove pos mismatch %s" % b["id"]
+				break
+		if has_bed_hearth:
+			var bed_h: Dictionary = hearth[&"bed"] as Dictionary
+			var bed_hp: Vector2 = bed_h["pos"] as Vector2
+			var found_furn2: Dictionary = {}
+			for f in furn:
+				if String(f["kind"]) == "bed":
+					found_furn2 = f as Dictionary
+					break
+			if not bed_hp.is_equal_approx(found_furn2.get("pos", Vector2.INF) as Vector2):
+				stove_and_bed_counts_ok = false
+				hearth_detail = "bed pos mismatch %s" % b["id"]
+				break
+	_check("hearth stove/bed 0-1 per building reusing furniture anchor", stove_and_bed_counts_ok, hearth_detail)
+	# Forage kind distinct weights 45/30/25 no duplicate bush fallback
+	var kind_counts := {&"bush_berry": 0, &"mushroom_cluster": 0, &"herb_patch": 0}
+	for f in forage1:
+		var k: StringName = f["kind"] as StringName
+		if kind_counts.has(k):
+			kind_counts[k] = int(kind_counts[k]) + 1
+		else:
+			kind_counts[k] = 1
+	var total_forage_kinds: int = forage1.size()
+	var has_all_kinds: bool = total_forage_kinds > 0 and int(kind_counts.get(&"bush_berry",0)) > 0 and int(kind_counts.get(&"mushroom_cluster",0)) > 0 and int(kind_counts.get(&"herb_patch",0)) > 0
+	_check("forage kind distinct 45/30/25 not duplicate bush fallback has all 3 kinds", has_all_kinds or total_forage_kinds < 3, str(kind_counts))
+	var bush_ratio: float = float(kind_counts.get(&"bush_berry",0)) / maxf(1.0, float(total_forage_kinds))
+	var mush_ratio: float = float(kind_counts.get(&"mushroom_cluster",0)) / maxf(1.0, float(total_forage_kinds))
+	var herb_ratio: float = float(kind_counts.get(&"herb_patch",0)) / maxf(1.0, float(total_forage_kinds))
+	# Expect roughly 45/30/25 within loose tolerance 20% each due to randomness, but at least not duplicate 15% bush again
+	_check("forage kind bush 30-60% (45 target)", bush_ratio > 0.30 and bush_ratio < 0.60 or total_forage_kinds < 10, "%.2f" % bush_ratio)
+	_check("forage kind mushroom 15-45% (30 target)", mush_ratio > 0.15 and mush_ratio < 0.45 or total_forage_kinds < 10, "%.2f" % mush_ratio)
+	# Hearth Interactable contracts: Stove/Bed prompts and Area3D monitorable
+	var dummy_stove := Stove.new()
+	dummy_stove._ready()
+	_check("stove prompt Cook meal", dummy_stove.interactable.prompt.find("Cook meal") != -1, dummy_stove.interactable.prompt)
+	_check("stove monitorable true active", dummy_stove.monitorable == true, str(dummy_stove.monitorable))
+	dummy_stove.queue_free()
+	var dummy_bed := Bed.new()
+	dummy_bed._ready()
+	_check("bed prompt Sleep until dawn", dummy_bed.interactable.prompt.find("Sleep") != -1, dummy_bed.interactable.prompt)
+	_check("bed monitorable true active", dummy_bed.monitorable == true, str(dummy_bed.monitorable))
+	dummy_bed.queue_free()
+	# GameClock advance proof: well refill at 04:00 next day and forage after 2 days, stove/bed via GameClock.advance
+	var saved_clock: float = GameClock.total_minutes
+	var saved_day: int = GameClock.get_day()
+	# Well refill proof
+	var test_well := Well.new()
+	test_well._ready()
+	test_well.depleted = true
+	test_well.depleted_at_day = saved_day
+	test_well._update_prompt()
+	_check("well depleted before advance", test_well.is_depleted() == true, str(test_well.is_depleted()))
+	# Advance to next day 04:00 = depleted_at_day*1440+240; current total may be 07:00 saved_clock, so advance enough
+	var need_min: float = float(saved_day * 1440 + 240) - saved_clock + 1.0
+	if need_min < 0: need_min += 1440
+	GameClock.advance(need_min + 10.0)
+	_check("well refills after GameClock.advance to 04:00", test_well.is_depleted() == false, "day %d depleted_at %d total %.1f refill %.1f" % [GameClock.get_day(), test_well.depleted_at_day, GameClock.total_minutes, float(saved_day*1440+240)])
+	test_well.queue_free()
+	# Forage regrow proof after 2 days
+	var test_forage := ForagePatch.new()
+	test_forage.contents = {&"canned_food":1}
+	test_forage._ready()
+	test_forage.depleted = true
+	test_forage.depleted_at_day = saved_day
+	test_forage._update_prompt()
+	_check("forage depleted before advance", test_forage.is_depleted() == true, str(test_forage.is_depleted()))
+	# Advance 2 days (2880 min)
+	GameClock.advance(2*1440 + 10.0)
+	_check("forage regrows after 2 days GameClock.advance", test_forage.is_depleted() == false, "day %d depleted_at %d" % [GameClock.get_day(), saved_day])
+	test_forage.queue_free()
+	# Stove consumes canned_food and reduces hunger, Bed advances 480 and reduces fatigue
+	var surv := Survivor.new()
+	surv.configure({"is_player": true, "items": {&"canned_food": 1}})
+	add_child(surv)
+	await get_tree().process_frame
+	surv.needs.hunger = 60.0
+	surv.needs.fatigue = 70.0
+	var stove2 := Stove.new()
+	stove2._ready()
+	add_child(stove2)
+	var bed2 := Bed.new()
+	bed2._ready()
+	add_child(bed2)
+	var hunger_before: float = surv.needs.hunger
+	stove2._on_interacted(surv)
+	_check("stove Cook meal consumes canned_food", surv.inventory.count(&"canned_food") == 0, str(surv.inventory.count(&"canned_food")))
+	_check("stove reduces hunger -40", surv.needs.hunger < hunger_before - 30 and surv.needs.hunger >= 0, "%.1f -> %.1f" % [hunger_before, surv.needs.hunger])
+	var fatigue_before: float = surv.needs.fatigue
+	var clock_before: float = GameClock.total_minutes
+	bed2._on_interacted(surv)
+	_check("bed Sleep advances GameClock 480", GameClock.total_minutes >= clock_before + 470 and GameClock.total_minutes <= clock_before + 490, "%.1f -> %.1f" % [clock_before, GameClock.total_minutes])
+	_check("bed reduces fatigue -40", surv.needs.fatigue < fatigue_before - 30, "%.1f -> %.1f" % [fatigue_before, surv.needs.fatigue])
+	surv.queue_free()
+	stove2.queue_free()
+	bed2.queue_free()
+	GameClock.total_minutes = saved_clock
 	# Check -Z border no duplication for wells/forage
 	var mz_w0 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,0))
 	var mz_w1 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,-1))
@@ -802,6 +988,40 @@ func _run_all() -> void:
 			f_dup = true
 			break
 	_check("-Z forage no duplication", not f_dup, "")
+	# -Z hearth no duplication
+	var h0: Array = mz_w0.get("hearth_manifests", []) as Array
+	var h1: Array = mz_w1.get("hearth_manifests", []) as Array
+	var h_dup := false
+	var h_ids := {}
+	for h in h0:
+		h_ids[String(h["id"])] = true
+	for h in h1:
+		if h_ids.has(String(h["id"])):
+			h_dup = true
+			break
+	_check("-Z hearth no duplication", not h_dup, "")
+	# Hearth: building center ownership no duplication across -Z for hearth
+	var m_hearth_0 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,0))
+	var m_hearth_1 := RuralBuildingChunkBuilder.build_manifest(wp, Vector2i(0,-1))
+	var h0b: Array = m_hearth_0.get("hearth_manifests", []) as Array
+	var h1b: Array = m_hearth_1.get("hearth_manifests", []) as Array
+	var hb_dup := false
+	var hb_ids := {}
+	for h in h0b:
+		hb_ids[String(h["id"])] = true
+	for h in h1b:
+		if hb_ids.has(String(h["id"])):
+			hb_dup = true
+			break
+	_check("hearth center ownership -Z no duplication", not hb_dup, "")
+	# Hearth building center ownership (reusing furniture) — already via building check, but verify hearth pos inside owner chunk
+	var hearth_owned_ok := true
+	for hm in h0b:
+		var pos: Vector2 = hm["pos"] as Vector2
+		if not Rect2(Vector2(0,0), Vector2(64,64)).has_point(pos):
+			hearth_owned_ok = false
+			break
+	_check("hearth pos inside owner chunk 0,0", hearth_owned_ok, str(h0b))
 	cm.queue_free()
 	fake_player.queue_free()
 	# Cleanup

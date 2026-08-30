@@ -211,6 +211,24 @@ const RURAL_FORAGE_ROAD_SETBACK := 2.0
 const RURAL_WELL_ROAD_SETBACK := 4.0
 const RURAL_FORAGE_WELL_SPACING := 4.0
 
+# --- Rural Hearth Habitation (P4.5) authoritative numerics — hearth reuses furniture anchors, no new mesh/collider budget ---
+# Unified collider peak is now 54 (9 city+9 terrain+9 water+9 biome+9 road+9 rural where rural is single shell+well Concave) not 63
+# Well is baked into same Concave (no second WellBody); forage/hearth are Area3D monitorable ACTIVE-only, no collider.
+# Hearth shares furniture mesh vertices (24 verts /12 tris already counted), so MAX_RURAL 480/360 280/210 unchanged.
+const RURAL_HEARTH_VOCAB: Array[StringName] = [&"stove", &"bed"] # subset of RURAL_FURNITURE_VOCAB, deterministic reuse
+const RURAL_STOVE_MAX_PER_CHUNK := 2
+const RURAL_BED_MAX_PER_CHUNK := 2
+const RURAL_HEARTH_MAX_PER_CHUNK := 4
+const RURAL_HEARTH_MAX_PER_VILLAGE_CHUNK := 4
+const RURAL_HEARTH_MAX_PER_HAMLET := 2 # at most 1 stove +1 bed via furniture cap 2
+const COL_FURNITURE_STOVE := Color("4a4a4a")
+const COL_FURNITURE_BED := Color("9e8b6a")
+const STOVE_HUNGER_REDUCTION := 40.0 # via NeedsComponent.eat (spec says 40 raw, 50 cooked; keep 40 deterministic)
+const BED_FATIGUE_REDUCTION := 40.0
+const BED_SLEEP_MINUTES := 480.0 # 8h to next 06:00
+const WELL_REFILL_HOUR := 4 # 04:00 next day
+const FORAGE_REGROW_DAYS := 2
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]

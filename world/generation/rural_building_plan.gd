@@ -53,7 +53,18 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 		_wells_by_id = (cached.get("wells_by_id", {}) as Dictionary).duplicate()
 		_forage = (cached.get("forage", []) as Array[Dictionary]).duplicate()
 		_forage_by_id = (cached.get("forage_by_id", {}) as Dictionary).duplicate()
-		return
+		# Invalidate stale cache without hearth (SPEC-C008): hearth derived from furniture must exist
+		var stale := false
+		if _buildings.size() > 0:
+			var first: Dictionary = _buildings[0] as Dictionary
+			if first.has("interior"):
+				var inter: Dictionary = first["interior"] as Dictionary
+				if not inter.has("hearth"):
+					stale = true
+		if not stale:
+			return
+		# stale: fall through to regeneration
+		_cache.erase(seed_used)
 	_generate()
 	# deep copy into cache
 	var bs_copy := {}
@@ -1173,17 +1184,14 @@ func _generate_forage() -> void:
 			if _forage_by_id.has(fid):
 				fid = "%s_%d" % [fid, attempts_total]
 			var r_kind: float = _unit_float_with_seed("rural_forage_kind", [id_hash, k], seed_used)
-			var kind_idx: int = 0
 			var kind: StringName = WorldConstants.RURAL_FORAGE_VOCAB[0]
-			# Weighted? Use same 40/25/20/15 for vocab? But spec says bush 40/mush 25/herb 20/15? We'll map 0-0.4 bush, 0.4-0.65 mush, 0.65-0.85 herb? But we have only 3 kinds, pool weighted across items not kinds? For patch kind, use equal? We'll use sequential mapping.
-			if r_kind < 0.40:
-				kind = WorldConstants.RURAL_FORAGE_VOCAB[0]
-			elif r_kind < 0.65:
-				kind = WorldConstants.RURAL_FORAGE_VOCAB[1] if WorldConstants.RURAL_FORAGE_VOCAB.size() >1 else WorldConstants.RURAL_FORAGE_VOCAB[0]
-			elif r_kind < 0.85:
-				kind = WorldConstants.RURAL_FORAGE_VOCAB[2] if WorldConstants.RURAL_FORAGE_VOCAB.size()>2 else WorldConstants.RURAL_FORAGE_VOCAB[0]
+			# Distinct weighted partition 45/30/25 without duplicate (SPEC-C008 §1)
+			if r_kind < 0.45:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[0] # bush_berry 45%
+			elif r_kind < 0.75:
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[1] if WorldConstants.RURAL_FORAGE_VOCAB.size() >1 else WorldConstants.RURAL_FORAGE_VOCAB[0] # mushroom_cluster 30%
 			else:
-				kind = WorldConstants.RURAL_FORAGE_VOCAB[0]
+				kind = WorldConstants.RURAL_FORAGE_VOCAB[2] if WorldConstants.RURAL_FORAGE_VOCAB.size()>2 else WorldConstants.RURAL_FORAGE_VOCAB[0] # herb_patch 25%
 			# contents weighted ItemDB
 			var r_item: float = _unit_float_with_seed("rural_forage_kind", [id_hash, k, 99], seed_used)
 			var item_id: StringName
@@ -1421,12 +1429,13 @@ func _generate() -> void:
 						gate_barns_used[gid] = true
 				break
 			if success and not building_dict.is_empty():
-				# Enrich with interior before appending (walls/furniture)
+				# Enrich with interior before appending (walls/furniture+hearth)
 				var b_id_hash: int = _hash_id(building_dict["id"] as String)
 				var walls: Array[Dictionary] = _generate_partition_wall(building_dict, b_id_hash)
 				var furn: Array[Dictionary] = _generate_furniture(building_dict, walls, b_id_hash)
+				var hearth: Dictionary = _build_hearth(furn, building_dict)
 				# Temporarily crate empty, will fill after settlement loop for hamlet/farmstead logic
-				var interior: Dictionary = {"walls": walls, "furniture": furn, "crate": {}}
+				var interior: Dictionary = {"walls": walls, "furniture": furn, "crate": {}, "hearth": hearth}
 				building_dict["interior"] = interior
 				_buildings.append(building_dict)
 				(_by_settlement[sid] as Array[Dictionary]).append(building_dict)
@@ -1503,7 +1512,8 @@ func _generate() -> void:
 				var idh2:int=_hash_id(bid2)
 				var walls2:Array[Dictionary]=_generate_partition_wall(bdict2, idh2)
 				var furn2:Array[Dictionary]=_generate_furniture(bdict2, walls2, idh2)
-				bdict2["interior"]={"walls":walls2,"furniture":furn2,"crate":{}}
+				var hearth2:Dictionary=_build_hearth(furn2, bdict2)
+				bdict2["interior"]={"walls":walls2,"furniture":furn2,"crate":{},"hearth":hearth2}
 				_buildings.append(bdict2)
 				_by_id[bid2]=bdict2
 				placed_arr.append(bdict2)
@@ -1531,8 +1541,9 @@ func _generate() -> void:
 				var crate:Dictionary={}
 				if i==idx:
 					crate=_generate_crate_for_building(b, walls, furn, bhash)
-				# update building dict interior crate
-				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate}
+				# update building dict interior crate + hearth (reuse furniture anchors)
+				var hearth_h:Dictionary=_build_hearth(furn, b)
+				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate,"hearth":hearth_h}
 				b["interior"]=new_inter
 				# update global structures
 				_by_id[bid]=b
@@ -1558,7 +1569,8 @@ func _generate() -> void:
 				var crate:Dictionary={}
 				if i==0:
 					crate=_generate_crate_for_building(b, walls, furn, bhash)
-				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate}
+				var hearth_f:Dictionary=_build_hearth(furn, b)
+				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate,"hearth":hearth_f}
 				b["interior"]=new_inter
 				_by_id[bid]=b
 				for gi in _buildings.size():
@@ -1602,7 +1614,8 @@ func _generate() -> void:
 				var crate:Dictionary={}
 				if cand_ids.has(bid):
 					crate=_generate_crate_for_building(b, walls, furn, bhash)
-				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate}
+				var hearth_v:Dictionary=_build_hearth(furn, b)
+				var new_inter:Dictionary={"walls":walls,"furniture":furn,"crate":crate,"hearth":hearth_v}
 				b["interior"]=new_inter
 				_by_id[bid]=b
 				for gi in _buildings.size():
@@ -1637,7 +1650,8 @@ func _generate() -> void:
 				var crate:Dictionary={}
 				if cand_ids2.has(bid):
 					crate=_generate_crate_for_building(b, walls, furn, bhash)
-				b["interior"]={"walls":walls,"furniture":furn,"crate":crate}
+				var hearth_t:Dictionary=_build_hearth(furn, b)
+				b["interior"]={"walls":walls,"furniture":furn,"crate":crate,"hearth":hearth_t}
 				_by_id[bid]=b
 				for gi in _buildings.size():
 					if String(_buildings[gi].get("id",""))==bid:
@@ -1658,6 +1672,29 @@ func _generate() -> void:
 			return String(a["id"]) < String(b["id"])
 		)
 		_by_settlement[sid] = arr
+
+func _build_hearth(furniture: Array[Dictionary], building: Dictionary) -> Dictionary:
+	# Deterministic hearth reusing furniture anchors where kind==stove/bed (SPEC-C008 §1)
+	var hearth: Dictionary = {}
+	for f in furniture:
+		var k: StringName = f.get("kind", &"") as StringName
+		if k == &"stove" or k == &"bed":
+			var bid: String = String(building.get("id", ""))
+			var kind_str: String = String(k)
+			var hid: String = "rural_%s_%s" % [kind_str, bid]
+			# pos/yaw/size copied from furniture anchor, inherits its >=0.9/1.0 gates
+			hearth[k] = {
+				"id": hid,
+				"building_id": bid,
+				"kind": k,
+				"pos": f.get("pos", Vector2.ZERO),
+				"interior_pos": f.get("local_pos", Vector2.ZERO),
+				"yaw": f.get("yaw", 0.0),
+				"size": f.get("size", Vector3(0.8,0.8,0.9)),
+				"settlement_id": building.get("settlement_id", ""),
+				"aabb": f.get("aabb", Rect2()),
+			}
+	return hearth
 
 func _nearest_gate_id(p: Vector2, gates: Array[Dictionary]) -> String:
 	var best := ""
@@ -1826,4 +1863,56 @@ func forage_for_settlement(settlement_id: String) -> Array[Dictionary]:
 	for f in _forage:
 		if String(f.get("settlement_id","")) == settlement_id:
 			out.append(f)
+	return out
+
+func rural_hearths_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for b in _buildings:
+		var interior: Dictionary = b.get("interior", {}) as Dictionary
+		var hearth: Dictionary = interior.get("hearth", {}) as Dictionary
+		for kind in hearth.keys():
+			var h: Dictionary = hearth[kind] as Dictionary
+			var pos: Vector2 = h.get("pos", Vector2.ZERO) as Vector2
+			if rect.has_point(pos):
+				# enrich with building center check for ownership? but query is clipped by hearth pos
+				out.append(h)
+	# Also include direct fallback: if hearth dict empty, derive from furniture where kind==stove/bed (backward compat)
+	# Already covered via _build_hearth so not needed
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
+	return out
+
+func nearest_rural_hearth(p: Vector2, kind: StringName = &"") -> Dictionary:
+	var candidates: Array[Dictionary] = []
+	for b in _buildings:
+		var interior: Dictionary = b.get("interior", {}) as Dictionary
+		var hearth: Dictionary = interior.get("hearth", {}) as Dictionary
+		for k in hearth.keys():
+			var h: Dictionary = hearth[k] as Dictionary
+			if kind != &"" and StringName(str(h.get("kind", &""))) != kind:
+				continue
+			candidates.append(h)
+	if candidates.is_empty():
+		return {}
+	var best: Dictionary = candidates[0]
+	var best_d2: float = p.distance_squared_to(best["pos"] as Vector2)
+	for i in range(1, candidates.size()):
+		var h: Dictionary = candidates[i]
+		var d2: float = p.distance_squared_to(h["pos"] as Vector2)
+		if d2 < best_d2 - 1e-6:
+			best_d2 = d2
+			best = h
+		elif is_equal_approx(d2, best_d2):
+			if String(h["id"]) < String(best["id"]):
+				best = h
+	return best
+
+func hearths_for_settlement(settlement_id: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for b in _buildings:
+		if String(b.get("settlement_id","")) != settlement_id:
+			continue
+		var interior: Dictionary = b.get("interior", {}) as Dictionary
+		var hearth: Dictionary = interior.get("hearth", {}) as Dictionary
+		for k in hearth.keys():
+			out.append(hearth[k] as Dictionary)
 	return out

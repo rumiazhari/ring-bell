@@ -204,3 +204,9 @@ func rural_forage_patches_in(rect: Rect2) -> Array[Dictionary]:
 
 func nearest_rural_forage(p: Vector2) -> Dictionary:
 	return rural_building.nearest_rural_forage(p)
+
+func rural_hearths_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.rural_hearths_in(rect)
+
+func nearest_rural_hearth(p: Vector2, kind: StringName = &"") -> Dictionary:
+	return rural_building.nearest_rural_hearth(p, kind)
