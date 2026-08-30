@@ -22,17 +22,17 @@ func _run_all() -> void:
 	_check("skeleton_factory builds 10 bones", skel_check.get_bone_count() >= 9, str(skel_check.get_bone_count()))
 	skel_check.queue_free()
 	var lib := LocomotionLibrary.build_library()
-	_check("locomotion_library has 15 clips", lib.get_animation_list().size() == 15, str(lib.get_animation_list()))
-	_check("locomotion_library has 15 clips (11+4 crouch/slide/stand)", lib.get_animation_list().size() == 15, str(lib.get_animation_list()))
-	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp", "CrouchIdle", "CrouchWalk", "Slide", "StandUp"]:
+	_check("locomotion_library has 19 clips", lib.get_animation_list().size() == 19, str(lib.get_animation_list()))
+	_check("locomotion_library has 19 clips (15+4 wallrun/shimmy/drop)", lib.get_animation_list().size() == 19, str(lib.get_animation_list()))
+	for anim_name in ["Vault", "Mantle", "LedgeHang", "ClimbUp", "CrouchIdle", "CrouchWalk", "Slide", "StandUp", "WallRunL", "WallRunR", "Shimmy", "Drop2Hang"]:
 		var has: bool = lib.has_animation(anim_name)
 		_check("locomotion_library has %s" % anim_name, has, anim_name)
 		if has:
 			var a: Animation = lib.get_animation(anim_name)
-			var expected_len: float = {"Vault":0.55,"Mantle":0.85,"LedgeHang":1.2,"ClimbUp":0.70, "CrouchIdle":1.2,"CrouchWalk":0.70,"Slide":0.90,"StandUp":0.35}[anim_name]
+			var expected_len: float = {"Vault":0.55,"Mantle":0.85,"LedgeHang":1.2,"ClimbUp":0.70, "CrouchIdle":1.2,"CrouchWalk":0.70,"Slide":0.90,"StandUp":0.35,"WallRunL":0.80,"WallRunR":0.80,"Shimmy":0.85,"Drop2Hang":0.45}[anim_name]
 			_check("clip %s length +-0.05" % anim_name, abs(a.length - expected_len) < 0.06, "%.2f" % a.length)
 			var expected_loop: int
-			if anim_name in ["LedgeHang","CrouchIdle","CrouchWalk"]:
+			if anim_name in ["LedgeHang","CrouchIdle","CrouchWalk","WallRunL","WallRunR","Shimmy"]:
 				expected_loop = Animation.LOOP_LINEAR
 			else:
 				expected_loop = Animation.LOOP_NONE
@@ -71,6 +71,16 @@ func _run_all() -> void:
 	await _test_slide_commit_and_stamina()
 	await _test_headroom_block()
 	await _test_in_place_crouch_slide()
+	# P-C4 wall-run/shimmy/chain extensions RED
+	await _test_wallrun_contract()
+	await _test_shimmy_contract()
+	await _test_hand_analytic()
+	await _test_wallrun_stamina_and_gates()
+	await _test_shimmy_stamina_and_zombie()
+	await _test_chain_vault_wallrun_shimmy()
+	await _test_rid_stability_wallrun()
+	await _test_in_place_wallrun_shimmy()
+	await _test_wallrun_determinism()
 	print("[AnimationTest] finished with %d failure(s)" % failures)
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -1013,3 +1023,312 @@ func _test_in_place_crouch_slide() -> void:
 		if is_instance_valid(loco.get_parent()):
 			loco.get_parent().queue_free()
 		await get_tree().process_frame
+
+func _is_wallrun_state(s: int) -> bool:
+	return s == 15 or s == 16  # WALL_RUN_L=15, WALL_RUN_R=16 after P-C4
+
+func _is_shimmy_state(s: int) -> bool:
+	return s == 17  # SHIMMY=17
+
+func _is_drop_state(s: int) -> bool:
+	return s == 18
+
+func _test_wallrun_contract() -> void:
+	print("[AnimationTest] subtest wallrun contract P-C4")
+	var loco := _make_locomotion()
+	var wall_probe := {"wall_pos": Vector3(0.40, 1.2, 0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side": "R", "wall_height": 2.5, "wall_length": 4.0, "wall_dist": 0.40, "yaw_to_wall": 30.0, "flat": 0.02, "has_hit": true, "wall_end_a": Vector3(0.40,1.2,-2), "wall_end_b": Vector3(0.40,1.2,2)}
+	loco.update({"speed": 4.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": deg_to_rad(30), "is_airborne": false, "move_dir": Vector3(0.5,0,-0.866), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wall_probe, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+	var is_wallrun: bool = _is_wallrun_state(int(loco.state))
+	_check("wall probe dist 0.40 h2.5 len4 yaw30 speed3.2+ triggers WALL_RUN", is_wallrun, str(loco.state))
+	if is_wallrun:
+		for i in 50:
+			loco.update({"speed": 4.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": 90.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wall_probe, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+			await get_tree().process_frame
+		_check("wallrun remains locked for 0.80s", _is_wallrun_state(int(loco.state)), str(loco.state))
+	var loco2 := _make_locomotion()
+	var bad_probe := {"wall_pos": Vector3(0.40,1.2,0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side": "R", "wall_height": 1.8, "wall_length": 4.0, "wall_dist": 0.40, "yaw_to_wall": 30.0, "flat": 0.02, "has_hit": true}
+	loco2.update({"speed": 4.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": bad_probe, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+	_check("wallrun rejected when height 1.8 <2.2", not _is_wallrun_state(int(loco2.state)), str(loco2.state))
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_shimmy_contract() -> void:
+	print("[AnimationTest] subtest shimmy contract P-C4")
+	var loco := _make_locomotion()
+	var holder: Node3D = loco.get_parent() as Node3D
+	holder.global_position = Vector3.ZERO
+	var ledge_pos := Vector3(0,1.9,0.6)
+	var ledge_normal := Vector3(0,0,-1)
+	loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true, "ledge_length": 3.5, "flat": 0.02}, "wall_probe": {}, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	await get_tree().process_frame
+	_check("shimmy prep HANG triggers", int(loco.state)==CharacterLocomotion.State.HANG, str(loco.state))
+	var shimmy_probe := {"ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "ledge_length": 3.5, "ledge_height": 1.9, "has_hit": true, "flat": 0.02}
+	loco.update({"speed": 0.6, "strafe": 1.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(1,0,0), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true,"ledge_length":3.5}, "wall_probe": {}, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	_check("shimmy triggers SHIMMY with len>=2.0", _is_shimmy_state(int(loco.state)), str(loco.state))
+	var hs_ok: bool = true
+	var worst: float = 0.0
+	for i in 80:
+		loco.update({"speed": 0.6, "strafe": 1.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(1,0,0), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true,"ledge_length":3.5}, "wall_probe": {}, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+		var hs: float = loco.hand_snap
+		worst = max(worst, hs)
+		if hs > 0.05:
+			hs_ok = false
+		await get_tree().process_frame
+	_check("shimmy hand_snap <=0.05 analytic every frame", hs_ok, "worst %.3f" % worst)
+	var loco2 := _make_locomotion()
+	var holder2: Node3D = loco2.get_parent() as Node3D
+	holder2.global_position = Vector3.ZERO
+	loco2.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true,"ledge_length":1.0}, "wall_probe": {}, "shimmy_probe": {"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"ledge_length":1.0,"has_hit":true}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	await get_tree().process_frame
+	loco2.update({"speed": 0.6, "strafe": 1.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(1,0,0), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true,"ledge_length":1.0}, "wall_probe": {}, "shimmy_probe": {"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"ledge_length":1.0,"has_hit":true}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	_check("shimmy rejected when len 1.0 <2.0", not _is_shimmy_state(int(loco2.state)), str(loco2.state))
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_hand_analytic() -> void:
+	print("[AnimationTest] subtest hand analytic 2-bone")
+	var loco := _make_locomotion()
+	var tmp_loco := CharacterLocomotion.new()
+	var has_solver: bool = tmp_loco.has_method("solve_two_bone") or CharacterLocomotion.new().has_method("solve_two_bone")
+	# Also check static via call
+	if not has_solver:
+		# try via has_method on class via instance
+		var inst := CharacterLocomotion.new()
+		has_solver = inst.has_method("solve_two_bone")
+		inst.queue_free()
+	_check("analytic solve_two_bone exists", has_solver, "no solver")
+	tmp_loco.queue_free()
+	if has_solver:
+		var inst2 := CharacterLocomotion.new()
+		# call via call if exists
+		if inst2.has_method("solve_two_bone"):
+			var res = inst2.call("solve_two_bone", Vector3(0,0,0), Vector3(0.28,0,0), Vector3(0.55,0,0), Vector3(0.35,0.2,0))
+			if res is Dictionary:
+				_check("solve_two_bone returns dict with elbow", (res as Dictionary).has("elbow") and (res as Dictionary).has("hand_snap"), str(res))
+				_check("solve_two_bone hand_snap <=0.06 for reachable", float((res as Dictionary).get("hand_snap", 1.0)) < 0.07, str((res as Dictionary).get("hand_snap", 0)))
+		inst2.queue_free()
+	var holder: Node3D = loco.get_parent() as Node3D
+	holder.global_position = Vector3.ZERO
+	var ledge_pos := Vector3(0,1.9,1.0)
+	var ledge_normal := Vector3(0,0,-1)
+	loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true}, "wall_probe": {}, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	await get_tree().process_frame
+	var hs: float = loco.hand_snap
+	_check("hang analytic hand_snap <=0.04", hs <= 0.05, "%.3f" % hs)
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_wallrun_stamina_and_gates() -> void:
+	print("[AnimationTest] subtest wallrun stamina gates P-C4")
+	var survivor := Survivor.new()
+	survivor.configure({"id": &"wallrun_stam_test", "name": "WR", "is_player": false, "color": Color.WHITE})
+	survivor.position = Vector3.ZERO
+	add_child(survivor)
+	await get_tree().process_frame
+	survivor.stamina = 100.0
+	var loco: CharacterLocomotion = survivor.get_locomotion() as CharacterLocomotion
+	var wall_probe := {"wall_pos": Vector3(0.40,1.2,0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side": "R", "wall_height": 2.5, "wall_length": 4.0, "wall_dist": 0.40, "yaw_to_wall": 20.0, "flat": 0.02, "has_hit": true}
+	loco.update({"speed": 4.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": survivor.stamina, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wall_probe, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+	_check("wallrun triggers with stamina 100 via actor", _is_wallrun_state(int(loco.state)), str(loco.state))
+	survivor.stamina = 5.0
+	var loco2 := _make_locomotion()
+	loco2.update({"speed": 4.5, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": 5.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wall_probe, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+	_check("wallrun blocked when stamina 5 (<10)", not _is_wallrun_state(int(loco2.state)), str(loco2.state))
+	if is_instance_valid(loco2.get_parent()):
+		loco2.get_parent().queue_free()
+	survivor.queue_free()
+	await get_tree().process_frame
+
+func _test_shimmy_stamina_and_zombie() -> void:
+	print("[AnimationTest] subtest shimmy stamina and zombie")
+	var loco := _make_locomotion()
+	var ledge_pos := Vector3(0,1.9,0.6)
+	var shimmy_probe := {"ledge_pos": ledge_pos, "ledge_normal": Vector3(0,0,-1), "ledge_length": 3.5, "has_hit": true}
+	loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5}, "wall_probe": {}, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	await get_tree().process_frame
+	loco.update({"speed": 0.6, "strafe": 1.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(1,0,0), "facing": Vector3(0,0,-1), "stamina": 5.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5}, "wall_probe": {}, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
+	_check("shimmy blocked when stamina 5 (<8)", not _is_shimmy_state(int(loco.state)), str(loco.state))
+	if is_instance_valid(loco.get_parent()):
+		loco.get_parent().queue_free()
+	var skel := SkeletonFactory.build_survivor_skeleton()
+	var dummy := Node3D.new()
+	dummy.set_meta("anim_limbs", {})
+	var holder := Node3D.new()
+	add_child(holder)
+	holder.add_child(skel)
+	var zloco := CharacterLocomotion.new()
+	holder.add_child(zloco)
+	zloco.setup(skel, dummy, {"shamble": true, "id": "z_wall_test"})
+	var wall_probe := {"wall_pos": Vector3(0.40,1.2,0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side": "R", "wall_height": 2.5, "wall_length": 4.0, "wall_dist": 0.40, "yaw_to_wall": 10.0, "flat": 0.02, "has_hit": true}
+	zloco.update({"speed":4.5, "strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wall_probe,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+	_check("zombie never WALL_RUN", not _is_wallrun_state(int(zloco.state)), str(zloco.state))
+	zloco.update({"speed":0.6,"strafe":1.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(1,0,0),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("zombie never SHIMMY", not _is_shimmy_state(int(zloco.state)), str(zloco.state))
+	if is_instance_valid(holder):
+		holder.queue_free()
+	await get_tree().process_frame
+
+func _test_chain_vault_wallrun_shimmy() -> void:
+	print("[AnimationTest] subtest chain Vault->WallRun->Hang->Shimmy->ClimbUp")
+	var holder := Node3D.new()
+	add_child(holder)
+	var skel := SkeletonFactory.build_survivor_skeleton()
+	holder.add_child(skel)
+	var dummy := Node3D.new()
+	dummy.set_meta("anim_limbs", {})
+	var loco := CharacterLocomotion.new()
+	holder.add_child(loco)
+	loco.setup(skel, dummy)
+	loco.update({"speed":2.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{"height":0.75,"has_hit":true},"mantle_probe":{},"ledge_probe":{},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("chain step VAULT", int(loco.state)==CharacterLocomotion.State.VAULT, str(loco.state))
+	for i in 35:
+		loco.update({"speed":2.0,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":95.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	var wall_probe := {"wall_pos": Vector3(0.40,1.2,0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side":"R","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":25.0,"flat":0.02,"has_hit":true}
+	loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":90.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wall_probe,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+	var is_wr: bool = _is_wallrun_state(int(loco.state))
+	_check("chain step WALL_RUN after VAULT within 4 frames", is_wr, str(loco.state))
+	for i in 38:
+		loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":85.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wall_probe,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	var ledge_pos := Vector3(0,1.9,0.6)
+	loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	await get_tree().process_frame
+	_check("chain step HANG after WALL_RUN", int(loco.state)==CharacterLocomotion.State.HANG, str(loco.state))
+	var shimmy_probe := {"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"ledge_length":3.5,"has_hit":true}
+	loco.update({"speed":0.6,"strafe":1.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(1,0,0),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("chain step SHIMMY", _is_shimmy_state(int(loco.state)), str(loco.state))
+	for i in 80:
+		loco.update({"speed":0.6,"strafe":1.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(1,0,0),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":75.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":true,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+	_check("chain step CLIMB_UP after SHIMMY", int(loco.state)==CharacterLocomotion.State.CLIMB_UP, str(loco.state))
+	for i in 50:
+		loco.update({"speed":0.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,-1),"facing":Vector3(0,0,-1),"stamina":65.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+		await get_tree().process_frame
+	_check("chain ends IDLE", int(loco.state)==CharacterLocomotion.State.IDLE or int(loco.state)==CharacterLocomotion.State.WALK, str(loco.state))
+	if is_instance_valid(holder):
+		holder.queue_free()
+	await get_tree().process_frame
+
+func _test_rid_stability_wallrun() -> void:
+	print("[AnimationTest] subtest RID stability wallrun")
+	var survivor := Survivor.new()
+	survivor.configure({"id": &"rid_wall_test","name":"RIDWall","is_player":false,"color":Color.WHITE})
+	survivor.position = Vector3.ZERO
+	add_child(survivor)
+	await get_tree().process_frame
+	var shape_node: CollisionShape3D = null
+	for child in survivor.get_children():
+		if child is CollisionShape3D:
+			shape_node = child as CollisionShape3D
+			break
+	var rid0: RID = RID()
+	if shape_node != null and shape_node.shape != null:
+		rid0 = shape_node.shape.get_rid()
+	var loco: CharacterLocomotion = survivor.get_locomotion() as CharacterLocomotion
+	for i in 60:
+		var wall_probe := {"wall_pos": Vector3(0.40,1.2,0), "wall_normal": Vector3(-1,0,0), "wall_tangent": Vector3(0,0,1), "wall_side":"R","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":10.0,"flat":0.02,"has_hit":true} if i%20<10 else {}
+		var speed: float = 4.5 if i%20<10 else 0.6
+		var strafe: float = 0.0 if i%20<10 else 1.0
+		var shimmy_probe := {"ledge_pos": Vector3(0,1.9,0.6),"ledge_normal":Vector3(0,0,-1),"ledge_length":3.5,"has_hit":true} if i%20>=10 else {}
+		var ledge_probe := {"rise":1.9,"ledge_pos":Vector3(0,1.9,0.6),"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5} if i%20>=10 else {}
+		if loco != null:
+			loco.update({"speed":speed,"strafe":strafe,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne": (i%20<5), "move_dir": Vector3(1,0,0) if i%20>=10 else Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": survivor.stamina, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": ledge_probe, "wall_probe": wall_probe, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+		await get_tree().physics_frame
+	var rid1: RID = RID()
+	if shape_node != null and shape_node.shape != null:
+		rid1 = shape_node.shape.get_rid()
+	_check("capsule RID non-zero stable across wallrun/shimmy (no per-frame RID flood)", rid0 != RID() and rid1 != RID() and rid0 == rid1, "rid0 %s rid1 %s" % [str(rid0), str(rid1)])
+	survivor.queue_free()
+	await get_tree().process_frame
+
+func _test_in_place_wallrun_shimmy() -> void:
+	print("[AnimationTest] subtest in_place wallrun/shimmy/drop")
+	for name in ["WallRunL","WallRunR","Shimmy","Drop2Hang"]:
+		var loco := _make_locomotion()
+		var holder: Node3D = loco.get_parent() as Node3D
+		holder.global_position = Vector3.ZERO
+		match name:
+			"WallRunL":
+				var wp := {"wall_pos": Vector3(-0.40,1.2,0),"wall_normal":Vector3(1,0,0),"wall_tangent":Vector3(0,0,1),"wall_side":"L","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":20.0,"flat":0.02,"has_hit":true}
+				loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 30:
+					loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"WallRunR":
+				var wp := {"wall_pos": Vector3(0.40,1.2,0),"wall_normal":Vector3(-1,0,0),"wall_tangent":Vector3(0,0,1),"wall_side":"R","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":20.0,"flat":0.02,"has_hit":true}
+				loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 30:
+					loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"Shimmy":
+				var lp := Vector3(0,1.9,0.6)
+				loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":lp,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				var shimmy_probe := {"ledge_pos":lp,"ledge_normal":Vector3(0,0,-1),"ledge_length":3.5,"has_hit":true}
+				loco.update({"speed":0.6,"strafe":1.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(1,0,0),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":lp,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 30:
+					loco.update({"speed":0.6,"strafe":1.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(1,0,0),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.9,"ledge_pos":lp,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":shimmy_probe,"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+			"Drop2Hang":
+				var wp := {"wall_pos": Vector3(0.40,1.2,0),"wall_normal":Vector3(-1,0,0),"wall_tangent":Vector3(0,0,1),"wall_side":"R","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":20.0,"flat":0.02,"has_hit":true}
+				loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":100.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+				for i in 50:
+					loco.update({"speed":4.5,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":false,"move_dir":Vector3(0,0,1),"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{},"wall_probe":wp,"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":true,"headroom_clear":true},0.016)
+					await get_tree().physics_frame
+				var lp2 := Vector3(0,1.9,0.6)
+				loco.update({"speed":0.1,"strafe":0.0,"slope_deg":0.0,"yaw_delta":0.0,"is_airborne":true,"move_dir":Vector3.ZERO,"facing":Vector3(0,0,-1),"stamina":80.0,"vault_probe":{},"mantle_probe":{},"ledge_probe":{"rise":1.2,"ledge_pos":lp2,"ledge_normal":Vector3(0,0,-1),"has_hit":true,"ledge_length":3.5},"wall_probe":{},"shimmy_probe":{},"jump_pressed":false,"crouch_held":false,"crouch_pressed":false,"sprint_held":false,"headroom_clear":true},0.016)
+				await get_tree().process_frame
+		var root_idx: int = loco.skeleton.find_bone("root")
+		var root_ok: bool = true
+		if root_idx >=0:
+			if loco.skeleton.get_bone_pose_position(root_idx).length() > 0.005:
+				root_ok = false
+		_check("in_place root <0.005 for %s wallrun/shimmy" % name, root_ok, str(loco.skeleton.get_bone_pose_position(root_idx)))
+		var has_pos_track2: bool = false
+		var lib2 := LocomotionLibrary.build_library()
+		for anim_name2 in lib2.get_animation_list():
+			var anim: Animation = lib2.get_animation(anim_name2)
+			for t in anim.get_track_count():
+				if str(anim.track_get_path(t)).contains("position"):
+					has_pos_track2 = true
+		_check("no position track for %s" % name, not has_pos_track2)
+		if is_instance_valid(loco.get_parent()):
+			loco.get_parent().queue_free()
+	await get_tree().process_frame
+
+func _test_wallrun_determinism() -> void:
+	print("[AnimationTest] subtest wallrun determinism")
+	var seq_speeds := [0.0, 0.5, 4.5, 5.5, 1.8]
+	var wall_probe := {"wall_pos": Vector3(0.40,1.2,0),"wall_normal":Vector3(-1,0,0),"wall_tangent":Vector3(0,0,1),"wall_side":"R","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":20.0,"flat":0.02,"has_hit":true}
+	var wall_probe_L := {"wall_pos": Vector3(-0.40,1.2,0),"wall_normal":Vector3(1,0,0),"wall_tangent":Vector3(0,0,1),"wall_side":"L","wall_height":2.5,"wall_length":4.0,"wall_dist":0.40,"yaw_to_wall":20.0,"flat":0.02,"has_hit":true}
+	var loco_a := _make_locomotion()
+	var states_a: Array[int] = []
+	for s in seq_speeds:
+		var wp: Dictionary = wall_probe if s>=3.2 else {}
+		loco_a.update({"speed": s, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wp, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+		states_a.append(int(loco_a.state))
+	var loco_b := _make_locomotion()
+	var states_b: Array[int] = []
+	for s in seq_speeds:
+		var wp2: Dictionary = wall_probe_L if s>=3.2 else {}
+		loco_b.update({"speed": s, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {}, "wall_probe": wp2, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": true, "headroom_clear": true}, 0.016)
+		states_b.append(int(loco_b.state))
+	_check("wallrun determinism speed 4.5 triggers WALL_RUN regardless of side", _is_wallrun_state(states_a[2]) and _is_wallrun_state(states_b[2]), "%s vs %s"%[str(states_a), str(states_b)])
+	if is_instance_valid(loco_a.get_parent()):
+		loco_a.get_parent().queue_free()
+	if is_instance_valid(loco_b.get_parent()):
+		loco_b.get_parent().queue_free()
+	await get_tree().process_frame

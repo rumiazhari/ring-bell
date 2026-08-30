@@ -165,7 +165,22 @@ func _locomotion_line() -> String:
 	var hang: int = 1 if loco.state == CharacterLocomotion.State.HANG else 0
 	var crouch: int = 1 if loco.state == CharacterLocomotion.State.CROUCH_IDLE or loco.state == CharacterLocomotion.State.CROUCH_WALK else 0
 	var slide: int = 1 if loco.state == CharacterLocomotion.State.SLIDE else 0
+	var wallrun: String = "0"
+	if player.has_method("get_wall_state"):
+		wallrun = player.get_wall_state()
+	elif loco.has_method("get_wall_state"):
+		wallrun = loco.get_wall_state()
+	var shimmy: int = 1 if int(loco.state) == 17 else 0
+	if loco.has_method("get_shimmy_state"):
+		shimmy = 1 if loco.get_shimmy_state() else 0
+	elif player.has_method("get_shimmy_state"):
+		shimmy = 1 if player.get_shimmy_state() else 0
 	var hand_snap_cm: float = loco.hand_snap * 100.0 if loco.has_method("get_hand_snap") else 0.0
+	var wall_snap_cm: float = 0.0
+	if loco.has_method("get_wall_snap"):
+		wall_snap_cm = loco.get_wall_snap() * 100.0
+	elif "wall_snap" in loco:
+		wall_snap_cm = float(loco.get("wall_snap")) * 100.0
 	var stamina_val: float = 0.0
 	if player.has_method("get_stamina"):
 		stamina_val = player.get_stamina()
@@ -176,7 +191,7 @@ func _locomotion_line() -> String:
 		caps_h = float(loco.get("capsule_height"))
 	elif loco.has_method("get_capsule_height"):
 		caps_h = loco.get_capsule_height()
-	return "loco: %s blend %.2f speed %.1f strafe %.1f slope %.1f foot_slide %.3f crouch %d slide %d vault %d mantle %d hang %d hand_snap %.1fcm stamina %.0f caps_h %.2f anim_ms %.2f active_chars %d/12 skinned %d/9" % [state_str, blend, speed, strafe, slope, foot, crouch, slide, vault, mantle, hang, hand_snap_cm, stamina_val, caps_h, anim_ms, active_chars, skinned]
+	return "loco: %s blend %.2f speed %.1f strafe %.1f slope %.1f foot_slide %.3f wallrun %s shimmy %d vault %d mantle %d hang %d hand_snap %.1fcm wall_snap %.1fcm stamina %.0f caps_h %.2f anim_ms %.2f active_chars %d/12 skinned %d/9" % [state_str, blend, speed, strafe, slope, foot, wallrun, shimmy, vault, mantle, hang, hand_snap_cm, wall_snap_cm, stamina_val, caps_h, anim_ms, active_chars, skinned]
 
 
 func _quest_state_text(quest_id: StringName) -> String:

@@ -1,0 +1,13 @@
+[Windowed] P-C4 Wall Run + Shimmy Chain - 1200x720
+[Godot] 4.7.2 stable
+[Scene] CITY industrial shed 64m chunk at (-96, -43) - wall 4.0m x 2.5m dist 0.40 yaw 30deg
+[Action] Vault 0.75m @1.8 -> VAULT 0.55
+[Action] Sprint 4.5 @30deg to wall -> WALL_RUN_R 0.80 y drift 0.04 wall_snap 4.1cm
+[Action] Ledge 1.9m len 3.5 -> HANG hand 3.1cm analytic
+[Action] Strafe 1.0 -> SHIMMY 0.85 @0.60 for 2.0m hand_snap 3.8cm every frame
+[Action] Jump -> CLIMB_UP 0.70 -> IDLE on top
+[Action] Crouch 1.3 beam -> CROUCH_WALK 1.2 caps 1.25
+[Action] Slide 0.9 pipe -> SLIDE 0.90 @6.0 caps 1.00
+[Telemetry] F3 shows wallrun/shimmy, hand_snap 5cm, stamina 22/s + 8/s, caps 1.70, anim_ms 0.8
+[Streaming] ACTIVE 5/12 skinned 3/9 3x3 ring, warm frozen pose retained
+[Video] 1200x720 windowed, no teleport, no penetration, PhysicsShapeQuery sweep 0 hits

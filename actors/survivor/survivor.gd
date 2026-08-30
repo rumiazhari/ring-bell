@@ -279,7 +279,9 @@ func _physics_process(delta: float) -> void:
 	var moving := _move_dir.length_squared() > 0.01 and not needs.sleeping
 	var sprinting := moving and _wants_sprint and not exhausted
 	var is_sliding_now: bool = _locomotion != null and is_instance_valid(_locomotion) and _locomotion.state == CharacterLocomotion.State.SLIDE
-	if is_sliding_now:
+	var is_wallrun_now: bool = _locomotion != null and is_instance_valid(_locomotion) and (int(_locomotion.state) == 15 or int(_locomotion.state) == 16)
+	var is_shimmy_now: bool = _locomotion != null and is_instance_valid(_locomotion) and int(_locomotion.state) == 17
+	if is_sliding_now or is_wallrun_now or is_shimmy_now:
 		# During SLIDE, stamina drain is handled by CharacterLocomotion (18/s); skip regen/drain here
 		pass
 	elif sprinting:
@@ -299,7 +301,7 @@ func _physics_process(delta: float) -> void:
 	var is_locked: bool = false
 	if _locomotion != null and is_instance_valid(_locomotion):
 		var ls: int = int(_locomotion.state)
-		if ls == CharacterLocomotion.State.VAULT or ls == CharacterLocomotion.State.MANTLE or ls == CharacterLocomotion.State.HANG or ls == CharacterLocomotion.State.CLIMB_UP or ls == CharacterLocomotion.State.TURN_L90 or ls == CharacterLocomotion.State.TURN_R90 or ls == CharacterLocomotion.State.TURN_180 or ls == CharacterLocomotion.State.SLIDE or ls == CharacterLocomotion.State.STAND_UP:
+		if ls == CharacterLocomotion.State.VAULT or ls == CharacterLocomotion.State.MANTLE or ls == CharacterLocomotion.State.HANG or ls == CharacterLocomotion.State.CLIMB_UP or ls == CharacterLocomotion.State.TURN_L90 or ls == CharacterLocomotion.State.TURN_R90 or ls == CharacterLocomotion.State.TURN_180 or ls == CharacterLocomotion.State.SLIDE or ls == CharacterLocomotion.State.STAND_UP or ls == CharacterLocomotion.State.WALL_RUN_L or ls == CharacterLocomotion.State.WALL_RUN_R or ls == CharacterLocomotion.State.SHIMMY or ls == CharacterLocomotion.State.DROP2HANG:
 			is_locked = true
 	# HANG freezes xz (capsule holds, gravity still applies but is_on_floor false keeps hang)
 	# SLIDE locked to facing*6.0 regardless of stick
@@ -307,6 +309,18 @@ func _physics_process(delta: float) -> void:
 		if _locomotion.state == CharacterLocomotion.State.HANG:
 			velocity.x = 0.0
 			velocity.z = 0.0
+		elif _locomotion.state == CharacterLocomotion.State.WALL_RUN_L or _locomotion.state == CharacterLocomotion.State.WALL_RUN_R:
+			var wt: Vector3 = _locomotion.wall_tangent
+			if wt.length() < 0.1:
+				wt = facing
+			velocity.x = wt.x * CharacterLocomotion.WALLRUN_SPEED
+			velocity.z = wt.z * CharacterLocomotion.WALLRUN_SPEED
+			velocity.y = 0.0
+		elif _locomotion.state == CharacterLocomotion.State.SHIMMY:
+			# shimmy velocity handled post-update where strafe_val known; keep y zero here
+			velocity.y = 0.0
+		elif _locomotion.state == CharacterLocomotion.State.DROP2HANG:
+			velocity.y -= 4.0 * delta
 		elif _locomotion.state == CharacterLocomotion.State.SLIDE:
 			velocity.x = facing.x * CharacterLocomotion.SLIDE_SPEED
 			velocity.z = facing.z * CharacterLocomotion.SLIDE_SPEED
@@ -397,6 +411,8 @@ func _physics_process(delta: float) -> void:
 		var vault_probe: Dictionary = {}
 		var mantle_probe: Dictionary = {}
 		var ledge_probe: Dictionary = {}
+		var wall_probe: Dictionary = {}
+		var shimmy_probe: Dictionary = {}
 		if parkour != null and is_instance_valid(parkour):
 			if parkour.has_method("get_vault_probe"):
 				vault_probe = parkour.get_vault_probe()
@@ -404,6 +420,10 @@ func _physics_process(delta: float) -> void:
 				mantle_probe = parkour.get_mantle_probe()
 			if parkour.has_method("get_ledge_probe"):
 				ledge_probe = parkour.get_ledge_probe()
+			if parkour.has_method("get_wall_probe"):
+				wall_probe = parkour.get_wall_probe()
+			if parkour.has_method("get_shimmy_probe"):
+				shimmy_probe = parkour.get_shimmy_probe()
 		var jump_pressed: bool = false
 		if InputMap.has_action("jump"):
 			jump_pressed = Input.is_action_just_pressed("jump")
@@ -432,6 +452,8 @@ func _physics_process(delta: float) -> void:
 			"vault_probe": vault_probe,
 			"mantle_probe": mantle_probe,
 			"ledge_probe": ledge_probe,
+			"wall_probe": wall_probe,
+			"shimmy_probe": shimmy_probe,
 			"jump_pressed": jump_pressed,
 			"crouch_held": crouch_held,
 			"crouch_pressed": crouch_pressed,
@@ -445,6 +467,21 @@ func _physics_process(delta: float) -> void:
 		if _locomotion.state == CharacterLocomotion.State.SLIDE:
 			velocity.x = facing.x * CharacterLocomotion.SLIDE_SPEED
 			velocity.z = facing.z * CharacterLocomotion.SLIDE_SPEED
+		elif _locomotion.state == CharacterLocomotion.State.WALL_RUN_L or _locomotion.state == CharacterLocomotion.State.WALL_RUN_R:
+			var wt2: Vector3 = _locomotion.wall_tangent
+			if wt2.length() < 0.1:
+				wt2 = facing
+			velocity.x = wt2.x * CharacterLocomotion.WALLRUN_SPEED
+			velocity.z = wt2.z * CharacterLocomotion.WALLRUN_SPEED
+			velocity.y = clamp(velocity.y, -2.0, 0.5)
+		elif _locomotion.state == CharacterLocomotion.State.SHIMMY:
+			var lat3: Vector3 = _locomotion.wall_tangent if _locomotion.wall_tangent.length() > 0.1 else Vector3(-facing.z, 0, facing.x)
+			var dir2: float = 1 if strafe_val > 0.1 else -1 if strafe_val < -0.1 else 0
+			velocity.x = lat3.x * CharacterLocomotion.SHIMMY_SPEED * dir2
+			velocity.z = lat3.z * CharacterLocomotion.SHIMMY_SPEED * dir2
+			velocity.y = clamp(velocity.y, -1.0, 1.0)
+		elif _locomotion.state == CharacterLocomotion.State.DROP2HANG:
+			velocity.y -= 4.0 * delta
 		elif _locomotion.state == CharacterLocomotion.State.HANG:
 			velocity.x = 0.0
 			velocity.z = 0.0
@@ -714,6 +751,50 @@ func get_skeleton() -> Skeleton3D:
 
 func get_locomotion() -> CharacterLocomotion:
 	return _locomotion
+
+func get_locomotion_state_int() -> int:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return int(_locomotion.state)
+	return 0
+
+func get_hand_snap2() -> float:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.hand_snap
+	return 0.0
+
+func get_wall_snap() -> float:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.wall_snap
+	return 0.0
+
+func get_wall_state() -> String:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		if int(_locomotion.state) == 15:
+			return "L"
+		if int(_locomotion.state) == 16:
+			return "R"
+	return ""
+
+func get_shimmy_state() -> bool:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return int(_locomotion.state) == 17
+	return false
+
+@warning_ignore("native_method_override")
+func get_wall_normal() -> Vector3:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.wall_normal
+	return Vector3.ZERO
+
+func get_wall_normal_loco() -> Vector3:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.wall_normal
+	return Vector3.ZERO
+
+func get_ledge_info() -> Dictionary:
+	if _locomotion != null and is_instance_valid(_locomotion):
+		return _locomotion.get_ledge_info()
+	return {}
 
 func get_capsule_shape() -> CollisionShape3D:
 	return _capsule_shape
