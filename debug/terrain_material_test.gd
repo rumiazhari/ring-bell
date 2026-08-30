@@ -95,7 +95,7 @@ func _run_all() -> void:
 		for i in 3:
 			var idx := j*17+i
 			var p := outer_origin + Vector2(float(i)*4.0, float(j)*4.0)
-			var masked := TerrainChunkBuilder._apply_urban(wp.terrain_height_at(p), p)
+			var masked := wp.surface_height_at(p)
 			if not is_equal_approx(outer_heights[idx], masked):
 				origin_heights_match = false
 	_check("height agreement with masked TerrainPlan at outer chunk", origin_heights_match, "")
@@ -856,9 +856,6 @@ func _run_all() -> void:
 		var size: Vector3 = spec["size"]
 		if is_equal_approx(pos.y, -0.25) and is_equal_approx(size.y, 0.5) and is_equal_approx(size.x, 64.0):
 			has_ground_inner = true
-	# G8 M1: authoritative surface keeps terrain inside inner, city ground may be omitted when terrain owns it; treat either as pass
-	if not has_ground_inner:
-		has_ground_inner = inner_batcher.specs().size() > 0
 	_check("inner chunk has city ground box", has_ground_inner, "")
 	var outer_batcher := MeshBatcher.new()
 	ChunkBuilder.fill_batcher(outer_batcher, CityPlan.new(), Vector2i(10, 0)) # 640m east, closest 640
