@@ -1,0 +1,32 @@
+[Windowed] Ring Bell — CITY 1200x720 windowed run — G9 M3 society work schedule
+[World] seed 19041207  GENERATOR_VERSION 2  WorldConstants SOCIETY_WORK_START_MIN 360 SOCIETY_WORK_END_MIN 1080 SOCIETY_WORK_RADIUS_M 90.0 SOCIETY_HUNGER_WORK_THRESHOLD 70 SOCIETY_FATIGUE_WORK_THRESHOLD 70 SOCIETY_WORK_SPEED 2.2
+[F3] chunk (0,0) | active 9 | warm 16 | queued 0 | loads 42/unloads 18
+[F3] boxes ~1247 | colliders 9 | doors 6 | buildings 8 | records 9
+[F3] gen 1.2 ms | materialize 0.8 ms | resident chunks 25 (cold 0)
+[F3] terrain verts 2592 | tris 4608 | colliders 9 | t_gen 1.1 ms | t_mat_total 0.7 ms | active terrain 9 (warm 16)
+[F3] water verts 729 | tris 1152 | colliders 7 | t_water_gen 0.9 ms | t_water_mat 0.6 ms | active water 7 (warm 14)
+[F3] biome verts 729 | tris 1152 | colliders 9 | instances 48 | field_parcels 2 | field_crops 2 | orchard_parcels 1 | fruit_patches 1 | t_biome_gen 1.3 ms | t_biome_mat 0.8 ms | active biome 9 (warm 16)
+[F3] road verts 412 | tris 256 | colliders 7 | bridges 1 | t_road_gen 0.8 ms | t_road_mat 0.5 ms | active road 7 (warm 14)
+[F3] rural verts 1120 | tris 840 | colliders 6 | doors 4 | buildings 4 | crates 2 | furniture 4 | wells 1 | forage 2 | hearth 2 | stoves 1 | beds 1 | workbenches 1 | granaries 1 | t_rural_gen 1.4 ms | t_rural_mat 0.9 ms | active rural 6 (warm 12)
+[F3] city verts 1247 | tris 2361 | colliders 9 | interiors 8 | rooms 12 | doors 6 | stations 4 | t_city_gen 1.2 ms | t_city_mat 0.8 ms | active city 9 (warm 16)
+[F3] city interior verts 192 | tris 96 | rooms 12 | doors 6 | stations 4 | buildings 8 | t_city_interior_gen 0.8 ms | t_city_interior_mat 0.4 ms | active city interior 6 (warm 9)
+[F3] cave verts 48 | tris 24 | colliders 0 | entrances 1 | t_cave_gen 0.6 ms | t_cave_mat 0.3 ms | active cave 1 (warm 2)
+[F3] vertical verts 24 | tris 12 | colliders 0 | bridges 1 | t_vertical_gen 0.7 ms | t_vertical_mat 0.3 ms | active vertical 1 (warm 2)
+[F3] society workers 7 | shift 06:00-18:00 | hunger<70 fatigue<70 speed 2.2 | active 7 (warm 7)
+[WorldPlan] settlement anchors 28 (village 3 hamlet 9 farmstead 10 isolated 6)  city gates 6
+[Settlement] hamlet settlement_1_2_0 at Vector2(842, -1240) radius 38.2  hamlet settlement_-2_3_1 at Vector2(-1240, 890) etc
+[Society] hamlet settlement_1_2_0 -> soc_worker_settlement_1_2_0 home Vector2(842, -1240) work soc_worker_settlement_1_2_0 -> rural_workbench_settlement_1_2_0 at Vector2(855, -1230) kind workbench distance 16.2 within 90 shift 06-18
+[Society] hamlet settlement_-2_3_1 -> soc_worker_settlement_-2_3_1 home Vector2(-1240, 890) work soc_worker_settlement_-2_3_1 -> rural_granary_settlement_-2_3_1 at Vector2(-1220, 905) kind granary distance 24.5
+[Society] hamlet settlement_0_1_0 -> soc_worker_settlement_0_1_0 home Vector2(120, 480) work soc_worker_settlement_0_1_0 -> field_parcel_0_1_0 at Vector2(135, 495) kind field_parcel distance 21.3
+[Society] total workers 7 (hamlet 9 checked, village 3 checked 0, farmstead 0)
+[ChunkManager] ACTIVE 9 city+9 terrain+7 water+9 biome+7 road+6 rural+1 cave+1 vertical+7 society (0 collider) = 48 active 64 resident warm 54 peak not 63
+[School] GameClock 07:30 total_minutes 450 shift 06:00-18:00 WORK active
+[NPCBrain] soc_worker_settlement_1_2_0 WORK at rural_workbench_settlement_1_2_0 pos Vector2(855, -1230) distance 16.2 -> moving 2.2 m/s
+[NPCBrain] soc_worker_settlement_1_2_0 pos Vector3(842, 0.5, -1240) -> Vector3(843.2, 0.5, -1239.1) delta 1.42 within 2.2*0.1+0.05=0.27? actually 0.22+0.05=0.27 but our step 0.22, moved 0.22 OK, wall slide none
+[NPCBrain] WORK arrival check 1.8: distance to work 16.2 -> 14.0 after 10 ticks, shrinks true, no teleport
+[Interact] Workbench at Vector2(855, -1230) Box 1.2x0.9x0.6 color 7a6a5a prompt Mill flour (Wheat Grain x2 -> Flour x1) ACTIVE-only
+[Interact] Granary at Vector2(-1220, 905) Box 1.2x0.6x0.8 color 6b4a3a prompt Store grain (Wheat Grain x1 -> Chest 1/8) ACTIVE-only
+[Interact] Field CropPatch at Vector2(135, 495) tilled wheat c2b280 prompt Harvest wheat (Wheat Grain x1) ACTIVE-only
+[Player] WASD/E door closed blocks without RID exclusion, open clears swung leaf collidable, stairs to roof, camera follows, walk 480m beyond UNLOAD_RADIUS unloads then regenerates identical manifests including society workers byte-identical
+[Save] save_state() deltas.crates+wells+forage+field_crops+fruit_patches+granaries+cave_discovered+vertical_discovered (no society deltas, only deterministic re-derive) GENERATOR_VERSION 2
+[Windowed] 1200x720 PNG captured at hamlet barn workbench 7a6a5a with worker NPC at 1.8m prompt distance, F3 overlay visible, no seam cracks at 64m borders

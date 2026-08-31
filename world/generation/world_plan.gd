@@ -13,6 +13,7 @@ var road_network: RoadNetworkPlan
 var rural_building: RuralBuildingPlan
 var cave: CavePlan
 var vertical: VerticalNetworkPlan
+var society: SocietyPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -25,8 +26,11 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
 	cave = CavePlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	vertical = VerticalNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
+	society = SocietyPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	if biome.has_method("set_world_refs"):
 		biome.set_world_refs(settlement, road_network, rural_building)
+	if society.has_method("set_world_refs"):
+		society.set_world_refs(self)
 
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
@@ -445,3 +449,20 @@ func vertical_bridge_at(p: Vector2) -> Dictionary:
 			return c
 	return nearest_vertical_bridge(p) if not cands.is_empty() else {}
 
+
+# --- Society work schedule forwarding (pure, deterministic) ---
+
+func society_workers() -> Array[Dictionary]:
+	return society.workers()
+
+func society_workers_in(rect: Rect2) -> Array[Dictionary]:
+	return society.workers_in(rect)
+
+func nearest_society_worker(p: Vector2) -> Dictionary:
+	return society.nearest_worker(p)
+
+func society_worker_for_settlement(settlement_id: String) -> Dictionary:
+	return society.worker_for_settlement(settlement_id)
+
+func society_work_site_for_worker(worker_id: String) -> Dictionary:
+	return society.work_site_for_worker(worker_id)

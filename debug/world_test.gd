@@ -212,6 +212,8 @@ func _run_all() -> void:
 		_test_facade_plinth())
 	_check("asset pipeline wall_2m deterministic and budget (G9 M2)",
 		_test_asset_pipeline())
+	_check("society work schedule deterministic assignment (G9 M3)", _test_society_plan())
+	_check("society work brain scheduling & movement (G9 M3)", await _test_society_brain())
 
 
 # --- 24: Flat-roof prop dressing -----------------------------------------------
@@ -5511,3 +5513,296 @@ func _check(test_name: String, condition: bool, detail := "") -> void:
 	else:
 		failures += 1
 		print("[CityTest] FAIL  %s   (%s)" % [test_name, detail])
+func _test_society_plan() -> bool:
+	# G9 M3: SocietyPlan deterministic assignment
+	var seed0 := WorldSeed.get_world_seed()
+	# 1) Determinism: same-seed workers() byte-identical shuffled including negative coords
+	var wp_a := WorldPlan.new(seed0)
+	var workers_a: Array[Dictionary] = wp_a.society_workers()
+	var workers_a2: Array[Dictionary] = wp_a.society_workers()
+	if workers_a.size() != workers_a2.size():
+		print("[CityTest] society: workers size differs on re-query %d vs %d" % [workers_a.size(), workers_a2.size()])
+		return false
+	for i in workers_a.size():
+		if workers_a[i].get("id") != workers_a2[i].get("id") or workers_a[i].get("work_site_id") != workers_a2[i].get("work_site_id"):
+			print("[CityTest] society: workers byte-identical re-query mismatch at %d" % i)
+			return false
+	# Shuffled order test: create second WorldPlan same seed, query workers_in with different rect order
+	var wp_b := WorldPlan.new(seed0)
+	var workers_b: Array[Dictionary] = wp_b.society_workers()
+	if workers_a.size() != workers_b.size():
+		print("[CityTest] society: same-seed different instance size mismatch %d vs %d" % [workers_a.size(), workers_b.size()])
+		return false
+	for i in workers_a.size():
+		var wa: Dictionary = workers_a[i]
+		var wb: Dictionary = workers_b[i]
+		if wa.get("id") != wb.get("id") or wa.get("work_site_id") != wb.get("work_site_id") or wa.get("work_pos") != wb.get("work_pos"):
+			print("[CityTest] society: same-seed different instance mismatch at %d %s vs %s" % [i, str(wa.get("id")), str(wb.get("id"))])
+			return false
+	# Negative coords: workers_in with negative rect should be deterministic
+	var neg_rect := Rect2(Vector2(-3000, -2000), Vector2(180, 180))
+	var workers_neg_a: Array[Dictionary] = wp_a.society_workers_in(neg_rect)
+	var workers_neg_b: Array[Dictionary] = wp_b.society_workers_in(neg_rect)
+	if workers_neg_a.size() != workers_neg_b.size():
+		print("[CityTest] society: negative rect workers size mismatch %d vs %d" % [workers_neg_a.size(), workers_neg_b.size()])
+		return false
+	for i in workers_neg_a.size():
+		if workers_neg_a[i].get("id") != workers_neg_b[i].get("id"):
+			print("[CityTest] society: negative rect workers mismatch at %d" % i)
+			return false
+	# Also test workers_in with rect shuffled order byte-identical
+	var rects: Array[Rect2] = [Rect2(Vector2(0,0), Vector2(2000,2000)), Rect2(Vector2(-1000,-1000), Vector2(500,500)), Rect2(Vector2(2000,0), Vector2(400,400))]
+	var union_a: Array[Dictionary] = []
+	for r in rects:
+		union_a.append_array(wp_a.society_workers_in(r))
+	union_a.sort_custom(func(a,b): return String(a["id"]) < String(b["id"]))
+	var rects_rev := rects.duplicate()
+	rects_rev.reverse()
+	var union_b: Array[Dictionary] = []
+	for r in rects_rev:
+		union_b.append_array(wp_b.society_workers_in(r))
+	union_b.sort_custom(func(a,b): return String(a["id"]) < String(b["id"]))
+	if union_a.size() != union_b.size():
+		print("[CityTest] society: shuffled rect union size mismatch %d vs %d" % [union_a.size(), union_b.size()])
+		return false
+	for i in union_a.size():
+		if union_a[i].get("id") != union_b[i].get("id"):
+			print("[CityTest] society: shuffled rect union mismatch at %d" % i)
+			return false
+	# 2) Different seed materially differs (at least 30% placements differ OR >=2/9 probes differ, or 2 distinct hamlet assignments in 5-seed matrix)
+	var seed_other := seed0 + 7919
+	var wp_other := WorldPlan.new(seed_other)
+	var workers_other: Array[Dictionary] = wp_other.society_workers()
+	var diff_found := false
+	if workers_a.size() != workers_other.size():
+		diff_found = true
+	else:
+		for i in workers_a.size():
+			if workers_a[i].get("work_site_id") != workers_other[i].get("work_site_id") or workers_a[i].get("work_pos") != workers_other[i].get("work_pos"):
+				diff_found = true
+				break
+	# Also check 5-seed matrix distinct assignments
+	var seeds: Array[int] = [seed0, seed0+12345, seed0+67890, seed0-54321, seed0+99999]
+	var worker_sets: Array[String] = []
+	for s in seeds:
+		WorldSeed.set_world_seed(s)
+		var wp_s := WorldPlan.new(s)
+		var ws: Array[Dictionary] = wp_s.society_workers()
+		var sig := ""
+		for w in ws:
+			sig += "%s->%s;" % [str(w.get("settlement_id")), str(w.get("work_site_id"))]
+		worker_sets.append(sig)
+	WorldSeed.set_world_seed(seed0)
+	var distinct_sets := {}
+	for sig in worker_sets:
+		distinct_sets[sig] = true
+	if distinct_sets.size() < 2 and not diff_found:
+		print("[CityTest] society: different seed did not differ (distinct sets %d, diff_found %s)" % [distinct_sets.size(), str(diff_found)])
+		return false
+	# 3) Per-hamlet 0-1 worker (never village), never urban 350, distance <=90, no duplicate, valid kinds
+	var seen_ids := {}
+	for w in workers_a:
+		var sid: String = String(w.get("settlement_id", ""))
+		var wid: String = String(w.get("id", ""))
+		var kind: StringName = w.get("settlement_kind", &"") as StringName
+		if kind != &"hamlet":
+			print("[CityTest] society: worker %s has kind %s not hamlet" % [wid, str(kind)])
+			return false
+		if wid != "soc_worker_%s" % sid:
+			print("[CityTest] society: worker id %s mismatch settlement_id %s" % [wid, sid])
+			return false
+		if seen_ids.has(wid):
+			print("[CityTest] society: duplicate worker_id %s" % wid)
+			return false
+		seen_ids[wid] = true
+		var home: Vector2 = w.get("home_pos", Vector2.ZERO) as Vector2
+		if home.length() < WorldConstants.URBAN_INNER_M - 1e-6:
+			print("[CityTest] society: worker %s home inside urban inner %s" % [wid, str(home)])
+			return false
+		var dist: float = float(w.get("distance", 0.0))
+		if dist > WorldConstants.SOCIETY_WORK_RADIUS_M + 1e-6:
+			print("[CityTest] society: worker %s distance %.2f > 90" % [wid, dist])
+			return false
+		var wk: StringName = w.get("work_site_kind", &"") as StringName
+		if wk != &"workbench" and wk != &"granary" and wk != &"field_parcel":
+			print("[CityTest] society: worker %s work_site_kind %s invalid" % [wid, str(wk)])
+			return false
+		var work_pos: Vector2 = w.get("work_pos", Vector2.ZERO) as Vector2
+		if home.distance_to(work_pos) > WorldConstants.SOCIETY_WORK_RADIUS_M + 1e-6:
+			print("[CityTest] society: worker %s home->work distance %.2f >90" % [wid, home.distance_to(work_pos)])
+			return false
+		var work_id: String = String(w.get("work_site_id", ""))
+		if work_id == "":
+			print("[CityTest] society: worker %s has empty work_site_id" % wid)
+			return false
+	# Check never village: ensure no worker for village settlement
+	var wp_all := WorldPlan.new(seed0)
+	var settlements: Array[Dictionary] = wp_all.settlement.settlement_anchors()
+	for s in settlements:
+		if String(s.get("kind","")) == "village":
+			var sid2: String = String(s.get("id",""))
+			if wp_all.society_worker_for_settlement(sid2).size() > 0:
+				print("[CityTest] society: village %s has worker but should be 0 this slice" % sid2)
+				return false
+	if workers_a.is_empty():
+		print("[CityTest] society: no workers generated for seed %d (expected at least 1)" % seed0)
+		return false
+	if WorldSeed.GENERATOR_VERSION != 2:
+		print("[CityTest] society: GENERATOR_VERSION !=2 is %d" % WorldSeed.GENERATOR_VERSION)
+		return false
+	var test_p: Vector2 = workers_a[0].get("home_pos", Vector2.ZERO) as Vector2
+	var nearest: Dictionary = wp_a.nearest_society_worker(test_p)
+	if nearest.is_empty() or String(nearest.get("id","")) != String(workers_a[0].get("id","")):
+		var found := false
+		for w in workers_a:
+			if String(w.get("id","")) == String(nearest.get("id","")):
+				found = true
+				break
+		if not found:
+			print("[CityTest] society: nearest_worker mismatch")
+			return false
+	var w_for_sett: Dictionary = wp_a.society_worker_for_settlement(String(workers_a[0].get("settlement_id","")))
+	if w_for_sett.is_empty() or String(w_for_sett.get("id","")) != String(workers_a[0].get("id","")):
+		print("[CityTest] society: worker_for_settlement mismatch")
+		return false
+	print("[CityTest] society: plan OK workers %d distinct %d" % [workers_a.size(), distinct_sets.size()])
+	return true
+
+func _test_society_brain() -> bool:
+	var seed0 := WorldSeed.get_world_seed()
+	var orig_mins: float = GameClock.total_minutes
+	var wp := WorldPlan.new(seed0)
+	var workers: Array[Dictionary] = wp.society_workers()
+	if workers.size() < 2:
+		print("[CityTest] society brain: not enough workers %d need 2" % workers.size())
+		GameClock.total_minutes = orig_mins
+		return false
+	var chosen: Array[Dictionary] = []
+	for w in workers:
+		if float(w.get("distance",0.0)) > 3.0 and chosen.size() < 2:
+			chosen.append(w)
+	if chosen.size() < 2:
+		chosen = workers.slice(0, 2)
+	GameClock.total_minutes = 450.0
+	var survivors: Array[Survivor] = []
+	var brains: Array[NPCBrain] = []
+	for w in chosen:
+		var home: Vector2 = w.get("home_pos", Vector2.ZERO) as Vector2
+		var wid: String = String(w.get("worker_id", w.get("id","")))
+		var entry: Dictionary = {"id": StringName(wid), "name": "SocWorker", "occupation": "Test", "faction": &"survivors", "position": Vector3(home.x, 0.5, home.y), "facing": Vector3(0,0,-1), "color": Color(0.5,0.5,0.5), "weapon": &"", "items": {}, "cowardice": 1.0}
+		var surv := Survivor.new()
+		surv.configure(entry)
+		add_child(surv)
+		await get_tree().process_frame
+		surv.global_position = Vector3(home.x, 0.5, home.y)
+		surv.needs.hunger = 20.0
+		surv.needs.fatigue = 20.0
+		surv.needs.thirst = 20.0
+		var brain: NPCBrain = null
+		for child in surv.get_children():
+			if child is NPCBrain:
+				brain = child as NPCBrain
+				break
+		if brain == null:
+			brain = NPCBrain.new()
+			brain.home_position = surv.global_position
+			surv.add_child(brain)
+			await get_tree().process_frame
+		else:
+			brain.home_position = surv.global_position
+		brain.cowardice = 1.0
+		brain._think()
+		if brain.current_action != NPCBrain.Action.WORK:
+			print("[CityTest] society brain: at 07:30 worker %s expected WORK but got %d (hunger %.1f fatigue %.1f)" % [wid, int(brain.current_action), surv.needs.hunger, surv.needs.fatigue])
+			for s in survivors:
+				s.queue_free()
+			surv.queue_free()
+			GameClock.total_minutes = orig_mins
+			return false
+		survivors.append(surv)
+		brains.append(brain)
+	var delta := 0.1
+	var ticks := 100
+	for i in ticks:
+		for idx in survivors.size():
+			var surv: Survivor = survivors[idx]
+			var brain: NPCBrain = brains[idx]
+			var before: Vector3 = surv.global_position
+			brain._execute(0.1)
+			var after: Vector3 = surv.global_position
+			var moved: float = before.distance_to(after)
+			var max_allowed: float = WorldConstants.SOCIETY_WORK_SPEED * delta + 0.05
+			max_allowed *= surv.needs.speed_multiplier()
+			if moved > max_allowed + 0.01:
+				print("[CityTest] society brain: teleport detected worker %s moved %.3f > %.3f at tick %d" % [str(chosen[idx].get("id","")), moved, max_allowed, i])
+				for s in survivors:
+					s.queue_free()
+				GameClock.total_minutes = orig_mins
+				return false
+		await get_tree().process_frame
+	for idx in survivors.size():
+		var w: Dictionary = chosen[idx]
+		var surv: Survivor = survivors[idx]
+		var work_pos: Vector2 = w.get("work_pos", Vector2.ZERO) as Vector2
+		var home: Vector2 = w.get("home_pos", Vector2.ZERO) as Vector2
+		var dist_before: float = home.distance_to(work_pos)
+		var cur: Vector2 = Vector2(surv.global_position.x, surv.global_position.z)
+		var dist_after: float = cur.distance_to(work_pos)
+		if dist_after >= dist_before - 0.1:
+			print("[CityTest] society brain: worker %s distance did not shrink %.2f -> %.2f" % [str(w.get("id","")), dist_before, dist_after])
+			for s in survivors:
+				s.queue_free()
+			GameClock.total_minutes = orig_mins
+			return false
+	GameClock.total_minutes = 120.0
+	for idx in survivors.size():
+		var brain: NPCBrain = brains[idx]
+		brain._think()
+		if brain.current_action == NPCBrain.Action.WORK:
+			print("[CityTest] society brain: at 02:00 worker %s still WORK but should be 0" % str(chosen[idx].get("id","")))
+			for s in survivors:
+				s.queue_free()
+			GameClock.total_minutes = orig_mins
+			return false
+	GameClock.total_minutes = 450.0
+	for idx in survivors.size():
+		var surv: Survivor = survivors[idx]
+		var brain: NPCBrain = brains[idx]
+		surv.needs.hunger = 75.0
+		surv.needs.fatigue = 20.0
+		brain._think()
+		if brain.current_action == NPCBrain.Action.WORK:
+			print("[CityTest] society brain: hunger 75 should override WORK for %s but got WORK" % str(chosen[idx].get("id","")))
+			for s in survivors:
+				s.queue_free()
+			GameClock.total_minutes = orig_mins
+			return false
+		surv.needs.hunger = 20.0
+	for idx in survivors.size():
+		var surv: Survivor = survivors[idx]
+		var brain: NPCBrain = brains[idx]
+		surv.needs.fatigue = 75.0
+		surv.needs.hunger = 20.0
+		brain._think()
+		if brain.current_action == NPCBrain.Action.WORK:
+			print("[CityTest] society brain: fatigue 75 should override WORK for %s" % str(chosen[idx].get("id","")))
+			for s in survivors:
+				s.queue_free()
+			GameClock.total_minutes = orig_mins
+			return false
+		surv.needs.fatigue = 20.0
+	for s in survivors:
+		s.queue_free()
+	GameClock.total_minutes = orig_mins
+	WorldSeed.set_world_seed(seed0)
+	var wp2 := WorldPlan.new(seed0)
+	var workers2: Array[Dictionary] = wp2.society_workers()
+	if workers.size() != workers2.size():
+		print("[CityTest] society brain: determinism workers size mismatch")
+		return false
+	for i in workers.size():
+		if workers[i].get("id") != workers2[i].get("id") or workers[i].get("work_pos") != workers2[i].get("work_pos"):
+			print("[CityTest] society brain: determinism mismatch at %d" % i)
+			return false
+	print("[CityTest] society: brain OK 07:30 WORK, movement 10s, 02:00 off, hunger/fatigue override")
+	return true

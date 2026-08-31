@@ -441,6 +441,21 @@ const MAX_ASSET_RESOLVES_PER_CHUNK: int = 4
 const ASSET_LIFT_M: float = 0.01
 const ASSET_CATALOG_VERSION: int = 1
 
+# --- Settlement Society Work Schedule (G9 M3) authoritative numerics — hamlet worker 06:00-18:00 at workbench/granary/field ---
+# Deterministic work schedule overlay: each hamlet gets 0-1 worker (never village this slice) assigned to nearest
+# workbench / granary / field parcel within SOCIETY_WORK_RADIUS_M. Shift 06:00-18:00 via GameClock.total_minutes % 1440,
+# hunger/fatigue gates 70 override work, travel speed 2.2 no teleport. Pure, no collider, no persistence of position.
+const SOCIETY_WORK_START_MIN := 360 # 06:00 inclusive
+const SOCIETY_WORK_END_MIN := 1080 # 18:00 exclusive
+const SOCIETY_WORK_RADIUS_M := 90.0
+const SOCIETY_HUNGER_WORK_THRESHOLD := 70.0
+const SOCIETY_FATIGUE_WORK_THRESHOLD := 70.0
+const SOCIETY_WORK_SPEED := 2.2
+const SOCIETY_MAX_WORKERS_PER_HAMLET := 1
+const SOCIETY_MAX_WORKERS_PER_VILLAGE := 0 # bounded slice: villages 0, hamlets 1
+const SOCIETY_WORKER_ARRIVE_DISTANCE := 1.8 # stop working within this radius of work_pos
+const SOCIETY_DOMAINS: Array[StringName] = [&"society_work", &"society_work_site"]
+
 # --- Industrial Corridor (G8 M2) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry", &"industrial_corridor"]
 const INDUSTRIAL_CORRIDOR_VOCAB: Array[StringName] = [&"industrial_corridor"]

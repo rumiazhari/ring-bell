@@ -60,6 +60,7 @@ var facing := Vector3(0, 0, -1)
 
 var _config := {}                      # spawn config, applied in _ready()
 var _move_dir := Vector3.ZERO          # world-space desired direction
+var _work_speed_override := -1.0  # society work speed override (SOCIETY_WORK_SPEED 2.2) when >=0
 var _wants_sprint := false
 var _attack_cooldown := 0.0
 var _knockback := Vector3.ZERO         # havoc impulses (explosions, shots)
@@ -268,6 +269,12 @@ func request_move(dir: Vector3, sprint: bool) -> void:
 func stop_moving() -> void:
 	_move_dir = Vector3.ZERO
 	_wants_sprint = false
+func set_work_speed(speed: float) -> void:
+	_work_speed_override = speed
+
+func clear_work_speed() -> void:
+	_work_speed_override = -1.0
+
 
 
 func _physics_process(delta: float) -> void:
@@ -334,6 +341,8 @@ func _physics_process(delta: float) -> void:
 
 	var target_speed := RUN_SPEED if sprinting else WALK_SPEED
 	target_speed *= needs.speed_multiplier()
+	if _work_speed_override >= 0.0:
+		target_speed = _work_speed_override * needs.speed_multiplier()
 	# CROUCH_WALK clamps to 1.2 even if sprint requested
 	if _locomotion != null and is_instance_valid(_locomotion):
 		if _locomotion.state == CharacterLocomotion.State.CROUCH_WALK:

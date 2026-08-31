@@ -1702,6 +1702,13 @@ func debug_lines() -> Array[String]:
 			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
 	lines.append("vertical verts %d | tris %d | colliders %d | bridges %d | t_vertical_gen %.1f ms | t_vertical_mat %.1f ms | active vertical %d (warm %d)"
 			% [_vertical_vertices_total, _vertical_triangles_total, _vertical_colliders_total, _vertical_bridges_total, avg_vertical_gen_ms(), _vertical_mat_ms_total, vertical_active_count(), vertical_warm_count()])
+	var soc_workers: int = 0
+	if world_plan != null and world_plan.has_method("society_workers"):
+		soc_workers = world_plan.society_workers().size()
+	else:
+		var tmp_soc = SocietyPlan.new(WorldSeed.get_world_seed())
+		soc_workers = tmp_soc.workers().size()
+	lines.append("society workers %d | shift 06:00-18:00 | hunger<%d fatigue<%d speed %.1f | active %d (warm %d)" % [soc_workers, int(WorldConstants.SOCIETY_HUNGER_WORK_THRESHOLD), int(WorldConstants.SOCIETY_FATIGUE_WORK_THRESHOLD), WorldConstants.SOCIETY_WORK_SPEED, soc_workers, soc_workers])
 	return lines
 
 func _set_caves_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
