@@ -13,6 +13,8 @@ var geology: GeologyPlan
 var settlement_ref: SettlementPlan
 var road_network_ref: RoadNetworkPlan
 var rural_building_ref: RuralBuildingPlan
+var _road_proximity_cache: Dictionary = {}
+var _cell_road_cache: Dictionary = {}
 
 func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = null, hydrology_plan: HydrologyPlan = null, geology_plan: GeologyPlan = null) -> void:
 	seed_used = seed
@@ -58,6 +60,11 @@ func surface_tint_at(p: Vector2) -> Color:
 			return Color(0.22, 0.30, 0.18)
 		&"rocky_quarry":
 			return Color(0.56, 0.56, 0.55)
+		&"industrial_corridor":
+			# contaminated ground palette 7a6a6a with slag dark 5e5850 via jitter handled in builder; base here is mid
+			var dens := WorldSeed.sample_coherent(p, &"industrial_corridor_density", WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_CELL, seed_used)
+			var t := clampf((dens - 0.48) / 0.32, 0.0, 1.0)
+			return WorldConstants.COL_INDUSTRIAL_CORRIDOR.lerp(WorldConstants.COL_INDUSTRIAL_DARK, t * 0.5)
 		_:
 			return Color(0.52, 0.62, 0.40)
 
@@ -81,6 +88,9 @@ func is_floodplain(p: Vector2) -> bool:
 
 func is_quarry(p: Vector2) -> bool:
 	return biome_at(p) == &"rocky_quarry"
+
+func is_industrial(p: Vector2) -> bool:
+	return biome_at(p) == &"industrial_corridor"
 
 func biome_at(p: Vector2) -> StringName:
 	var water_body: StringName = hydrology.water_body_at(p)
@@ -111,6 +121,28 @@ func biome_at(p: Vector2) -> StringName:
 	if qsuit > WorldConstants.QUARRY_SUITABILITY_THRESHOLD and (slope_deg >= WorldConstants.QUARRY_SLOPE_MIN_DEG or tclass == &"cliff" or (strata == &"limestone" and h >= 15.0)):
 		if water_body == &"" and not hydrology.is_floodplain(p):
 			return &"rocky_quarry"
+	# Industrial corridor: gentle road-adjacent quarry geology, contaminated ground palette
+	if road_network_ref != null and p.length() >= WorldConstants.URBAN_INNER_M:
+		var _ind_strata_ok: bool = strata == &"limestone" or strata == &"sandstone" or strata == &"granite_like"
+		if _ind_strata_ok and qsuit > WorldConstants.INDUSTRIAL_QUARRY_SUITABILITY_MIN:
+			if tclass != &"cliff" and slope_deg < WorldConstants.INDUSTRIAL_SLOPE_MAX_DEG:
+				if water_body == &"" and not hydrology.is_floodplain(p) and d_water > WorldConstants.BANK_W + 2.0:
+					var _ind_dens: float = WorldSeed.sample_coherent(p, &"industrial_corridor_density", WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_CELL, seed_used)
+					if _ind_dens > WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD:
+						# Fast cell-level road presence gate to avoid per-sample distance scan where no road within 80 expanded
+						var _cell_coord := Vector2i(floori(p.x / WorldConstants.LANDSCAPE_CELL_M), floori(p.y / WorldConstants.LANDSCAPE_CELL_M))
+						var _cell_has_road: bool
+						if _cell_road_cache.has(_cell_coord):
+							_cell_has_road = bool(_cell_road_cache[_cell_coord])
+						else:
+							var _cell_origin := Vector2(_cell_coord) * WorldConstants.LANDSCAPE_CELL_M
+							var _cell_rect := Rect2(_cell_origin, Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+							var _expanded := _cell_rect.grow(WorldConstants.INDUSTRIAL_ROAD_DISTANCE_MAX)
+							_cell_has_road = not road_network_ref.road_segments_in(_expanded).is_empty()
+							_cell_road_cache[_cell_coord] = _cell_has_road
+						if _cell_has_road:
+							if road_network_ref.distance_to_road(p) < WorldConstants.INDUSTRIAL_ROAD_DISTANCE_MAX - 0.001:
+								return &"industrial_corridor"
 	var moist := moisture_at(p)
 	var temp := temperature_at(p)
 	var fertility := geology.fertility_at(p)

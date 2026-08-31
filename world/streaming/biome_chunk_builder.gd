@@ -43,6 +43,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var has_forest := false
 	var has_field := false
 	var has_quarry := false
+	var has_industrial := false
 	var is_wet_margin := false
 	var wet_count := 0
 	for j in RESOLUTION:
@@ -53,7 +54,19 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			biome_ids[idx] = b
 			material_ids[idx] = b
 			class_ids[idx] = world_plan.surface_class_at(p)
-			colors[idx] = world_plan.surface_tint_at(p)
+			var col: Color = world_plan.surface_tint_at(p)
+			if b == &"industrial_corridor":
+				has_industrial = true
+				# contaminated palette jitter +-0.08 via density
+				var ind_dens: float = WorldSeed.sample_coherent(p, &"industrial_corridor_density", WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_CELL, world_plan.seed_used)
+				var t_ind: float = clampf((ind_dens - 0.48) / 0.32, 0.0, 1.0)
+				col = WorldConstants.COL_INDUSTRIAL_CORRIDOR.lerp(WorldConstants.COL_INDUSTRIAL_DARK, t_ind * 0.7)
+				# subtle per-sample variant +-0.08
+				var jitter: float = (ind_dens - 0.5) * WorldConstants.INDUSTRIAL_PALETTE_VARIANT * 1.0
+				col.r = clampf(col.r + jitter, 0.0, 1.0)
+				col.g = clampf(col.g + jitter, 0.0, 1.0)
+				col.b = clampf(col.b + jitter, 0.0, 1.0)
+			colors[idx] = col
 			heights[idx] = world_plan.surface_height_at(p) + WorldConstants.BIOME_OVERLAY_LIFT_M
 			if b == &"deciduous_forest" or b == &"mixed_upland_forest":
 				has_forest = true
@@ -192,6 +205,26 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 					var qxf := Transform3D(Basis.IDENTITY.scaled(Vector3(qs, qs * 0.7, qs)), Vector3(qx, qy + qs * 0.35, qz))
 					instances.append(qxf)
 				instance_count = instances.size()
+		if has_industrial and instance_count < WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
+			var remaining_ind := WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK - instance_count
+			var icount: int = mini(WorldConstants.MAX_INDUSTRIAL_INSTANCES, remaining_ind)
+			var ind_samples := 0
+			for j in RESOLUTION:
+				for i in RESOLUTION:
+					if biome_ids[j * RESOLUTION + i] == &"industrial_corridor":
+						ind_samples += 1
+			if ind_samples >= 3:
+				for n in icount:
+					var ih := WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("industrial_corridor"), coord.x, coord.y, n])
+					var rngi := RandomNumberGenerator.new()
+					rngi.seed = ih
+					var ix: float = origin.x + rngi.randf_range(4.0, CHUNK_M - 4.0)
+					var iz: float = origin.y + rngi.randf_range(4.0, CHUNK_M - 4.0)
+					var iy: float = world_plan.surface_height_at(Vector2(ix, iz))
+					var s: float = rngi.randf_range(0.6, 1.0)
+					var xf_ind := Transform3D(Basis.IDENTITY.scaled(Vector3(0.6 * s, 0.4 * s, 0.6 * s)), Vector3(ix, iy + 0.2 * s, iz))
+					instances.append(xf_ind)
+					instance_count = instances.size()
 	if instance_count > WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 		instances.resize(WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK)
 		instance_count = instances.size()
@@ -201,6 +234,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		has_forest = false
 		has_field = false
 		has_quarry = false
+		has_industrial = false
 	var biome_colliders := 0
 	if has_forest or has_quarry:
 		if instance_count > 0:
@@ -210,6 +244,9 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	else:
 		biome_colliders = 0
 	if has_forest == false and has_quarry == false:
+		biome_colliders = 0
+	# industrial ground has 0 collider like field, not forest
+	if has_industrial and not has_forest and not has_quarry:
 		biome_colliders = 0
 	# --- Field parcel generation (P5.1) ---
 	var chunk_rect := Rect2(origin, size)
@@ -534,6 +571,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"has_forest": has_forest,
 		"has_field": has_field,
 		"has_quarry": has_quarry,
+		"has_industrial": has_industrial,
 		"quarry_feature": bool(quarry_feature.get("inside", false)),
 		"quarry_feature_id": quarry_feature.get("id", ""),
 		"quarry_excavation_depth": float(quarry_feature.get("depth", 0.0)),

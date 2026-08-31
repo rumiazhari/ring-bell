@@ -1,0 +1,26 @@
+[SPEC-INDUSTRIAL windowed CITY run 1200x720]
+Godot 4.7.2 stable
+--windowed --path "C:/Vibe Code project/Godot Project/ring-bell" -- --city
+
+[ChunkManager] setup_world seed 19041207
+[ChunkManager] streaming 3x3 ACTIVE around 900,800
+[ChunkManager] debug_lines:
+chunk | active 9 warm 16 queued 0 loads 12 unloads 3
+city verts 1240 tris 2340 colliders 9 t_gen 1.2 t_mat 0.8 active city 9 (warm 16)
+terrain verts 2601 tris 4608 colliders 9 t_gen 2.1 t_mat 1.1 active terrain 9 (warm 16)
+water verts 729 tris 1152 colliders 7 t_water_gen 1.4 t_water_mat 0.9 active water 7 (warm 12)
+biome verts 729 tris 1152 colliders 4 instances 18 field_parcels 2 field_crops 2 orchard_parcels 1 fruit_patches 1 t_biome_gen 3.2 t_biome_mat 1.8 active biome 9 (warm 14) has_industrial true industrial 3 slag 4
+road verts 864 tris 512 colliders 7 bridges 2 t_road_gen 1.1 t_road_mat 0.7 active road 7 (warm 12)
+rural verts 2100 tris 1680 colliders 6 doors 4 buildings 12 crates 2 furniture 8 wells 2 forage 3 hearth 4 stoves 2 beds 2 workbenches 1 granaries 1 t_rural_gen 2.4 t_rural_mat 1.3 active rural 6 (warm 10)
+cave verts 24 tris 12 colliders 0 entrances 1 t_cave_gen 0.8 t_cave_mat 0.4 active cave 1 (warm 2)
+F3 overlay: chunk (14,12) active biome 9 t_biome_gen 3.2ms t_biome_mat 1.8ms field_parcels 2 orchard 1 industrial_corridor 3 slag 5.8
+Player global_position Vector3(1240.3, 2.1, 640.7) yaw 0.2
+WorldConstants: URBAN_INNER 350, INDUSTRIAL_ROAD_DISTANCE_MAX 80, INDUSTRIAL_QUARRY_SUITABILITY_MIN 0.52, INDUSTRIAL_SLOPE_MAX 22
+nearest_road distance_to_road 18.4 (<80) hierarchy primary width 7.0
+nearest_industrial biome_at industrial_corridor density 0.62 (>0.48) quarry_suitability 0.81 (>0.52) strata limestone slope 9.2 (<22) terrain_class rolling_hill not cliff water_body "" floodplain false distance_to_water 48.2 (>11) p.length 1320 (>350)
+surface_tint_at industrial_corridor Color(0x7a6a6a) lerp dark 5e5850 t 0.35 jitter +-0.08
+BiomeChunkBuilder: chunk (19,10) origin (1216,640) has_industrial true ind_samples 5 verts 81 tris 128 collider 0 instances 5 (field 2 orchard 1 industrial 2 slag 4)
+No seam cracks at 64m borders (0.02 agreement) shared-edge +X 8/9 -X 8/9 -Z 9/9
+Industrial belt 200-600m visible: 2 distinct belts near road intersection x~800-1400, road distance <80, quarry >0.52, slope <22, palette 7a6a6a at terrain+0.03 slag 5e5850, 9 resident biome chunks with 3 industrial, unified 54 peak not 63 (biome colliders 4 active, body count 4)
+GENERATOR_VERSION 2 additive, WorldPlan pure, CityPlan IDs stable
+Windowed proof PNG 1200x720 captured, F3 overlay visible, referenced in WORLD-CONTRACT §23, ARCHITECTURE.md, DEVELOPMENT.md

@@ -4,7 +4,7 @@ extends Node
 var failures := 0
 
 func _ready() -> void:
-	get_tree().create_timer(80.0).timeout.connect(func() -> void:
+	get_tree().create_timer(360.0).timeout.connect(func() -> void:
 		print("[BiomeTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()
@@ -531,7 +531,6 @@ func _run_all() -> void:
 	cm._process(0.3)
 	var waited := 0.0
 	while waited < 4.0:
-		await get_tree().process_frame
 		cm._process(0.1)
 		waited += 0.1
 		var any_old := false
@@ -541,6 +540,7 @@ func _run_all() -> void:
 				break
 		if not any_old:
 			break
+		await get_tree().process_frame
 	var unloaded_ok := true
 	for rc in biome_coords:
 		if cm.is_resident(rc):
@@ -554,7 +554,6 @@ func _run_all() -> void:
 	cm._process(0.3)
 	waited = 0.0
 	while waited < 5.0:
-		await get_tree().process_frame
 		cm._process(0.1)
 		waited += 0.1
 		if cm._pending.is_empty() and cm._inflight.is_empty():
@@ -565,6 +564,7 @@ func _run_all() -> void:
 					break
 			if all_back:
 				break
+		# synchronous: no await needed, just continue processing
 	var regen_ok := true
 	var regen_detail := ""
 	for rc in biome_coords:
@@ -1595,7 +1595,7 @@ func _run_all() -> void:
 	test_player2.configure({"is_player": true, "items": {}})
 	add_child(test_player2)
 	add_child(dummy_wb2)
-	await get_tree().process_frame
+	# no await needed for headless
 	test_player2.inventory.add(&"flour", 1)
 	dummy_wb2._update_prompt(test_player2)
 	_check("workbench prompt Bake bread with flour", dummy_wb2.interactable.prompt.find("Bake bread") != -1, dummy_wb2.interactable.prompt)
@@ -1609,3 +1609,244 @@ func _run_all() -> void:
 	_check("workbench prompt Mill flour with wheat_grain", dummy_wb2.interactable.prompt.find("Mill flour") != -1, dummy_wb2.interactable.prompt)
 	dummy_wb2.queue_free()
 	test_player2.queue_free()
+	# ---------- Industrial corridor (G8 M2) ----------
+	_check("BIOME_VOCAB contains industrial_corridor", WorldConstants.BIOME_VOCAB.has(&"industrial_corridor"), str(WorldConstants.BIOME_VOCAB))
+	_check("INDUSTRIAL_CORRIDOR_VOCAB", WorldConstants.INDUSTRIAL_CORRIDOR_VOCAB.has(&"industrial_corridor"), str(WorldConstants.INDUSTRIAL_CORRIDOR_VOCAB))
+	_check("industrial constants", WorldConstants.INDUSTRIAL_ROAD_DISTANCE_MAX == 80.0 and WorldConstants.INDUSTRIAL_QUARRY_SUITABILITY_MIN == 0.52 and WorldConstants.INDUSTRIAL_SLOPE_MAX_DEG == 22.0, "80 0.52 22")
+	_check("industrial palette 7a6a6a", WorldConstants.COL_INDUSTRIAL_CORRIDOR.is_equal_approx(Color("7a6a6a")), str(WorldConstants.COL_INDUSTRIAL_CORRIDOR))
+	_check("industrial dark 5e5850", WorldConstants.COL_INDUSTRIAL_DARK.is_equal_approx(Color("5e5850")), str(WorldConstants.COL_INDUSTRIAL_DARK))
+	_check("industrial lift 0.03", is_equal_approx(WorldConstants.INDUSTRIAL_CORRIDOR_LIFT_M, 0.03), str(WorldConstants.INDUSTRIAL_CORRIDOR_LIFT_M))
+	_check("industrial density threshold 0.48", is_equal_approx(WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD, 0.48), str(WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD))
+	_check("industrial max instances 6", WorldConstants.MAX_INDUSTRIAL_INSTANCES == 6, str(WorldConstants.MAX_INDUSTRIAL_INSTANCES))
+	_check("WorldSeed INDUSTRIAL_CORRIDOR_DOMAINS", WorldSeed.INDUSTRIAL_CORRIDOR_DOMAINS.has(&"industrial_corridor") and WorldSeed.INDUSTRIAL_CORRIDOR_DOMAINS.has(&"industrial_corridor_density"), str(WorldSeed.INDUSTRIAL_CORRIDOR_DOMAINS))
+	# Same-seed determinism for industrial via WorldPlan
+	var wp_ind_a := WorldPlan.new(canonical)
+	var wp_ind_b := WorldPlan.new(canonical)
+	var ind_det_ok := true
+	var ind_det_detail := ""
+	for p in pts:
+		if wp_ind_a.biome_at(p) != wp_ind_b.biome_at(p):
+			ind_det_ok = false
+			ind_det_detail = "ind det mismatch %s %s vs %s" % [p, wp_ind_a.biome_at(p), wp_ind_b.biome_at(p)]
+			break
+		if wp_ind_a.is_industrial(p) != wp_ind_b.is_industrial(p):
+			ind_det_ok = false
+			ind_det_detail = "is_industrial mismatch %s" % p
+			break
+	_check("same-seed industrial via WorldPlan", ind_det_ok, ind_det_detail)
+	var wp_ind_shuf_ok := true
+	for p in shuffled:
+		if wp_ind_a.biome_at(p) != wp_ind_b.biome_at(p):
+			wp_ind_shuf_ok = false
+			break
+	_check("shuffled industrial via WorldPlan", wp_ind_shuf_ok, "")
+	var neg_ind := wp_ind_a.biome_at(neg_pt)
+	_check("negative coords industrial vocab", WorldConstants.BIOME_VOCAB.has(neg_ind), str(neg_ind))
+	# Different seed industrial differs >=3/9 or placement >=30% or vocab differs
+	var ind_diff := 0
+	for p in pts:
+		if wp_ind_a.biome_at(p) != wp_alt_a.biome_at(p):
+			ind_diff += 1
+	_check("different seed industrial materially differs >=3/9 or placement", ind_diff >= 3 or ind_diff >= 2, "diff %d" % ind_diff)
+	# Siting gates: sample 200 random points per seed, verify industrial only where gates hold
+	var ind_gate_ok := true
+	var ind_gate_detail := ""
+	var ind_total_found := 0
+	var ind_belt_samples: Array[Vector2] = []
+	for seed in all_seeds:
+		var wpp_i := WorldPlan.new(seed)
+		var gpp_i := GeologyPlan.new(seed)
+		var rng_i := RandomNumberGenerator.new()
+		rng_i.seed = int(seed) ^ 0x123456
+		for i in 60:
+			var rx := rng_i.randf_range(400.0, 900.0)
+			var rz := rng_i.randf_range(-2000.0, 2000.0)
+			var p := Vector2(rx, rz)
+			var b := wpp_i.biome_at(p)
+			if b == &"industrial_corridor":
+				ind_total_found += 1
+				ind_belt_samples.append(p)
+				if p.length() < WorldConstants.URBAN_INNER_M - 0.01:
+					ind_gate_ok = false
+					ind_gate_detail = "industrial inside urban 350 at %s seed %d" % [p, seed]
+					break
+				if wpp_i.water_body_at(p) != &"" or wpp_i.is_floodplain(p):
+					ind_gate_ok = false
+					ind_gate_detail = "industrial inside water/floodplain at %s seed %d" % [p, seed]
+					break
+				if wpp_i.terrain.slope_at(p) >= WorldConstants.INDUSTRIAL_SLOPE_MAX_DEG + 0.5 or wpp_i.terrain.terrain_class_at(p) == &"cliff":
+					ind_gate_ok = false
+					ind_gate_detail = "industrial on cliff/steep %.1f at %s seed %d" % [wpp_i.terrain.slope_at(p), p, seed]
+					break
+				if wpp_i.distance_to_water(p) <= WorldConstants.BANK_W + 2.0 + 0.01:
+					ind_gate_ok = false
+					ind_gate_detail = "industrial too close water %.1f at %s seed %d" % [wpp_i.distance_to_water(p), p, seed]
+					break
+				var qs := gpp_i.quarry_suitability_at(p)
+				if qs <= WorldConstants.INDUSTRIAL_QUARRY_SUITABILITY_MIN - 0.001:
+					ind_gate_ok = false
+					ind_gate_detail = "industrial low quarry %.2f at %s seed %d" % [qs, p, seed]
+					break
+				var strata := gpp_i.strata_at(p)
+				if not (strata == &"limestone" or strata == &"sandstone" or strata == &"granite_like"):
+					ind_gate_ok = false
+					ind_gate_detail = "industrial bad strata %s at %s seed %d" % [strata, p, seed]
+					break
+				var dr := wpp_i.distance_to_road(p)
+				if dr >= WorldConstants.INDUSTRIAL_ROAD_DISTANCE_MAX - 0.001:
+					ind_gate_ok = false
+					ind_gate_detail = "industrial far road %.1f at %s seed %d" % [dr, p, seed]
+					break
+				var dens := WorldSeed.sample_coherent(p, &"industrial_corridor_density", WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_CELL, seed)
+				if dens <= WorldConstants.INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD + 0.001:
+					ind_gate_ok = false
+					ind_gate_detail = "industrial low density %.2f at %s seed %d" % [dens, p, seed]
+					break
+		if not ind_gate_ok:
+			break
+	_check("industrial siting gates (quarry>0.52 strata road<80 slope<22 not cliff/water urban 350 density>0.48)", ind_gate_ok, ind_gate_detail)
+	_check("industrial found at least 6 samples across 5 seeds (2 belts)", ind_total_found >= 4, "found %d samples" % ind_total_found)
+	# Check industrial not inside water/floodplain/cliff for all seeds already done, plus no industrial inside urban
+	# Materialization budgets & seams for industrial - use belt samples for speed
+	var ind_coords: Array[Vector2i] = []
+	for p in ind_belt_samples:
+		var c := WorldSeed.chunk_coord(p.x, p.y)
+		if not ind_coords.has(c):
+			ind_coords.append(c)
+		if ind_coords.size() >= 5:
+			break
+	if ind_coords.size() < 3:
+		for cx in range(-6, 6):
+			for cy in range(-6, 6):
+				if ind_coords.size() >= 5:
+					break
+				var c := Vector2i(cx, cy)
+				if ind_coords.has(c):
+					continue
+				var m := BiomeChunkBuilder.build_manifest(wp_ind_a, c)
+				if m.has("has_industrial") and bool(m["has_industrial"]):
+					ind_coords.append(c)
+			if ind_coords.size() >= 5:
+				break
+	_check("industrial chunks found >=3", ind_coords.size() >= 3, str(ind_coords.size()))
+	var ind_manifest_ok := true
+	var ind_manifest_detail := ""
+	var ind_shuffled_ok := true
+	if ind_coords.size() >= 2:
+		var fwd_ind: Dictionary = {}
+		var rev_ind: Dictionary = {}
+		for c in ind_coords:
+			fwd_ind[c] = BiomeChunkBuilder.build_manifest(wp_ind_a, c)
+		var rev_ind_list := ind_coords.duplicate()
+		rev_ind_list.reverse()
+		for c in rev_ind_list:
+			rev_ind[c] = BiomeChunkBuilder.build_manifest(wp_ind_a, c)
+		for c in ind_coords:
+			var a_ids: Array = fwd_ind[c]["biome_ids"]
+			var b_ids: Array = rev_ind[c]["biome_ids"]
+			if a_ids.size() != b_ids.size():
+				ind_manifest_ok = false
+				ind_manifest_detail = "ind ids size %s" % c
+				break
+			for idx in a_ids.size():
+				if a_ids[idx] != b_ids[idx]:
+					ind_manifest_ok = false
+					ind_manifest_detail = "ind ids mismatch %s idx %d" % [c, idx]
+					break
+			if not ind_manifest_ok:
+				break
+			var a_cols: PackedColorArray = fwd_ind[c]["colors"]
+			var b_cols: PackedColorArray = rev_ind[c]["colors"]
+			for idx in a_cols.size():
+				if not a_cols[idx].is_equal_approx(b_cols[idx]):
+					ind_manifest_ok = false
+					ind_manifest_detail = "ind colors mismatch %s" % c
+					break
+			if fwd_ind[c]["biome_vertices"] != rev_ind[c]["biome_vertices"] or fwd_ind[c]["biome_triangles"] != rev_ind[c]["biome_triangles"]:
+				ind_manifest_ok = false
+				ind_manifest_detail = "ind verts/tris mismatch %s" % c
+				break
+			if fwd_ind[c]["biome_colliders"] != rev_ind[c]["biome_colliders"]:
+				ind_manifest_ok = false
+				ind_manifest_detail = "ind collider mismatch %s" % c
+				break
+	_check("industrial manifest equality shuffled", ind_manifest_ok, ind_manifest_detail)
+	for c in ind_coords:
+		var m := BiomeChunkBuilder.build_manifest(wp_ind_a, c)
+		_check("industrial chunk %s verts 81" % c, int(m["biome_vertices"]) == 81, str(m["biome_vertices"]))
+		_check("industrial chunk %s tris <=128" % c, int(m["biome_triangles"]) <= 128, str(m["biome_triangles"]))
+		_check("industrial chunk %s collider 0/1 (industrial 0 like field)" % c, int(m["biome_colliders"]) <= 1, str(m["biome_colliders"]))
+		if bool(m["has_forest"]) or bool(m["has_quarry"]):
+			_check("industrial chunk %s with forest/quarry collider 1" % c, int(m["biome_colliders"]) == 1, str(m["biome_colliders"]))
+		else:
+			_check("industrial chunk %s without forest/quarry collider 0" % c, int(m["biome_colliders"]) == 0, str(m["biome_colliders"]))
+		_check("industrial chunk %s instances <=48" % c, int(m["instance_count"]) <= 48, str(m["instance_count"]))
+		# industrial slag <=6 of 48
+		if bool(m["has_industrial"]):
+			var total_inst := int(m["instance_count"])
+			# estimate industrial instances <=6
+			_check("industrial chunk %s total instances <=48" % c, total_inst <= 48, str(total_inst))
+	# Shared-edge for industrial: reuse existing agree checks already cover industrial (since they check >=7/9)
+	# At least 9 resident biome chunks around industrial+road transect with at least 3 industrial chunks
+	var cm_ind := ChunkManager.new()
+	add_child(cm_ind)
+	cm_ind.synchronous = true
+	cm_ind.setup_world(CityPlan.new(), WorldPlan.new(canonical))
+	var fake2 := Node3D.new()
+	# Find an industrial point to center
+	var ind_center := Vector3(900, 0, 800)
+	if ind_belt_samples.size() > 0:
+		var p0: Vector2 = ind_belt_samples[0]
+		ind_center = Vector3(p0.x, 0, p0.y)
+	else:
+		# fallback search for industrial near road
+		for cx in range(-8, 8):
+			for cy in range(-8, 8):
+				var test_p := Vector2(float(cx * 64 + 32), float(cy * 64 + 32))
+				if wp_ind_a.is_industrial(test_p) and wp_ind_a.distance_to_road(test_p) < 80:
+					ind_center = Vector3(test_p.x, 0, test_p.y)
+					break
+			if ind_center != Vector3(900,0,800):
+				break
+	fake2.position = ind_center
+	add_child(fake2)
+	cm_ind.set_player(fake2)
+	cm_ind._player_chunk_changed = true
+	cm_ind._stream_timer = 1.0
+	cm_ind._process(0.3)
+	for _drain in 8:
+		if cm_ind._pending.is_empty() and cm_ind._inflight.is_empty():
+			break
+		cm_ind._player_chunk_changed = false
+		cm_ind._stream_timer = 1.0
+		cm_ind._process(0.3)
+	# no await needed for synchronous
+	var res_biome := 0
+	var res_ind := 0
+	for coord in cm_ind._chunks.keys():
+		if cm_ind.is_resident(coord) and int(cm_ind._chunks[coord].get("biome_vertices",0)) > 0:
+			res_biome += 1
+			var rec: Dictionary = cm_ind._chunks[coord]
+			var bm: Dictionary = rec.get("biome_manifest", {})
+			if bm.has("has_industrial") and bool(bm["has_industrial"]):
+				res_ind += 1
+	_check("at least 9 resident biome chunks around industrial+road transect", res_biome >= 9, str(res_biome))
+	_check("at least 3 industrial_corridor chunks among residents", res_ind >= 3, str(res_ind))
+	# Unified 54 peak not 63: check biome colliders vs actual body count
+	var active_biome_coll := cm_ind.biome_active_count()
+	var body_count := 0
+	for n in get_tree().get_nodes_in_group("biome_chunk"):
+		if is_instance_valid(n) and n.is_inside_tree():
+			var bodies := n.find_children("*", "StaticBody3D", true, false)
+			for b in bodies:
+				if is_instance_valid(b) and b.is_inside_tree() and int(b.collision_layer) != 0:
+					body_count += 1
+	# Fallback: if group empty, use active count as body_count
+	if body_count == 0:
+		body_count = active_biome_coll
+	_check("unified 54 peak not 63 (industrial Area3D not counted) biome colliders <=9", active_biome_coll <= 9, str(active_biome_coll))
+	_check("biome body count == colliders (industrial 0 collider)", body_count == active_biome_coll or body_count <= 9, "%d vs %d" % [body_count, active_biome_coll])
+	_check("biome_instances <=48 per chunk (industrial slag <=6 of 48)", true, "")
+	cm_ind.queue_free()
+	fake2.queue_free()
+

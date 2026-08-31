@@ -374,8 +374,24 @@ const CAVE_ENTRANCE_LIFT_M := 0.01
 const QUARRY_SUITABILITY_CAVE_THRESHOLD := 0.72
 const CAVE_SLOPE_MIN_DEG := 28.0
 
+# --- Industrial Corridor (G8 M2) authoritative numerics ---
+const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry", &"industrial_corridor"]
+const INDUSTRIAL_CORRIDOR_VOCAB: Array[StringName] = [&"industrial_corridor"]
+const INDUSTRIAL_ROAD_DISTANCE_MAX := 80.0
+const INDUSTRIAL_QUARRY_SUITABILITY_MIN := 0.52
+const INDUSTRIAL_SLOPE_MAX_DEG := 22.0
+const INDUSTRIAL_MIN_PARCEL_M := 48.0
+const INDUSTRIAL_CORRIDOR_LIFT_M := 0.03
+const COL_INDUSTRIAL_CORRIDOR := Color("7a6a6a")
+const COL_INDUSTRIAL_DARK := Color("5e5850")
+const INDUSTRIAL_PALETTE_VARIANT := 0.08
+const INDUSTRIAL_ROAD_SETBACK := 0.0
+const INDUSTRIAL_BUILDING_GAP := 4.0
+const MAX_INDUSTRIAL_INSTANCES := 6
+const INDUSTRIAL_CORRIDOR_DENSITY_CELL := 480.0
+const INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD := 0.48
+
 # --- Biome & Geology (P3.1) authoritative numerics ---
-const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry"]
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]
 const GEOLOGY_SOIL_VOCAB: Array[StringName] = [&"alluvial_soil", &"loess_soil", &"limestone_soil", &"sandstone_soil", &"granite_soil"]
 const WATER_DISTRICT_HINTS: Array[StringName] = [&"urban_basin", &"rural_plateau", &"river_valley"]

@@ -256,6 +256,9 @@ func is_floodplain_biome(p: Vector2) -> bool:
 func is_quarry(p: Vector2) -> bool:
 	return biome.is_quarry(p)
 
+func is_industrial(p: Vector2) -> bool:
+	return biome.is_industrial(p)
+
 func moisture_at(p: Vector2) -> float:
 	return biome.moisture_at(p)
 
