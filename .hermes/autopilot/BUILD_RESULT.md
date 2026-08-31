@@ -2,8 +2,8 @@
 
 **Task fingerprint (SHA256 of AUTOPILOT_TASK.md):** `636e5e6647210bd1`
 **HEAD before:** `fd08c9c` (docs: update BUILD_RESULT HEAD after to fbf985b)
-**HEAD after:** `4c39253` (feat G8-M2 industrial corridor belt)
-**Intermediate HEAD:** `4c39253` (feat G8-M2)
+**HEAD after:** `7811222` (chore autopilot update + feat G8-M2 + docs BUILD_RESULT)
+**Intermediate HEADs:** `4c39253` (feat G8-M2 industrial corridor belt) + `5503acc` (docs BUILD_RESULT)
 
 **Implementation summary:**
 - Added authoritative numerics in `WorldConstants` for industrial corridor: `BIOME_VOCAB` extended with `&"industrial_corridor"` (keep order, add at end), `INDUSTRIAL_CORRIDOR_VOCAB [&"industrial_corridor"]`, `INDUSTRIAL_ROAD_DISTANCE_MAX 80.0`, `INDUSTRIAL_QUARRY_SUITABILITY_MIN 0.52` (relaxed from 0.72), `INDUSTRIAL_SLOPE_MAX_DEG 22.0`, `INDUSTRIAL_MIN_PARCEL_M 48.0`, `INDUSTRIAL_CORRIDOR_LIFT_M 0.03` (same as `BIOME_OVERLAY_LIFT_M`), `COL_INDUSTRIAL_CORRIDOR 7a6a6a` + `COL_INDUSTRIAL_DARK 5e5850` slag, `INDUSTRIAL_PALETTE_VARIANT 0.08`, `INDUSTRIAL_ROAD_SETBACK 0.0`, `INDUSTRIAL_BUILDING_GAP 4.0`, `MAX_INDUSTRIAL_INSTANCES 6` of global 48, `INDUSTRIAL_CORRIDOR_DENSITY_CELL 480.0`, `INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD 0.48`. No duplicate inline numbers elsewhere.
