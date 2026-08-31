@@ -23,6 +23,7 @@ extends RefCounted
 ## boxes in plan-derived order only (never iterating unsorted dictionaries).
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
+var _asset_instances: Array[Dictionary] = [] # G9 M2: {pos,size,color,res_path,scale,has_collision,yaw} — visual wall_2m probe, ACTIVE-only, 0 collider
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
 var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
 
@@ -154,6 +155,21 @@ func pop_layer() -> void:
 	if _layers.size() > 1:
 		_layers.pop_back()
 
+# --- G9 M2 Asset Pipeline: queue modular wall instances (visual only, 0 collider) ---
+func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: String, scale: float, has_collision: bool, yaw: float = 0.0) -> void:
+	_asset_instances.append({
+		"pos": pos, "size": size, "color": color, "res_path": res_path, "scale": scale, "has_collision": has_collision, "yaw": yaw,
+	})
+
+func asset_instance_count() -> int:
+	return _asset_instances.size()
+
+func asset_instances() -> Array[Dictionary]:
+	return _asset_instances.duplicate(true)
+
+func clear_asset_instances() -> void:
+	_asset_instances.clear()
+
 
 func props() -> Array[Dictionary]:
 	return _prop_defs
@@ -273,7 +289,8 @@ func manifest() -> Dictionary:
 			"window_glows": _window_glows.duplicate(),
 			"street_lamp_dead": _street_lamp_dead.duplicate(),
 			"street_lamp_flicker": _street_lamp_flicker.duplicate(),
-			"street_lamp_phase": _street_lamp_phase.duplicate()}
+			"street_lamp_phase": _street_lamp_phase.duplicate(),
+			"asset_instances": _asset_instances.duplicate(true)}
 
 
 func _group_keys() -> Array:
@@ -303,6 +320,60 @@ func flush_into(parent: Node3D, body_layer := 1,
 
 	if include_collision:
 		_flush_collision_into(parent, body_layer)
+	# G9 M2 Asset Pipeline: instantiate queued modular walls (visual only, 0 collider, scale 1.0)
+	# Each asset is a MeshInstance from wall_2m.glb or fallback BoxMesh if GLB missing/invalid.
+	# ACTIVE-only visual: ChunkManager disables via queue_free on unload; warm retains visuals disabled.
+	var asset_count := 0
+	for a in _asset_instances:
+		var res_path: String = a.get("res_path", "") as String
+		var a_pos: Vector3 = a.get("pos", Vector3.ZERO) as Vector3
+		var a_size: Vector3 = a.get("size", Vector3(2.0, 2.05, 0.18)) as Vector3
+		var a_color: Color = a.get("color", Color("a8a090")) as Color
+		var a_scale: float = float(a.get("scale", 1.0))
+		var a_yaw: float = float(a.get("yaw", 0.0))
+		var scene: PackedScene = null
+		if FileAccess.file_exists(res_path) or ResourceLoader.exists(res_path, "PackedScene"):
+			var loaded = ResourceLoader.load(res_path)
+			if loaded != null and loaded is PackedScene:
+				scene = loaded as PackedScene
+		var node3d: Node3D = null
+		if scene != null:
+			var inst = scene.instantiate()
+			if inst is Node3D:
+				node3d = inst as Node3D
+				node3d.position = a_pos
+				node3d.scale = Vector3.ONE * a_scale
+				if not is_zero_approx(a_yaw):
+					node3d.rotation.y = a_yaw
+				# Tag for test/debugging and ACTIVE handling
+				node3d.set_meta("asset_wall_2m", true)
+				node3d.add_to_group("asset_wall")
+				parent.add_child(node3d)
+				asset_count += 1
+				continue
+			else:
+				if inst != null:
+					inst.queue_free()
+		# Fallback: vertex-colored box at same position/size (a8a090) — keeps 0 extra collider
+		var mi_fb := MeshInstance3D.new()
+		mi_fb.name = "AssetFallback_%d" % asset_count
+		var box := BoxMesh.new()
+		box.size = a_size
+		mi_fb.mesh = box
+		mi_fb.position = a_pos
+		mi_fb.scale = Vector3.ONE * a_scale
+		if not is_zero_approx(a_yaw):
+			mi_fb.rotation.y = a_yaw
+		var mat := StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = false
+		mat.albedo_color = a_color
+		mi_fb.material_override = mat
+		mi_fb.set_meta("asset_wall_2m", true)
+		mi_fb.set_meta("asset_fallback", true)
+		mi_fb.add_to_group("asset_wall")
+		parent.add_child(mi_fb)
+		asset_count += 1
+	stats["asset_instances"] = asset_count
 	return stats
 
 

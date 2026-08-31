@@ -1,0 +1,92 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "RingBell wall_2m placeholder"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "Wall2m"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Wall2mMesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "WallMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.66,
+          0.63,
+          0.56,
+          1.0
+        ]
+      },
+      "doubleSided": true
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "max": [
+        1.0,
+        1.025,
+        0.09
+      ],
+      "min": [
+        -1.0,
+        -1.025,
+        -0.09
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 72,
+      "target": 34963
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 168,
+      "uri": "data:application/octet-stream;base64,AACAvzMzg7/sUbi9AACAPzMzg7/sUbi9AACAPzMzg7/sUbg9AACAvzMzg7/sUbg9AACAvzMzgz/sUbi9AACAPzMzgz/sUbi9AACAPzMzgz/sUbg9AACAvzMzgz/sUbg9AAABAAIAAAACAAMABAAHAAYABAAGAAUAAAAEAAUAAAAFAAEAAgAGAAcAAgAHAAMAAQAFAAYAAQAGAAIAAwAHAAQAAwAEAAAA"
+    }
+  ]
+}

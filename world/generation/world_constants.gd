@@ -426,6 +426,21 @@ const MAX_CITY_INTERIOR_ROOMS_PER_CHUNK := 12
 const CITY_INTERIOR_ROOMS_MIN := 3
 const CITY_INTERIOR_ROOMS_MAX := 4
 
+# --- Asset Pipeline Opening (G9 M2) authoritative numerics — single wall_2m probe ---
+# Fallback policy: missing file → vertex-colored box a8a090 (COL_CITY_INTERIOR_WALL / COL_ASSET_FALLBACK).
+# Scale/collision policy: scale 1.0, visual only unless has_collision true (this slice false, 0 collider, keeps 54 peak).
+# Caps: at most 4 meshes per chunk, rest fallback to box, slice ≤2ms within FRAME_BUDGET_MS 12.
+const ASSET_CATEGORIES: Array[StringName] = [&"wall", &"roof", &"door", &"prop"]
+const ASSET_VOCAB_WALL_2M: StringName = &"wall_2m"
+const ASSET_MODULES_PATH: String = "res://art/modules/"
+const COL_ASSET_FALLBACK: Color = Color("a8a090")
+const ASSET_FALLBACK_COLOR_WALL: Color = Color("a8a090")
+const ASSET_SCALE_DEFAULT: float = 1.0
+const ASSET_HAS_COLLISION_DEFAULT: bool = false
+const MAX_ASSET_RESOLVES_PER_CHUNK: int = 4
+const ASSET_LIFT_M: float = 0.01
+const ASSET_CATALOG_VERSION: int = 1
+
 # --- Industrial Corridor (G8 M2) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry", &"industrial_corridor"]
 const INDUSTRIAL_CORRIDOR_VOCAB: Array[StringName] = [&"industrial_corridor"]

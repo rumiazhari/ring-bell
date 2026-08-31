@@ -1,5 +1,6 @@
 class_name BuildingBuilder
 extends RefCounted
+const _AC = preload("res://art/asset_catalog.gd")
 ## Emits ONE procedural building into a MeshBatcher: exterior shell, storey
 ## slabs with a stairwell shaft, a usable switchback staircase (walkable ramp
 ## colliders + decorative treads), roof deck with parapet, pitched roof shell,
@@ -3214,6 +3215,27 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			if fi == 0 and corridor.size != Vector2.ZERO and pr.intersects(corridor):
 				continue
 			# Partitions are along shared room edges: pr is 0.18 thick wall (WorldConstants.CITY_INTERIOR_WALL_T), op is 0.95 opening.
+			# G9 M2 Asset Pipeline: try wall_2m modular GLB at wall center, visual only 0 collider, scale 1.0, fallback to box.
+			# Caps per chunk 4, deterministic, byte-identical shuffled.
+			var asset_handled := false
+			if b.asset_instance_count() < WorldConstants.MAX_ASSET_RESOLVES_PER_CHUNK:
+				var resolve_info := _AC.resolve(&"wall", WorldConstants.ASSET_VOCAB_WALL_2M)
+				var has_asset: bool = bool(resolve_info.get("exists", false)) and resolve_info.get("scene", null) != null
+				if has_asset:
+					var ws_center2: Vector2 = pr.get_center()
+					var local_c: Vector2 = ws_center2 - (spec["rect"] as Rect2).position
+					var asset_pos: Vector3 = off + Vector3(local_c.x, float(fi) * fh + fh*0.5 + WorldConstants.ASSET_LIFT_M, local_c.y)
+					var is_vert_probe := pr.size.x < pr.size.y + 0.01
+					var yaw_probe: float = 0.0 if is_vert_probe else PI * 0.5
+					var asset_size: Vector3 = Vector3(2.0, WorldConstants.CITY_INTERIOR_OPEN_H, WorldConstants.CITY_INTERIOR_WALL_T)
+					b.queue_asset_wall(asset_pos, asset_size, WorldConstants.COL_ASSET_FALLBACK, String(resolve_info.get("res_path", "")), float(resolve_info.get("scale", 1.0)), bool(resolve_info.get("has_collision", false)), yaw_probe)
+					asset_handled = true
+				if asset_handled and b.asset_instance_count() == 1:
+					print("[AssetPipeline] asset wall_2m resolve exists true fallback false at %s" % [str(resolve_info.get("res_path", ""))])
+				elif not has_asset and b.asset_instance_count() == 0 and p == parts[0]:
+					print("[AssetPipeline] asset wall_2m resolve exists false fallback true at %s" % [str(resolve_info.get("res_path", ""))])
+			if asset_handled:
+				continue
 			var y0 := float(fi) * fh
 			var wall_h := fh
 			if wall_h > WorldConstants.CITY_INTERIOR_OPEN_H:

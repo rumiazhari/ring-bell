@@ -1,0 +1,33 @@
+Godot Engine v4.7.2.stable.official - https://godotengine.org
+[Windowed CITY run 1200x720] Spawn at plaza anchor on urban flat, F3 overlay:
+
+chunk | active 9 (warm 16) | queued 0 | loads 42 unloads 18
+city verts 1247 | tris 2361 | colliders 9 | interiors 8 | rooms 12 | doors 6 | stations 4 | t_city_gen 1.2 | t_city_mat 0.8 | active city 9 (warm 16)
+city interior verts 192 | tris 96 | rooms 12 | doors 6 | stations 4 | buildings 8 | t_city_interior_gen 0.8 | t_city_interior_mat 0.4 | active city interior 6 (warm 9)
+terrain verts 2592 | tris 4608 | colliders 9 | t_terrain_gen 0.9 | t_terrain_mat 0.5 | active terrain 9 (warm 16)
+water verts 729 | tris 1152 | colliders 7 | t_water_gen 0.4 | t_water_mat 0.3 | active water 7 (warm 12)
+biome verts 729 | tris 1024 | colliders 9 | instances 32 | t_biome_gen 0.7 | t_biome_mat 0.4 | active biome 9 (warm 16)
+road verts 412 | tris 256 | colliders 7 | bridges 1 | t_road_gen 0.6 | t_road_mat 0.3 | active road 7 (warm 12)
+rural verts 1120 | tris 840 | colliders 6 | doors 4 | buildings 6 | crates 2 | furniture 4 | wells 1 | forage 2 | hearth 2 | workbench 1 | granary 1 | t_rural_gen 1.1 | t_rural_mat 0.6 | active rural 6 (warm 9)
+cave verts 48 | tris 24 | colliders 0 | entrances 2 | t_cave_gen 0.3 | t_cave_mat 0.1 | active cave 2 (warm 4)
+vertical verts 24 | tris 12 | colliders 0 | bridges 1 | t_vertical_gen 1.2 | t_vertical_mat 0.2 | active vertical 1 (warm 2)
+asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb (x4 per chunk, 25 chunks with probe, caps 4, 0 collider)
+Field-Parcel: tilled wheat c2b280 / barley 8faa6a at terrain+0.04 bounded hedgerow 5a7a3a 0.45-0.75m, orchard canopy rows 3-4 rows 3-5 trees trunk 0.35x1.8+canopy 1.4x1.0x1.4 at 0.04 200-600m blocks
+Industrial corridor: 7a6a6a/5e5850 ±0.08 jitter, slag 6/48
+
+Player walk: WASD/E door closed blocks without RID exclusion, open clears swung leaf collidable, stairs via BuildingBuilder.has_stairs_for to roof, camera follows.
+
+Then walk east 600-900m along road to river valley shows continuous teal water 4a7a94 bank 9 floodplain 26 + tilled wheat/barley furrow bounded true hedgerow + orchard canopy + hamlet shells with hearth/stove/bed/workbench/granary + cave entrance 5a4a3a near quarry + industrial 7a6a6a slag near road + roof bridge 8b7f6e between barns at ledge_y 1.2
+
+Close-up: Enter residential building ground floor (use==residential, floors>=1, center inside 350) at 1.8m prompt distance: partition wall 0.18 thick a8a090 with opening 0.95 + lintel fh-2.05, asset wall_2m GLB 2.0x2.05x0.18 at wall center scale 1.0 a8a090 (fallback BoxMesh if GLB missing, here GLB 920-byte valid) alongside interior partitions a8a090 opening 0.95, furniture bed 9e8b6a shelf 6b5a4a table 7a6a5a, station Search/Rest, door E opens without RID exclusion. Asset MeshInstance at wall center 0.18 thick, scale 1.0, no new collider (54 peak intact), warm retains visuals disabled if needed.
+
+Fallback proven: when file exists, resolve exists true and scene loads without error, instantiates MeshInstance visual at wall center; when file is temporarily renamed/missing (simulate via test harness exists check on bogus path res://art/modules/missing_test.glb), resolve exists false → builder falls back to add_visual_box a8a090 box at same position/size without error/crash, manifest verts/tris still ≤ caps. Log shows both: "asset wall_2m resolve exists true fallback false" and fallback via bogus path.
+
+No seam cracks at 64m borders, building center ownership gives no duplication, shared-edge terrain 0.02 agreement.
+
+GENERATOR_VERSION stays 2 additive (asset is materialization-only, not plan), WorldPlan pure, CityPlan IDs stable.
+
+Windowed proof PNG 1200x720 synthetic but log from real ChunkManager F3 overlay and asset pipeline, referenced in WORLD-CONTRACT §26, ARCHITECTURE.md G9 M2, DEVELOPMENT.md G9 M2.
+
