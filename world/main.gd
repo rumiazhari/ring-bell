@@ -155,6 +155,10 @@ func _ready() -> void:
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
 		add_child(tester6g)
+	elif user_args.has("--verticaltest") or user_args.has("--vertical"):
+		var tester6h: Node = load("res://debug/vertical_test.gd").new()
+		tester6h.name = "VerticalTest"
+		add_child(tester6h)
 	elif user_args.has("--animationtest"):
 		var tester_anim: Node = load("res://debug/animation_test.gd").new()
 		tester_anim.name = "AnimationTest"
@@ -203,6 +207,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		"--roadtest", "--settlementtest", "--roadmaterialtest",
 		"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
 		"--cavetest",
+		"--verticaltest", "--vertical",
 		"--animationtest", "--streamingregressiontest",
 		"--import", "--shot", "--doortest"
 	]

@@ -12,6 +12,7 @@ var settlement: SettlementPlan
 var road_network: RoadNetworkPlan
 var rural_building: RuralBuildingPlan
 var cave: CavePlan
+var vertical: VerticalNetworkPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -23,6 +24,7 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
 	cave = CavePlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
+	vertical = VerticalNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	if biome.has_method("set_world_refs"):
 		biome.set_world_refs(settlement, road_network, rural_building)
 
@@ -422,4 +424,24 @@ func cave_entrance_at(p: Vector2) -> Dictionary:
 		if aabb.has_point(p):
 			return c
 	return nearest_cave_entrance(p) if not cands.is_empty() else {}
+
+# --- Vertical bridge forwarding (pure, deterministic) ---
+
+func vertical_bridges() -> Array[Dictionary]:
+	return vertical.vertical_bridges()
+
+func vertical_bridges_in(rect: Rect2) -> Array[Dictionary]:
+	return vertical.vertical_bridges_in(rect)
+
+func nearest_vertical_bridge(p: Vector2) -> Dictionary:
+	return vertical.nearest_vertical_bridge(p)
+
+func vertical_bridge_at(p: Vector2) -> Dictionary:
+	var rect := Rect2(p - Vector2(2,2), Vector2(4,4))
+	var cands: Array[Dictionary] = vertical.vertical_bridges_in(rect)
+	for c in cands:
+		var aabb: Rect2 = c.get("aabb", Rect2()) as Rect2
+		if aabb.has_point(p):
+			return c
+	return nearest_vertical_bridge(p) if not cands.is_empty() else {}
 

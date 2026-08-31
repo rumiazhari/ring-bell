@@ -219,7 +219,7 @@ const RURAL_FORAGE_MAX_PER_VILLAGE_VICINITY := 5
 const RURAL_FORAGE_MAX_PER_HAMLET_VICINITY := 3
 const RURAL_FORAGE_VICINITY_M := 120.0
 const RURAL_RESOURCE_VICINITY_M := 120.0
-const RURAL_FORAGE_ALLOW_BIOMES: Array[StringName] = [&"arable_field", &"pasture", &"pasture_orchard", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"wet_meadow"]
+const RURAL_FORAGE_ALLOW_BIOMES: Array[StringName] = [&"arable_field", &"pasture", &"pasture_orchard", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"wet_meadow", &"industrial_corridor"]
 const RURAL_WELL_SPACING_MIN := 6.0
 const RURAL_WELL_BUILDING_GAP_MIN := 8.0
 const RURAL_FORAGE_SPACING_MIN := 4.0
@@ -373,6 +373,26 @@ const CAVE_ENTRANCE_WATER_GAP := 11.0 # BANK_W 9 + 2
 const CAVE_ENTRANCE_LIFT_M := 0.01
 const QUARRY_SUITABILITY_CAVE_THRESHOLD := 0.72
 const CAVE_SLOPE_MIN_DEG := 28.0
+
+# --- Vertical Survivor Network (G8 M4) authoritative numerics — roof bridge prototype ---
+const VERTICAL_BRIDGE_VOCAB: Array[StringName] = [&"roof_bridge"]
+const VERTICAL_BRIDGE_SPAN_MIN := 8.0
+const VERTICAL_BRIDGE_SPAN_MAX := 14.0
+const VERTICAL_BRIDGE_WIDTH := 1.2
+const VERTICAL_BRIDGE_THICKNESS := 0.18
+const VERTICAL_BRIDGE_LIFT_M := 1.2
+const VERTICAL_BRIDGE_HEIGHT_OFFSET := 1.2
+const VERTICAL_BRIDGE_MAX_PER_CHUNK := 1
+const MAX_VERTICAL_VERTS_PER_CHUNK := 24
+const MAX_VERTICAL_TRIS_PER_CHUNK := 12
+const VERTICAL_BRIDGE_SPACING_MIN := 16.0
+const VERTICAL_BRIDGE_BUILDING_GAP_MIN := 1.0
+const VERTICAL_BRIDGE_ROAD_SETBACK := 2.0
+const VERTICAL_BRIDGE_WATER_GAP := 11.0
+const VERTICAL_BRIDGE_URBAN_INNER_SUPPRESS := 350.0
+const VERTICAL_BRIDGE_SLOPE_MAX_DEG := 22.0
+const COL_VERTICAL_BRIDGE := Color("8b7f6e")
+const COL_VERTICAL_DARK := Color("6b5a4a")
 
 # --- Industrial Corridor (G8 M2) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry", &"industrial_corridor"]

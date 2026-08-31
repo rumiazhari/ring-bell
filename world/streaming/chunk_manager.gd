@@ -82,6 +82,11 @@ var _cave_triangles_total := 0
 var _cave_colliders_total := 0
 var _cave_entrances_total := 0
 var _cave_mat_ms_total := 0.0
+var _vertical_vertices_total := 0
+var _vertical_triangles_total := 0
+var _vertical_colliders_total := 0
+var _vertical_bridges_total := 0
+var _vertical_mat_ms_total := 0.0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -101,6 +106,7 @@ var _total_biome_gen_ms := 0.0          # biome manifest generation
 var _total_road_gen_ms := 0.0           # road manifest generation
 var _total_rural_gen_ms := 0.0          # rural manifest generation
 var _total_cave_gen_ms := 0.0           # cave manifest generation
+var _total_vertical_gen_ms := 0.0       # vertical manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
 
@@ -185,6 +191,12 @@ func reset_stream() -> void:
 	_cave_entrances_total = 0
 	_cave_mat_ms_total = 0.0
 	_total_cave_gen_ms = 0.0
+	_vertical_vertices_total = 0
+	_vertical_triangles_total = 0
+	_vertical_colliders_total = 0
+	_vertical_bridges_total = 0
+	_vertical_mat_ms_total = 0.0
+	_total_vertical_gen_ms = 0.0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -327,6 +339,8 @@ func _launch_batch_jobs() -> void:
 			holder["rural_gen_ms"] = 0.0
 			holder["cave"] = {}
 			holder["cave_gen_ms"] = 0.0
+			holder["vertical"] = {}
+			holder["vertical_gen_ms"] = 0.0
 			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
@@ -338,14 +352,15 @@ func _launch_batch_jobs() -> void:
 			var r_gen: float = float(holder.get("road_gen_ms", 0.0))
 			var ru_gen: float = float(holder.get("rural_gen_ms", 0.0))
 			var cav_gen: float = float(holder.get("cave_gen_ms", 0.0))
-			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "cave": holder.get("cave", {}), "task_id": -1,
-					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "cave_gen_ms": cav_gen}
+			var vert_gen: float = float(holder.get("vertical_gen_ms", 0.0))
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "cave": holder.get("cave", {}), "vertical": holder.get("vertical", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "cave_gen_ms": cav_gen, "vertical_gen_ms": vert_gen}
 		else:
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "cave_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "cave_gen_ms": 0.0, "vertical_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
@@ -407,6 +422,14 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["cave"] = {}
 		holder["cave_gen_ms"] = 0.0
+	if holder.has("vertical"):
+		var tvert0 := Time.get_ticks_usec()
+		var vertm: Dictionary = VerticalChunkBuilder.build_manifest(shared_world, coord)
+		holder["vertical"] = vertm
+		holder["vertical_gen_ms"] = float(Time.get_ticks_usec() - tvert0) / 1000.0
+	else:
+		holder["vertical"] = {}
+		holder["vertical_gen_ms"] = 0.0
 	holder["composition"] = composition
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
@@ -460,6 +483,8 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var rural_gen_ms: float = float(job.get("rural_gen_ms", 0.0))
 		var cave_manifest: Dictionary = {}
 		var cave_gen_ms: float = float(job.get("cave_gen_ms", 0.0))
+		var vertical_manifest: Dictionary = {}
+		var vertical_gen_ms: float = float(job.get("vertical_gen_ms", 0.0))
 		var composition: Dictionary = {}
 		if job.has("terrain"):
 			terrain_manifest = job["terrain"]
@@ -468,6 +493,7 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			road_manifest = job.get("road", {})
 			rural_manifest = job.get("rural", {})
 			cave_manifest = job.get("cave", {})
+			vertical_manifest = job.get("vertical", {})
 			composition = job.get("composition", {})
 		elif job.has("terrain_holder"):
 			var holder: Dictionary = job["terrain_holder"]
@@ -483,14 +509,16 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			rural_gen_ms = float(holder.get("rural_gen_ms", 0.0))
 			cave_manifest = holder.get("cave", {})
 			cave_gen_ms = float(holder.get("cave_gen_ms", 0.0))
+			vertical_manifest = holder.get("vertical", {})
+			vertical_gen_ms = float(holder.get("vertical_gen_ms", 0.0))
 			composition = holder.get("composition", {})
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition, cave_manifest, cave_gen_ms)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition, cave_manifest, cave_gen_ms, vertical_manifest, vertical_gen_ms)
 		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}, cave_manifest: Dictionary = {}, cave_gen_ms: float = 0.0) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}, cave_manifest: Dictionary = {}, cave_gen_ms: float = 0.0, vertical_manifest: Dictionary = {}, vertical_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -785,6 +813,42 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				_set_caves_enabled(chunk_node_cav, coord, false)
 			else:
 				_set_caves_enabled(chunk_node_cav, coord, true)
+	# Materialize vertical under same chunk if manifest present
+	var vertstats := {}
+	if not vertical_manifest.is_empty():
+		if _records.has(coord):
+			var vert_deltas: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+			var discovered_v: Dictionary = vert_deltas.get("vertical_discovered", {}) as Dictionary
+			if not discovered_v.is_empty():
+				var vbs: Array = vertical_manifest.get("vertical_bridges", []) as Array
+				var patched_vbs: Array[Dictionary] = []
+				for vb in vbs:
+					var cd: Dictionary = vb as Dictionary
+					var vid: String = String(cd.get("id",""))
+					if discovered_v.has(vid):
+						cd = cd.duplicate()
+						cd["discovered"] = true
+						var disc_data: Variant = discovered_v[vid]
+						if disc_data is Dictionary:
+							cd["discovered_at_day"] = int((disc_data as Dictionary).get("discovered_at_day", -1))
+						else:
+							cd["discovered_at_day"] = -1
+						patched_vbs.append(cd)
+					else:
+						patched_vbs.append(cd)
+				vertical_manifest["vertical_bridges"] = patched_vbs
+		var chunk_node_vert := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node_vert != null:
+			vertstats = VerticalChunkBuilder.materialize(chunk_node_vert, vertical_manifest)
+			if _records.has(coord):
+				var deltas_v2: Dictionary = _records[coord].get("deltas", {}) as Dictionary
+				var discovered_v2: Dictionary = deltas_v2.get("vertical_discovered", {}) as Dictionary
+				if not discovered_v2.is_empty():
+					_apply_vertical_states(chunk_node_vert, coord, discovered_v2)
+			if not include_collision:
+				_set_vertical_enabled(chunk_node_vert, coord, false)
+			else:
+				_set_vertical_enabled(chunk_node_vert, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -836,6 +900,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var cave_tris := int(cavstats.get("cave_triangles", 0))
 	var cave_cols := int(cavstats.get("cave_colliders", 0))
 	var cave_entrances := int(cavstats.get("cave_entrances", 0))
+	var vertical_verts := int(vertstats.get("vertical_vertices", 0))
+	var vertical_tris := int(vertstats.get("vertical_triangles", 0))
+	var vertical_cols := int(vertstats.get("vertical_colliders", 0))
+	var vertical_bridges := int(vertstats.get("vertical_bridges", 0))
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -912,6 +980,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"cave_colliders": cave_cols,
 		"cave_entrances": cave_entrances,
 		"cave_manifest": cave_manifest,
+		"vertical_vertices": vertical_verts,
+		"vertical_triangles": vertical_tris,
+		"vertical_colliders": vertical_cols,
+		"vertical_bridges": vertical_bridges,
+		"vertical_manifest": vertical_manifest,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -931,6 +1004,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_mat_ms": float(rustats.get("rural_mat_ms", 0.0)),
 		"cave_gen_ms": cave_gen_ms,
 		"cave_mat_ms": float(cavstats.get("cave_mat_ms", 0.0)),
+		"vertical_gen_ms": vertical_gen_ms,
+		"vertical_mat_ms": float(vertstats.get("vertical_mat_ms", 0.0)),
 	}
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
@@ -981,6 +1056,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_cave_colliders_total += cave_cols
 	_cave_entrances_total += cave_entrances
 	_cave_mat_ms_total += float(cavstats.get("cave_mat_ms", 0.0))
+	_vertical_vertices_total += vertical_verts
+	_vertical_triangles_total += vertical_tris
+	_vertical_colliders_total += vertical_cols
+	_vertical_bridges_total += vertical_bridges
+	_vertical_mat_ms_total += float(vertstats.get("vertical_mat_ms", 0.0))
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
@@ -990,6 +1070,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_total_road_gen_ms += road_gen_ms
 	_total_rural_gen_ms += rural_gen_ms
 	_total_cave_gen_ms += cave_gen_ms
+	_total_vertical_gen_ms += vertical_gen_ms
 	# Unload adjustment: subtract on unload
 	note_discovered(coord)
 	_log("load %s (%.1f+%.1f ms, %s)"
@@ -1067,6 +1148,12 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_cave_entrances_total -= int(rec.get("cave_entrances", 0))
 		_cave_mat_ms_total -= float(rec.get("cave_mat_ms", 0.0))
 		_total_cave_gen_ms -= float(rec.get("cave_gen_ms", 0.0))
+		_vertical_vertices_total -= int(rec.get("vertical_vertices", 0))
+		_vertical_triangles_total -= int(rec.get("vertical_triangles", 0))
+		_vertical_colliders_total -= int(rec.get("vertical_colliders", 0))
+		_vertical_bridges_total -= int(rec.get("vertical_bridges", 0))
+		_vertical_mat_ms_total -= float(rec.get("vertical_mat_ms", 0.0))
+		_total_vertical_gen_ms -= float(rec.get("vertical_gen_ms", 0.0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -1144,6 +1231,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				var cave_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Cave_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if cave_node_active != null:
 					_set_caves_enabled(cave_node_active, coord, true)
+				var vertical_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Vertical_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if vertical_node_active != null:
+					_set_vertical_enabled(vertical_node_active, coord, true)
 			elif desired_state != &"active" and previous_state == &"active":
 				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_warm != null:
@@ -1160,6 +1250,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				var cave_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Cave_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if cave_node_warm != null:
 					_set_caves_enabled(cave_node_warm, coord, false)
+				var vertical_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Vertical_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if vertical_node_warm != null:
+					_set_vertical_enabled(vertical_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -1565,6 +1658,8 @@ func debug_lines() -> Array[String]:
 			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, _rural_granaries_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
 	lines.append("cave verts %d | tris %d | colliders %d | entrances %d | t_cave_gen %.1f ms | t_cave_mat %.1f ms | active cave %d (warm %d)"
 			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
+	lines.append("vertical verts %d | tris %d | colliders %d | bridges %d | t_vertical_gen %.1f ms | t_vertical_mat %.1f ms | active vertical %d (warm %d)"
+			% [_vertical_vertices_total, _vertical_triangles_total, _vertical_colliders_total, _vertical_bridges_total, avg_vertical_gen_ms(), _vertical_mat_ms_total, vertical_active_count(), vertical_warm_count()])
 	return lines
 
 func _set_caves_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
@@ -1648,6 +1743,90 @@ func cave_warm_count() -> int:
 
 func cave_total_count() -> int:
 	return _cave_entrances_total
+
+func _set_vertical_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	var vert_node: Node = null
+	if String(parent.name).begins_with("Vertical_"):
+		vert_node = parent
+	else:
+		vert_node = parent.get_node_or_null(NodePath("Vertical_%d_%d" % [coord.x, coord.y]))
+	if vert_node == null or not is_instance_valid(vert_node):
+		return
+	for child in vert_node.get_children():
+		if String(child.name).begins_with("VerticalBridge"):
+			var vb = child
+			if is_instance_valid(vb) and not vb.is_queued_for_deletion() and vb.is_inside_tree():
+				if vb.has_method("set_active_enabled"):
+					vb.call("set_active_enabled", enabled)
+				else:
+					vb.monitorable = enabled
+					var inter = vb.get("interactable")
+					if inter != null and is_instance_valid(inter):
+						inter.enabled = enabled
+
+func _apply_vertical_states(parent: Node, coord: Vector2i, discovered: Dictionary) -> void:
+	var vert_node: Node = parent.get_node_or_null(NodePath("Vertical_%d_%d" % [coord.x, coord.y]))
+	if vert_node == null:
+		if parent.name.begins_with("Vertical_"):
+			vert_node = parent
+		else:
+			return
+	for child in vert_node.get_children():
+		if String(child.name).begins_with("VerticalBridge"):
+			var vid: String = (child).bridge_id
+			if discovered.has(vid):
+				(child).load_state(discovered[vid] as Dictionary)
+			elif discovered.has(String(child.name).replace("VerticalBridge_", "")):
+				(child).load_state(discovered[String(child.name).replace("VerticalBridge_", "")] as Dictionary)
+
+func _record_vertical_discovered(coord: Vector2i, bridge_id: String, state: Dictionary) -> void:
+	if bridge_id == "":
+		return
+	note_discovered(coord)
+	var cd: Dictionary = _records[coord]["deltas"].get("vertical_discovered", {})
+	cd[bridge_id] = state.duplicate()
+	_records[coord]["deltas"]["vertical_discovered"] = cd
+
+func _snapshot_resident_vertical() -> void:
+	for c: Vector2i in _chunks:
+		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
+		if node == null:
+			continue
+		_collect_vertical_recursive(node, c)
+
+func _collect_vertical_recursive(n: Node, coord: Vector2i) -> void:
+	for child in n.get_children():
+		if String(child.name).begins_with("VerticalBridge") and not (child).is_queued_for_deletion():
+			if String(child.name).begins_with("VerticalBridge_"):
+				var st: Dictionary = (child).save_state()
+				_record_vertical_discovered(coord, (child).bridge_id, st)
+		if child.get_child_count() > 0:
+			_collect_vertical_recursive(child, coord)
+
+func vertical_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("vertical_bridges", 0)) > 0:
+			n += 1
+	return n
+
+func vertical_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("vertical_bridges", 0)) > 0:
+			n += 1
+	return n
+
+func vertical_total_count() -> int:
+	return _vertical_bridges_total
+
+func avg_vertical_gen_ms() -> float:
+	return _total_vertical_gen_ms / maxf(1.0, float(_total_loads))
+
+func avg_vertical_mat_ms() -> float:
+	return _vertical_mat_ms_total / maxf(1.0, float(maxi(1, _vertical_vertices_total)))
 
 func terrain_active_count() -> int:
 	var n := 0
@@ -2118,6 +2297,7 @@ func save_state() -> Dictionary:
 	_snapshot_resident_fruit_patches()
 	_snapshot_resident_granaries()
 	_snapshot_resident_caves()
+	_snapshot_resident_vertical()
 	var recs := {}
 	for c: Vector2i in _records:
 		recs["%d,%d" % [c.x, c.y]] = _records[c]

@@ -104,6 +104,29 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 				if has_village_barn2:
 					stale = true
 		if not stale:
+			# G8 M4: invalidate if village with 5-6 buildings has only one barn/stable (second barn missing)
+			var needs_second_barn := false
+			var has_second_barn := false
+			# Check any village where count >=5 and we expect second barn
+			# We need _by_settlement to test, but at this point _by_settlement is loaded from cache
+			# So scan _by_settlement
+			for sid in _by_settlement.keys():
+				var arr: Array[Dictionary] = _by_settlement[sid] as Array[Dictionary]
+				if arr.size() >= 5:
+					var kind0: StringName = arr[0].get("settlement_kind", &"") as StringName
+					if kind0 == &"village":
+						needs_second_barn = true
+						var barn_cnt := 0
+						for b in arr:
+							var k: StringName = b.get("kind", &"") as StringName
+							if k == &"barn" or k == &"stable":
+								barn_cnt += 1
+						if barn_cnt >= 2:
+							has_second_barn = true
+						break
+			if needs_second_barn and not has_second_barn:
+				stale = true
+		if not stale:
 			return
 		# stale: fall through to regeneration
 		_cache.erase(seed_used)
@@ -155,10 +178,17 @@ func _choose_building_kind(settlement_kind: StringName, id_hash: int, k: int, co
 			var r_v: float = _unit_float_with_seed("rural_building", [id_hash, 100], seed_used)
 			var num_vh: int = 2 + (1 if r_v > 0.5 else 0) # 2 or 3
 			num_vh = mini(num_vh, count - 1) # ensure at least 1 for barn
+			# G8 M4: villages with 5-6 buildings get second barn/stable for roof bridge prototype
+			var has_second_barn := count >= 5
+			if has_second_barn:
+				num_vh = mini(num_vh, count - 2) # reserve 2 for barns
 			if k < num_vh:
 				return &"village_house"
 			elif k == num_vh:
 				return &"barn"
+			elif has_second_barn and k == num_vh + 1:
+				var r2: float = _unit_float_with_seed("rural_building", [id_hash, 101], seed_used)
+				return &"stable" if r2 > 0.5 else &"barn"
 			else:
 				return &"cottage"
 		&"hamlet":
@@ -170,6 +200,11 @@ func _choose_building_kind(settlement_kind: StringName, id_hash: int, k: int, co
 					return &"cottage" if k == 0 else &"village_house" if r_kind > 0.5 else &"cottage"
 			else: # count 3
 				if k < 2:
+					# G8 M4: 35% second barn/stable for roof bridge
+					if k == 1:
+						var r2: float = _unit_float_with_seed("rural_building", [id_hash, 1031], seed_used)
+						if r2 > 0.65:
+							return &"barn" if r2 > 0.82 else &"stable"
 					return &"cottage" if k == 0 else &"village_house" if r_kind > 0.45 else &"cottage"
 				else:
 					return &"barn" if _unit_float_with_seed("rural_building", [id_hash, 103], seed_used) > 0.3 else &"stable"
@@ -1329,6 +1364,32 @@ func _generate() -> void:
 					cur_angle = base_angle + (nudge_a - 0.5) * 1.0
 					cur_radius = clampf(cur_radius, WorldConstants.RURAL_BUILDING_SETTLEMENT_INNER_CLEARANCE + 2.0, s_radius * 0.95)
 				var cand_center: Vector2 = s_center + Vector2(cos(cur_angle), sin(cur_angle)) * cur_radius
+				# G8 M4: for village second barn, bias to be 17-23 from first barn to guarantee 8-14 gap bridge
+				var is_second_barn := false
+				if skind == &"village" and target_count >= 5:
+					var r_v2: float = _unit_float_with_seed("rural_building", [id_hash, 100], seed_used)
+					var num_vh2: int = 2 + (1 if r_v2 > 0.5 else 0)
+					num_vh2 = mini(num_vh2, target_count - 2)
+					if k == num_vh2 + 1 and placed.size() > 0:
+						is_second_barn = true
+				if is_second_barn and placed.size() > 0:
+					var first_barn: Dictionary = placed[placed.size() - 1] as Dictionary
+					var first_c: Vector2 = first_barn.get("center", s_center) as Vector2
+					var r_ang2: float = _unit_float_with_seed("rural_building", [id_hash, k, attempt, 77], seed_used)
+					var ang2: float = r_ang2 * TAU
+					var r_dist2: float = _unit_float_with_seed("rural_building", [id_hash, k, attempt, 78], seed_used)
+					var dist2: float = lerpf(17.0, 23.0, r_dist2)
+					# jitter attempt varies dist slightly
+					if attempt > 0:
+						dist2 += (float(attempt) - 2.0) * 0.6
+						dist2 = clampf(dist2, 17.0, 23.0)
+					cand_center = first_c + Vector2(cos(ang2), sin(ang2)) * dist2
+					# ensure still within settlement radius; if outside, clamp toward center
+					if cand_center.distance_to(s_center) > s_radius * 0.95:
+						var dir_to_center := (s_center - first_c).normalized()
+						if dir_to_center.length_squared() < 1e-6:
+							dir_to_center = Vector2(1,0)
+						cand_center = first_c + dir_to_center * 17.0
 				var yaw: float = _yaw_for(cand_center, id_hash, k)
 				var aabb: Rect2 = _aabb_for(cand_center, footprint, yaw)
 				var is_inside_urban: bool = cand_center.length() < WorldConstants.URBAN_INNER_M - 0.5

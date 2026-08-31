@@ -316,8 +316,8 @@ func _contents_for_crop(crop: StringName) -> Dictionary:
 
 func _is_grown(planted_day: int) -> bool:
 	var cur_day: int = 1
-	if Engine.has_singleton("GameClock") or GameClock != null:
-		cur_day = GameClock.get_day()
+	if Engine.has_singleton("GameClock"):
+		cur_day = Engine.get_singleton("GameClock").get_day()
 	else:
 		cur_day = 1
 	return cur_day >= planted_day + WorldConstants.CROP_GROW_DAYS
@@ -377,8 +377,8 @@ func crop_patch_for_parcel(parcel_id: String) -> Dictionary:
 			var yaw: float = float(parc.get("yaw", 0.0))
 			var contents: Dictionary = _contents_for_crop(crop)
 			var cur_day: int = 1
-			if GameClock != null:
-				cur_day = GameClock.get_day()
+			if Engine.has_singleton("GameClock"):
+				cur_day = Engine.get_singleton("GameClock").get_day()
 			var is_grown: bool = cur_day >= planted + WorldConstants.CROP_GROW_DAYS
 			var h: float = terrain.height_at(center) + WorldConstants.FIELD_PARCEL_LIFT_M + 0.01
 			var world_pos := Vector3(center.x, h, center.y)
@@ -553,8 +553,8 @@ func _parcels_for_cell(cx: int, cy: int) -> Array[Dictionary]:
 			var planted: int = _planted_day_for(hash_cell, k)
 			var contents: Dictionary = _contents_for_crop(crop)
 			var cur_day: int = 1
-			if GameClock != null:
-				cur_day = GameClock.get_day()
+			if Engine.has_singleton("GameClock"):
+				cur_day = Engine.get_singleton("GameClock").get_day()
 			var is_grown: bool = cur_day >= planted + WorldConstants.CROP_GROW_DAYS
 			var growth_stage: StringName = &"harvestable" if is_grown else (&"growing" if cur_day == planted + 1 else &"planted")
 			var landscape_cell := Vector2i(cx, cy)
@@ -670,8 +670,8 @@ func _contents_for_fruit(fruit: StringName) -> Dictionary:
 
 func _is_grown_orchard(planted_day: int) -> bool:
 	var cur_day: int = 1
-	if GameClock != null:
-		cur_day = GameClock.get_day()
+	if Engine.has_singleton("GameClock"):
+		cur_day = Engine.get_singleton("GameClock").get_day()
 	return cur_day >= planted_day + WorldConstants.FRUIT_GROW_DAYS
 
 func _orchard_canopy_color(fruit: StringName) -> Color:
@@ -768,8 +768,8 @@ func fruit_patch_for_parcel(parcel_id: String) -> Dictionary:
 			var yaw: float = float(parc.get("yaw", 0.0))
 			var contents: Dictionary = _contents_for_fruit(fruit)
 			var cur_day: int = 1
-			if GameClock != null:
-				cur_day = GameClock.get_day()
+			if Engine.has_singleton("GameClock"):
+				cur_day = Engine.get_singleton("GameClock").get_day()
 			var is_grown: bool = cur_day >= planted + WorldConstants.FRUIT_GROW_DAYS
 			var h: float = terrain.height_at(center) + WorldConstants.ORCHARD_PARCEL_LIFT_M + 0.01
 			var world_pos := Vector3(center.x, h, center.y)
@@ -934,8 +934,8 @@ func _orchard_parcels_for_cell(cx: int, cy: int) -> Array[Dictionary]:
 			var planted: int = _orchard_planted_day_for(hash_cell, k)
 			var contents: Dictionary = _contents_for_fruit(fruit)
 			var cur_day: int = 1
-			if GameClock != null:
-				cur_day = GameClock.get_day()
+			if Engine.has_singleton("GameClock"):
+				cur_day = Engine.get_singleton("GameClock").get_day()
 			var is_grown: bool = cur_day >= planted + WorldConstants.FRUIT_GROW_DAYS
 			var growth_stage: StringName = &"harvestable" if is_grown else (&"growing" if cur_day == planted + 1 else &"planted")
 			var landscape_cell := Vector2i(cx, cy)
