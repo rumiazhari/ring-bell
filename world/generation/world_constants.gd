@@ -394,6 +394,38 @@ const VERTICAL_BRIDGE_SLOPE_MAX_DEG := 22.0
 const COL_VERTICAL_BRIDGE := Color("8b7f6e")
 const COL_VERTICAL_DARK := Color("6b5a4a")
 
+# --- City Interior Program (G9 M1) authoritative numerics — residential ground floor semantics ---
+const CITY_INTERIOR_VOCAB: Array[StringName] = [&"residential"]
+const CITY_ROOM_VOCAB: Array[StringName] = [&"entry", &"kitchen", &"sleeping", &"toilet"]
+const CITY_INTERIOR_WALL_T := 0.18
+const CITY_INTERIOR_OPEN_W := 0.95
+const CITY_INTERIOR_OPEN_H := 2.05
+const CITY_INTERIOR_FURNITURE_VOCAB: Array[StringName] = [&"bed", &"shelf", &"table"]
+const CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING := 2
+const MAX_CITY_INTERIOR_VERTS_PER_CHUNK := 320
+const MAX_CITY_INTERIOR_TRIS_PER_CHUNK := 240
+const MAX_CITY_INTERIOR_DOORS_PER_CHUNK := 6
+const MAX_CITY_INTERIOR_STATIONS_PER_CHUNK := 4
+const CITY_INTERIOR_LIFT_M := 0.01
+const COL_CITY_INTERIOR_WALL := Color("a8a090")
+const COL_CITY_INTERIOR_WALL_ALT := Color("b5aca0")
+const COL_CITY_BED := Color("9e8b6a")
+const COL_CITY_TABLE := Color("7a6a5a")
+const COL_CITY_SHELF := Color("6b5a4a")
+const CITY_FURNITURE_SIZE_BED := Vector3(1.8, 0.4, 0.9)
+const CITY_FURNITURE_SIZE_SHELF := Vector3(0.9, 0.9, 0.6)
+const CITY_FURNITURE_SIZE_TABLE := Vector3(0.9, 0.7, 0.9)
+const CITY_STATION_SIZE_BED := Vector3(1.8, 0.4, 0.9)
+const CITY_STATION_SIZE_COUNTER := Vector3(0.9, 0.9, 0.6)
+# City interior budgets additive to base city mesh (base typ 1180/2240, capped 1500/2480)
+const MAX_CITY_VERTS_BASE := 1180
+const MAX_CITY_TRIS_BASE := 2240
+const MAX_CITY_VERTS_WITH_INTERIOR := 1500
+const MAX_CITY_TRIS_WITH_INTERIOR := 2480
+const MAX_CITY_INTERIOR_ROOMS_PER_CHUNK := 12
+const CITY_INTERIOR_ROOMS_MIN := 3
+const CITY_INTERIOR_ROOMS_MAX := 4
+
 # --- Industrial Corridor (G8 M2) authoritative numerics ---
 const BIOME_VOCAB: Array[StringName] = [&"urban_basin", &"river_floodplain", &"wet_meadow", &"arable_field", &"pasture_orchard", &"pasture", &"orchard", &"deciduous_forest", &"mixed_upland_forest", &"rocky_quarry", &"industrial_corridor"]
 const INDUSTRIAL_CORRIDOR_VOCAB: Array[StringName] = [&"industrial_corridor"]

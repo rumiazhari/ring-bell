@@ -92,6 +92,9 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	# sufficient: otherwise rural chunks would still receive CityPlan doors.
 	var doors := 0
 	var buildings := 0
+	var city_interior_doors := 0
+	var city_interior_stations := 0
+	var city_interior_rooms := 0
 	if materialize_city:
 		var rect := WorldSeed.chunk_rect(coord)
 		for spec in _owned_buildings(plan, rect, coord):
@@ -107,8 +110,23 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 			var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
 			var InteriorStationScript = load("res://world/buildings/interior_station.gd")
 			var imanifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+			# G9 M1 bounded slice: only residential ground floor interiors
+			var use_val: String = str(spec.get("use", spec.get("style", {}).get("room_type", "residential")))
+			if use_val != "residential":
+				continue
+			var bcenter: Vector2 = (spec["rect"] as Rect2).get_center()
+			if bcenter.length() >= WorldConstants.URBAN_INNER_M:
+				continue
+			if int(spec.get("floors", 1)) < 1:
+				continue
 			for fl in imanifest.get("floors", []):
+				var fi: int = int(fl.get("floor_i", -1))
+				if fi != 0:
+					continue
+				city_interior_rooms += int((fl.get("rooms", []) as Array).size())
 				for dm2 in fl.get("doors", []):
+					if city_interior_doors >= WorldConstants.MAX_CITY_INTERIOR_DOORS_PER_CHUNK:
+						break
 					if dead_doors.has(String(dm2["id"])):
 						continue
 					var door2 := Door.new()
@@ -116,14 +134,23 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 					door2.setup(dm2)
 					chunk.add_child(door2)
 					doors += 1
+					city_interior_doors += 1
 				for sm in fl.get("stations", []):
+					if city_interior_stations >= WorldConstants.MAX_CITY_INTERIOR_STATIONS_PER_CHUNK:
+						break
 					var st = InteriorStationScript.new()
 					st.name = String(sm["id"])
 					st.setup(sm)
+					# Tag as city interior for ACTIVE-only handling
+					st.set_meta("city_interior", true)
 					chunk.add_child(st)
+					city_interior_stations += 1
 
 	stats["doors"] = doors
 	stats["buildings"] = buildings
+	stats["city_interior_doors"] = city_interior_doors
+	stats["city_interior_stations"] = city_interior_stations
+	stats["city_interior_rooms"] = city_interior_rooms
 
 	# Dynamic destructible props from the deterministic manifests.
 	var props := 0

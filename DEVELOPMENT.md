@@ -284,3 +284,6 @@ Do not compensate with teleport or disabled collision. A screenshot built with `
 
 
 
+## G9 M1 City Interior Program — residential ground floor 3-room semantics (bounded)
+
+City interior program G9 M1 residential ground floor 3-4 rooms 0.18 wall 0.95 opening furniture bed/shelf/table stations ACTIVE-only 1500/2480 capped. See WORLD-CONTRACT 25 and ARCHITECTURE G9 M1 for full contract. Tests: --citytest 400 extended proves interior determinism shuffled incl negative different seed budgets 1500/2480 1 collider 9 resident city chunks with interiors unified 54 peak. Streaming pacing 1-per-frame + freed-Zombie guard. Run suite timeouts 400/300/550 etc. Windowed proof SPEC-CITY-INTERIOR-windowed PNG+log.

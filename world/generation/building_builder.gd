@@ -3166,12 +3166,28 @@ static func _rp_satellite_dish(b: MeshBatcher, off: Vector3, r: Rect2,
 
 
 static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d: float, fh: float, n: int, tag: String, spec: Dictionary, zone: Rect2, has_stairs: bool) -> void:
+	# G9 M1 bounded slice: only residential ground floor interiors are materialized as city interior program.
+	# Other archetypes and upper floors remain shell-only for this milestone. Keeps budgets 320/240 within 1500/2480.
+	var use_val: String = str(spec.get("use", ""))
+	if use_val != "residential":
+		return
+	# Only ground floor
 	var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
 	var manifest: Dictionary = InteriorPlanScript.build_for_building(spec)
 	for fl in manifest.get("floors", []):
 		var fi: int = int(fl.get("floor_i", 0))
+		if fi != 0:
+			continue
 		if fi >= n:
 			continue
+		# Center gate: building must be inside URBAN_INNER to be city interior (task siting gate)
+		var center: Vector2 = (spec["rect"] as Rect2).get_center()
+		if center.length() >= WorldConstants.URBAN_INNER_M:
+			continue
+		# Caps per building: at most 2 partitions for this slice (task CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING)
+		var parts: Array = fl.get("partitions", [])
+		if parts.size() > WorldConstants.CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING:
+			parts = parts.slice(0, WorldConstants.CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING)
 		b.push_layer(tag + ":f%d" % fi)
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
 		var corridor := Rect2()
@@ -3189,7 +3205,7 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				1: corridor = Rect2(mid.x - 3.0, mid.y - 1.1, 3.0, 2.2)
 				2: corridor = Rect2(mid.x - 1.1, mid.y - 3.0, 2.2, 3.0)
 				_: corridor = Rect2(mid.x, mid.y - 1.1, 3.0, 2.2)
-		for p in fl.get("partitions", []):
+		for p in parts:
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
 			# Skip any partition that would intersect stair zone (keep stair route clear)
@@ -3197,14 +3213,20 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				continue
 			if fi == 0 and corridor.size != Vector2.ZERO and pr.intersects(corridor):
 				continue
-			# Partitions are along shared room edges: pr is 0.18 thick wall, op is 1x1 doorway hole.
-			# Emit as two wall segments split by opening.
+			# Partitions are along shared room edges: pr is 0.18 thick wall (WorldConstants.CITY_INTERIOR_WALL_T), op is 0.95 opening.
 			var y0 := float(fi) * fh
 			var wall_h := fh
-			# Determine orientation: if pr width is thin (0.18) it's vertical wall
+			if wall_h > WorldConstants.CITY_INTERIOR_OPEN_H:
+				wall_h = WorldConstants.CITY_INTERIOR_OPEN_H
+			# Keep full floor height for structural wall but lintel above opening uses OPEN_H
+			wall_h = fh
+			var wall_col: Color = WorldConstants.COL_CITY_INTERIOR_WALL
 			var is_vertical := pr.size.x < pr.size.y + 0.01
 			if is_vertical:
 				var pw := pr.size.x
+				# enforce authoritative thickness if drift
+				if absf(pw - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
+					pw = WorldConstants.CITY_INTERIOR_WALL_T
 				var ph := pr.size.y
 				var px := pr.position.x
 				var py0 := pr.position.y
@@ -3215,15 +3237,16 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var bot_h := maxf(0.0, py1 - ox1)
 				var cx := px + pw * 0.5
 				if top_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + wall_h*0.5, py0 + top_h*0.5), Vector3(pw, wall_h, top_h), Color("b5aca0"))
+					b.add_structural_box(off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col)
 				if bot_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + wall_h*0.5, ox1 + bot_h*0.5), Vector3(pw, wall_h, bot_h), Color("b5aca0"))
-				# lintel above opening
-				var lintel_h := wall_h - 2.05
+					b.add_structural_box(off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col)
+				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + 2.05 + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), Color("b5aca0"))
+					b.add_structural_box(off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
 			else:
 				var ph2 := pr.size.y
+				if absf(ph2 - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
+					ph2 = WorldConstants.CITY_INTERIOR_WALL_T
 				var pw2 := pr.size.x
 				var py := pr.position.y
 				var px0 := pr.position.x
@@ -3234,12 +3257,52 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var right_w := maxf(0.0, px1 - ox1b)
 				var cy := py + ph2 * 0.5
 				if left_w > 0.05:
-					b.add_structural_box(off + Vector3(px0 + left_w*0.5, y0 + wall_h*0.5, cy), Vector3(left_w, wall_h, ph2), Color("b5aca0"))
+					b.add_structural_box(off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col)
 				if right_w > 0.05:
-					b.add_structural_box(off + Vector3(ox1b + right_w*0.5, y0 + wall_h*0.5, cy), Vector3(right_w, wall_h, ph2), Color("b5aca0"))
-				var lintel_h2 := wall_h - 2.05
+					b.add_structural_box(off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col)
+				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h2 > 0.05:
-					b.add_structural_box(off + Vector3(op.get_center().x, y0 + 2.05 + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), Color("b5aca0"))
+					b.add_structural_box(off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
+		# Furniture proxies for city interior: 1-2 per residential ground floor against walls (visual only)
+		# Deterministic via InteriorPlan stations + WorldSeed; we emit 1-2 boxes (bed/shelf/table) as visual.
+		var rng := WorldSeed.rng_for("interior", [WorldSeed.str_hash(tag), 0])
+		var furniture_kinds: Array[StringName] = WorldConstants.CITY_INTERIOR_FURNITURE_VOCAB
+		var fcount: int = 1 + (rng.randi() % 2) # 1-2
+		# Place against room walls using InteriorPlan rooms
+		var rooms: Array = fl.get("rooms", [])
+		for f_idx in fcount:
+			if f_idx >= rooms.size():
+				break
+			var room: Dictionary = rooms[f_idx % rooms.size()] as Dictionary
+			var rrect: Rect2 = room.get("rect", Rect2()) as Rect2
+			if rrect.size == Vector2.ZERO:
+				continue
+			var kind: StringName = furniture_kinds[int(rng.randi() % furniture_kinds.size())]
+			var fsize: Vector3 = Vector3.ONE
+			var fcol: Color = Color.WHITE
+			match kind:
+				&"bed":
+					fsize = WorldConstants.CITY_FURNITURE_SIZE_BED
+					fcol = WorldConstants.COL_CITY_BED
+				&"table":
+					fsize = WorldConstants.CITY_FURNITURE_SIZE_TABLE
+					fcol = WorldConstants.COL_CITY_TABLE
+				&"shelf":
+					fsize = WorldConstants.CITY_FURNITURE_SIZE_SHELF
+					fcol = WorldConstants.COL_CITY_SHELF
+				_:
+					fsize = WorldConstants.CITY_FURNITURE_SIZE_TABLE
+					fcol = WorldConstants.COL_CITY_TABLE
+			# Position: near room wall inset 0.35+0.15, deterministic offset 0.4
+			var fx: float = rrect.position.x + 0.9 + float(f_idx) * 0.4
+			var fz: float = rrect.position.y + 0.9
+			if fx + fsize.x*0.5 > rrect.end.x - 0.4:
+				fx = rrect.get_center().x
+			if fz + fsize.z*0.5 > rrect.end.y - 0.4:
+				fz = rrect.get_center().y
+			var fy: float = float(fi) * fh + fsize.y*0.5 + WorldConstants.CITY_INTERIOR_LIFT_M
+			# Visual only (no collider) to keep 1 collider per chunk — use add_visual_box
+			b.add_visual_box(off + Vector3(fx, fy, fz), fsize, fcol)
 		b.pop_layer()
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,

@@ -71,6 +71,18 @@ func _update_prompt() -> void:
 			interactable.prompt = "Search"
 		interactable.enabled = true
 
+func set_active_enabled(enabled: bool) -> void:
+	if interactable != null and is_instance_valid(interactable):
+		interactable.enabled = enabled and not consumed
+		# InteractableComponent may expose monitorable directly
+		if "monitorable" in interactable:
+			interactable.monitorable = enabled and not consumed
+		# Also toggle Area3D monitorable if present
+		if interactable.has_method("set_monitorable"):
+			interactable.call("set_monitorable", enabled and not consumed)
+	# Ensure visibility matches consumption
+	visible = true # keep visual, but disable interaction when warm
+
 func interact(player: Node3D) -> void:
 	_on_interacted(player)
 

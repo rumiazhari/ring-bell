@@ -105,6 +105,8 @@ const RURAL_GRANARY_DOMAINS: Array[StringName] = [&"rural_granary",&"rural_grana
 const CAVE_ENTRANCE_DOMAINS: Array[StringName] = [&"cave_entrance",&"cave_entrance_yaw"]
 const INDUSTRIAL_CORRIDOR_DOMAINS: Array[StringName] = [&"industrial_corridor", &"industrial_corridor_density"]
 const VERTICAL_BRIDGE_DOMAINS: Array[StringName] = [&"vertical_bridge", &"vertical_bridge_yaw"]
+# City interior reuses existing "interior" domain via WorldSeed.rng_for("interior", [hash(bid), fi])
+# No new CITY_INTERIOR_DOMAINS needed for G9 M1 slice — additive reuse keeps GENERATOR_VERSION 2.
 
 ## Stateless coherent noise in [0,1] for world position p.
 ## Uses floor-based lattice indexing + smoothstep (3t^2-2t^3) bilinear interpolation

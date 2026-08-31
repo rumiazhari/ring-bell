@@ -1,10 +1,12 @@
 class_name InteriorPlan
 extends RefCounted
 
-const WALL_T := 0.35
+const WALL_T := 0.35 # outer wall legacy (CityPlan lot inset)
 const DOOR_W := 1.5
-const OPEN_W := 1.0
-const OPEN_H := 2.05
+# City interior partition thickness and opening authoritative via WorldConstants (G9 M1)
+const WALL_T_INTERIOR: float = 0.18 # == WorldConstants.CITY_INTERIOR_WALL_T
+const OPEN_W: float = 0.95 # == WorldConstants.CITY_INTERIOR_OPEN_W
+const OPEN_H: float = 2.05 # == WorldConstants.CITY_INTERIOR_OPEN_H
 
 static func build_for_building(spec: Dictionary) -> Dictionary:
 	var bid: String = str(spec.get("id", "b"))

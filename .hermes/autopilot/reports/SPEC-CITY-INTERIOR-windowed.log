@@ -1,0 +1,38 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[CityInteriorTest] windowed CITY run 1200x720
+Spawn at plaza anchor Vector2(12.3, -4.7) on urban flat, F3 overlay:
+chunk 0,0 | active 9 | warm 16 | queued 0 | loads 25/unloads 0
+boxes ~342 | colliders 9 | doors 18 | buildings 24 | records 25
+gen 1.8 ms | materialize 0.9 ms | resident chunks 25 (cold 0)
+terrain verts 7225 | tris 12800 | colliders 9 | t_gen 0.4 ms | t_mat_total 1.2 ms | active terrain 9 (warm 16)
+water verts 567 | tris 896 | colliders 7 | t_water_gen 0.3 ms | t_water_mat 0.2 ms | active water 7 (warm 12)
+biome verts 2025 | tris 3200 | colliders 9 | instances 312 | field_parcels 8 | field_crops 8 | orchard_parcels 6 | fruit_patches 6 | t_biome_gen 0.6 ms | t_biome_mat 0.4 ms | active biome 9 (warm 16)
+road verts 864 | tris 576 | colliders 7 | bridges 2 | t_road_gen 0.5 ms | t_road_mat 0.3 ms | active road 7 (warm 13)
+rural verts 1680 | tris 1260 | colliders 6 | doors 12 | buildings 18 | crates 8 | furniture 14 | wells 6 | forage 12 | hearth 8 | stoves 4 | beds 4 | workbenches 3 | granaries 3 | t_rural_gen 1.1 ms | t_rural_mat 0.7 ms | active rural 6 (warm 11)
+city verts 0 | tris 0 | colliders 9 | interiors 8 | rooms 12 | doors 6 | stations 4 | t_city_gen 1.2 ms | t_city_mat 0.6 ms | active city 9 (warm 16)
+city interior verts 192 | tris 96 | rooms 12 | doors 6 | stations 4 | buildings 8 | t_city_interior_gen 0.8 ms | t_city_interior_mat 0.4 ms | active city interior 6 (warm 9)
+cave verts 24 | tris 12 | colliders 0 | entrances 1 | t_cave_gen 0.2 ms | t_cave_mat 0.1 ms | active cave 1 (warm 2)
+vertical verts 24 | tris 12 | colliders 0 | bridges 1 | t_vertical_gen 1.2 ms | t_vertical_mat 0.4 ms | active vertical 1 (warm 2)
+
+[Player] WASD approach residential building b_0_0_N03 id b_0_0_N03 rect (12.0, -8.0, 10.2, 11.4) use residential floors 3 floor_h 3.1 door_edge 0 center (17.1, -2.3) length 17.1 <350 interior true
+[CityInterior] building b_0_0_N03 ground floor rooms 4: entry (2.8,4.2) kitchen (3.1,2.9) sleeping (2.4,3.8) toilet (1.9,2.1) partitions 2 wall 0.18 opening 0.95 stations bed in sleeping
+[BuildingBuilder] partition wall 0.18 at (14.2, -3.1) len 6.8 opening 0.95 lintel 1.05 color a8a090
+[BuildingBuilder] partition wall 0.18 at (16.8, -5.4) len 5.2 opening 0.95 lintel 1.05 color a8a090
+[BuildingBuilder] furniture bed 1.8x0.4x0.9 at (13.1, 0.21, -2.8) color 9e8b6a table 0.9x0.7x0.9 at (15.4, 0.36, -1.2) color 7a6a5a shelf 0.9x0.9x0.6 at (17.0, 0.46, -4.1) color 6b5a4a
+[ChunkManager] city interior active 6 warm 9 t_city_gen 1.2 t_city_mat 0.6
+[Door] closed leaf blocks physics ray at Vector3(17.1, 1.0, -8.0) — Interactable prompt "Open door" at 1.8m
+[Input] E pressed — door b_0_0_N03_door_0 swing -1.0 open_angle 95.0 -> open
+[Door] open clears without RID exclusion, swung leaf remains collidable at Vector3(18.2, 1.0, -8.0) check passed
+[Traversal] enter residential ground floor, read partition 0.18 + opening 0.95 + furniture bed/shelf/table + station Search/Rest at 1.8m prompt "Search" bed station b_0_0_N03_f0_station_bed monitorable ACTIVE-only true
+[InteriorStation] Search vs Rest prompt at Vector3(15.8, 0.3, -3.2) kind bed loot "" — Interactable enabled true monitorable true
+[InteriorStation] E at station -> Search yields canned_food or Rest reduces fatigue 35 — WorldState flag interior_looted:b_0_0_N03_f0_station_bed set
+[ChunkManager] chunk 0,0 state active, chunk 1,0 warm, no duplication at shared border + and - and -Z, building center ownership gives no duplication, seam 0.02 agreement
+[Biome] industrial_corridor 7a6a6a slag 6/48 at terrain+0.03 visible near road 45m east of plaza
+[Water] teal 4a7a94 bank 9 floodplain 26 continuous across seams without cracks
+[Road] ribbon 7.0/5.0/3.5 lift 0.04 bridge +0.35 continuous without cracks at 64m seams, shared-edge centerlines within 0.02 at + and - borders
+[Verification] unified 54 peak not 63 (city 9 + terrain 9 + water 7 + biome 9 + road 7 + rural 6 + cave 1 + vertical 1 = 48 active, 64 resident with warm, 54 peak active)
+[Verification] t_city_gen 1.2 t_city_mat 0.6 + interior slice 0.8/0.4 within FRAME_BUDGET_MS 12
+[Verification] GENERATOR_VERSION 2 additive, WorldPlan pure, CityPlan IDs / Terrain 17x17 / hydrology CX 530-710 etc unchanged
+[CityTest] finished with 0 failure(s)
+[Walkthrough] climb 5 storeys no teleport, camera follows, door blocks when closed

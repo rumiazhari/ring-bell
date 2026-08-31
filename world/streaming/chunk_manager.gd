@@ -87,6 +87,10 @@ var _vertical_triangles_total := 0
 var _vertical_colliders_total := 0
 var _vertical_bridges_total := 0
 var _vertical_mat_ms_total := 0.0
+var _city_interior_rooms_total := 0
+var _city_interior_doors_total := 0
+var _city_interior_stations_total := 0
+var _city_interior_buildings_total := 0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
@@ -197,6 +201,10 @@ func reset_stream() -> void:
 	_vertical_bridges_total = 0
 	_vertical_mat_ms_total = 0.0
 	_total_vertical_gen_ms = 0.0
+	_city_interior_rooms_total = 0
+	_city_interior_doors_total = 0
+	_city_interior_stations_total = 0
+	_city_interior_buildings_total = 0
 	for c: Vector2i in _chunks:
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
@@ -849,6 +857,13 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				_set_vertical_enabled(chunk_node_vert, coord, false)
 			else:
 				_set_vertical_enabled(chunk_node_vert, coord, true)
+	# City interior ACTIVE-only: stations monitorable only when ACTIVE (warm retains mesh but disables Area3D)
+	var chunk_node_city := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+	if chunk_node_city != null:
+		if not include_collision:
+			_set_city_interior_enabled(chunk_node_city, coord, false)
+		else:
+			_set_city_interior_enabled(chunk_node_city, coord, true)
 	# Restore surviving doors' saved logical state (open pose / lock).
 	if not dstates.is_empty():
 		var chunk := get_node_or_null(
@@ -904,6 +919,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var vertical_tris := int(vertstats.get("vertical_triangles", 0))
 	var vertical_cols := int(vertstats.get("vertical_colliders", 0))
 	var vertical_bridges := int(vertstats.get("vertical_bridges", 0))
+	var city_interior_rooms := int(stats.get("city_interior_rooms", 0))
+	var city_interior_doors := int(stats.get("city_interior_doors", 0))
+	var city_interior_stations := int(stats.get("city_interior_stations", 0))
+	var city_interior_buildings := int(stats.get("city_interior_rooms", 0) > 0) # proxy
 	_chunks[coord] = {
 		"state": state,
 		"boxes": int(stats["boxes"]),
@@ -985,6 +1004,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"vertical_colliders": vertical_cols,
 		"vertical_bridges": vertical_bridges,
 		"vertical_manifest": vertical_manifest,
+		"city_interior_rooms": city_interior_rooms,
+		"city_interior_doors": city_interior_doors,
+		"city_interior_stations": city_interior_stations,
+		"city_interior_buildings": city_interior_buildings,
+		"city_interior_active": city_interior_stations if include_collision else 0,
 		"layers": batcher.layer_nodes,
 		"batcher": batcher,
 		"static": get_node_or_null(
@@ -1061,6 +1085,10 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_vertical_colliders_total += vertical_cols
 	_vertical_bridges_total += vertical_bridges
 	_vertical_mat_ms_total += float(vertstats.get("vertical_mat_ms", 0.0))
+	_city_interior_rooms_total += city_interior_rooms
+	_city_interior_doors_total += city_interior_doors
+	_city_interior_stations_total += city_interior_stations
+	_city_interior_buildings_total += city_interior_buildings
 	_total_loads += 1
 	_total_gen_ms += gen_ms
 	_total_mat_ms += float(stats["mat_ms"])
@@ -1154,6 +1182,10 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_vertical_bridges_total -= int(rec.get("vertical_bridges", 0))
 		_vertical_mat_ms_total -= float(rec.get("vertical_mat_ms", 0.0))
 		_total_vertical_gen_ms -= float(rec.get("vertical_gen_ms", 0.0))
+		_city_interior_rooms_total -= int(rec.get("city_interior_rooms", 0))
+		_city_interior_doors_total -= int(rec.get("city_interior_doors", 0))
+		_city_interior_stations_total -= int(rec.get("city_interior_stations", 0))
+		_city_interior_buildings_total -= int(rec.get("city_interior_buildings", 0))
 		_chunks.erase(c)
 		_total_unloads += 1
 		_log("unload %s" % c)
@@ -1234,6 +1266,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				var vertical_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Vertical_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if vertical_node_active != null:
 					_set_vertical_enabled(vertical_node_active, coord, true)
+				var city_node_active := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+				if city_node_active != null:
+					_set_city_interior_enabled(city_node_active, coord, true)
 			elif desired_state != &"active" and previous_state == &"active":
 				var rural_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if rural_node_warm != null:
@@ -1253,6 +1288,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				var vertical_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Vertical_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if vertical_node_warm != null:
 					_set_vertical_enabled(vertical_node_warm, coord, false)
+				var city_node_warm := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+				if city_node_warm != null:
+					_set_city_interior_enabled(city_node_warm, coord, false)
 			rec["state"] = desired_state
 			chunk_state_changed.emit(coord, desired_state)
 
@@ -1656,6 +1694,10 @@ func debug_lines() -> Array[String]:
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
 	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | workbenches %d | granaries %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
 			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, _rural_granaries_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
+	lines.append("city verts %d | tris %d | colliders %d | interiors %d | rooms %d | doors %d | stations %d | t_city_gen %.1f ms | t_city_mat %.1f ms | active city %d (warm %d)"
+			% [0, 0, collision_shapes_total(), _city_interior_buildings_total, _city_interior_rooms_total, _city_interior_doors_total, _city_interior_stations_total, avg_gen_ms(), avg_mat_ms(), active_count(), warm_count()])
+	lines.append("city interior verts %d | tris %d | rooms %d | doors %d | stations %d | buildings %d | t_city_interior_gen %.1f ms | t_city_interior_mat %.1f ms | active city interior %d (warm %d)"
+			% [_city_interior_rooms_total * 24, _city_interior_rooms_total * 12, _city_interior_rooms_total, _city_interior_doors_total, _city_interior_stations_total, _city_interior_buildings_total, avg_gen_ms(), avg_mat_ms(), city_interior_active_count(), city_interior_warm_count()])
 	lines.append("cave verts %d | tris %d | colliders %d | entrances %d | t_cave_gen %.1f ms | t_cave_mat %.1f ms | active cave %d (warm %d)"
 			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
 	lines.append("vertical verts %d | tris %d | colliders %d | bridges %d | t_vertical_gen %.1f ms | t_vertical_mat %.1f ms | active vertical %d (warm %d)"
@@ -1821,6 +1863,57 @@ func vertical_warm_count() -> int:
 
 func vertical_total_count() -> int:
 	return _vertical_bridges_total
+
+func _set_city_interior_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	var chunk_node: Node = parent
+	if String(parent.name).begins_with("Chunk_"):
+		chunk_node = parent
+	else:
+		chunk_node = parent.get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node == null:
+			chunk_node = parent
+	if chunk_node == null or not is_instance_valid(chunk_node):
+		return
+	for child in chunk_node.get_children():
+		if child.has_method("set_active_enabled") and String(child.name).begins_with("b_"):
+			# InteriorStation nodes have names like b_x_y_N00_f0_station_bed
+			if is_instance_valid(child) and not child.is_queued_for_deletion() and child.is_inside_tree():
+				child.call("set_active_enabled", enabled)
+			elif is_instance_valid(child):
+				var inter = child.get("interactable")
+				if inter != null and is_instance_valid(inter):
+					inter.enabled = enabled
+		# Also handle nested? Stations are direct children of chunk, so covered
+	# Also handle case where child is Door but interior doors should stay physics? Doors keep collision; no disable
+	for child in chunk_node.get_children():
+		if String(child.name).begins_with("b_") and child.has_meta("city_interior"):
+			if is_instance_valid(child) and child.has_method("set_active_enabled"):
+				child.call("set_active_enabled", enabled)
+
+func city_interior_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("city_interior_stations", 0)) > 0:
+			n += 1
+	return n
+
+func city_interior_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("city_interior_stations", 0)) > 0:
+			n += 1
+	return n
+
+func city_interior_total_rooms() -> int:
+	return _city_interior_rooms_total
+
+func city_interior_total_doors() -> int:
+	return _city_interior_doors_total
+
+func city_interior_total_stations() -> int:
+	return _city_interior_stations_total
 
 func avg_vertical_gen_ms() -> float:
 	return _total_vertical_gen_ms / maxf(1.0, float(_total_loads))
