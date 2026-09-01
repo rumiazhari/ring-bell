@@ -234,6 +234,12 @@ static func append_building(verts: PackedVector3Array, normals: PackedVector3Arr
 			_append_wall_quad(verts, normals, colors, indices, center, yaw, plinth_side, door_along + door_width * 0.5, plinth_half, ground, ground + plinth_h, hx, hz, plinth_col)
 		else:
 			_append_wall_quad(verts, normals, colors, indices, center, yaw, plinth_side, -plinth_half, plinth_half, ground, ground + plinth_h, hx, hz, plinth_col)
+	# Two-storey village houses get a proper floor slab at 4.2 m (city grammar: SLAB_T 0.22) — structural floor, not just taller walls.
+	var is_two_storey: bool = height > 6.0
+	if is_two_storey:
+		var floor_y: float = ground + 4.2
+		_append_oriented_box(verts, normals, colors, indices, Vector3(center.x, floor_y - 0.11, center.y), Vector3(footprint.x - 0.70, 0.22, footprint.y - 0.70), yaw, Color("6b5843"))
+		_append_oriented_box(verts, normals, colors, indices, Vector3(center.x, floor_y + 0.01, center.y), Vector3(footprint.x - 0.74, 0.02, footprint.y - 0.74), yaw, Color("6b5843").lightened(0.08))
 	_append_door_trim(verts, normals, colors, indices, center, yaw, door_side, door_along, door_width, door_height, ground, hx, hz, timber_col)
 	var eave_y: float = ground + height
 	# Gabled roof: a real ridge rather than a flat box top.
@@ -305,6 +311,19 @@ static func append_building(verts: PackedVector3Array, normals: PackedVector3Arr
 		if right_window + 0.36 < front_half - 0.28:
 			_append_window(verts, normals, colors, indices, center, yaw, door_side, right_window, wy, 0.72, 0.72, hx, hz, window_col.darkened(0.12))
 			_append_window_trim(verts, normals, colors, indices, center, yaw, door_side, right_window, wy, 0.72, 0.72, hx, hz, timber_col)
+		# Second floor windows for two-storey houses — same grammar as ground floor but at floor_y+2.5, no door-side windows upstairs.
+		if is_two_storey:
+			var wy2: float = ground + 4.2 + minf(2.5, (height - 4.2) * 0.58)
+			_append_window(verts, normals, colors, indices, center, yaw, window_side, window_along, wy2, 1.05, 0.82, hx, hz, window_col)
+			_append_window_trim(verts, normals, colors, indices, center, yaw, window_side, window_along, wy2, 1.05, 0.82, hx, hz, timber_col)
+			_append_window(verts, normals, colors, indices, center, yaw, other_side, 0.0, wy2, 1.05, 0.82, hx, hz, window_col)
+			_append_window_trim(verts, normals, colors, indices, center, yaw, other_side, 0.0, wy2, 1.05, 0.82, hx, hz, timber_col)
+			for extra_side2 in 4:
+				if extra_side2 == door_side or extra_side2 == window_side or extra_side2 == other_side:
+					continue
+				_append_window(verts, normals, colors, indices, center, yaw, extra_side2, 0.0, wy2, 0.86, 0.76, hx, hz, window_col.darkened(0.08))
+				_append_window_trim(verts, normals, colors, indices, center, yaw, extra_side2, 0.0, wy2, 0.86, 0.76, hx, hz, timber_col)
+				break
 		if facade_detail:
 			var gable_side_a: int = 0 if footprint.x >= footprint.y else 2
 			var gable_side_b: int = 1 if footprint.x >= footprint.y else 3
@@ -378,6 +397,10 @@ static func _append_collision_wall_segment(verts: PackedVector3Array, indices: P
 static func append_building_collision(verts: PackedVector3Array, indices: PackedInt32Array, center: Vector2, footprint: Vector2, yaw: float, ground: float, height: float, door_pos: Vector2, door_width: float, door_height: float) -> void:
 	var hx: float = footprint.x * 0.5
 	var hz: float = footprint.y * 0.5
+	var is_two_storey: bool = height > 6.0
+	if is_two_storey:
+		var floor_y: float = ground + 4.2
+		_append_collision_box(verts, indices, Vector3(center.x, floor_y - 0.11, center.y), Vector3(footprint.x - 0.70, 0.22, footprint.y - 0.70), yaw)
 	var door_local: Vector2 = _world_to_local(center, yaw, door_pos)
 	var door_side: int = 0
 	var door_along: float = door_local.y
