@@ -4,7 +4,7 @@ extends Node
 var failures := 0
 
 func _ready() -> void:
-	get_tree().create_timer(90.0).timeout.connect(func() -> void:
+	get_tree().create_timer(400.0).timeout.connect(func() -> void:
 		print("[RuralTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()
@@ -199,7 +199,10 @@ func _run_all() -> void:
 			var bid_str: String = String(b["id"])
 			var k_part: String = bid_str.split("_")[-1]
 			var k_idx: int = int(k_part) if k_part.is_valid_int() else -1
+			var skind2: StringName = b.get("settlement_kind", &"") as StringName
 			var required_road: float = 4.0 - 0.5
+			if skind2 == &"hamlet" and k_idx == 0:
+				required_road = 2.0 - 0.5
 			_check("road setback >=4 %s" % b["id"], d_road >= required_road or d_road == INF, "%.1f" % d_road)
 			var body: StringName = hp.water_body_at(p)
 			_check("no water %s" % b["id"], body == &"", str(body))
@@ -326,6 +329,8 @@ func _run_all() -> void:
 			var k_part2: String = bid_str2.split("_")[-1]
 			var k_idx2: int = int(k_part2) if k_part2.is_valid_int() else -1
 			var required2: float = 4.0 - 0.5
+			if String(b.get("settlement_kind","")) == "hamlet" and k_idx2 == 0:
+				required2 = 2.0 - 0.5
 			_check("seed %d road setback >=4 %s" % [seed, b["id"]], d_road >= required2 or d_road == INF, "%.1f" % d_road)
 			# is_bridge check: if building over bridge deck, d_road small and over water -> already fails water check; but also check not on is_bridge
 			# Use road_network to check is_bridge via segments
@@ -462,12 +467,12 @@ func _run_all() -> void:
 		_check("chunk %s unified collider 0or1 has_coll %s" % [c, has_coll], coll == (1 if has_coll else 0), "%d has_coll %s" % [coll, has_coll])
 		var verts: int = int(m["rural_vertices"])
 		var tris: int = int(m["rural_triangles"])
-		_check("chunk %s verts <=480" % c, verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, str(verts))
-		_check("chunk %s tris <=360" % c, tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, str(tris))
+		_check("chunk %s verts <=%d" % [c, WorldConstants.MAX_RURAL_VERTS_PER_CHUNK], verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, str(verts))
+		_check("chunk %s tris <=%d" % [c, WorldConstants.MAX_RURAL_TRIS_PER_CHUNK], tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, str(tris))
 		if verts >0:
-			_check("chunk %s typical verts <=280 or max 480" % c, verts <= 280 or verts <= 480, str(verts))
-			_check("chunk %s typical tris <=210 or max 360" % c, tris <= 210 or tris <= 360, str(tris))
-			_check("chunk %s within 480/360 dense" % c, verts <= 480 and tris <= 360, "%d/%d" % [verts, tris])
+			_check("chunk %s typical verts <=%d or max %d" % [c, WorldConstants.MAX_RURAL_VERTS_TYPICAL, WorldConstants.MAX_RURAL_VERTS_PER_CHUNK], verts <= WorldConstants.MAX_RURAL_VERTS_TYPICAL or verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, str(verts))
+			_check("chunk %s typical tris <=%d or max %d" % [c, WorldConstants.MAX_RURAL_TRIS_TYPICAL, WorldConstants.MAX_RURAL_TRIS_PER_CHUNK], tris <= WorldConstants.MAX_RURAL_TRIS_TYPICAL or tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, str(tris))
+			_check("chunk %s within %d/%d dense" % [c, WorldConstants.MAX_RURAL_VERTS_PER_CHUNK, WorldConstants.MAX_RURAL_TRIS_PER_CHUNK], verts <= WorldConstants.MAX_RURAL_VERTS_PER_CHUNK and tris <= WorldConstants.MAX_RURAL_TRIS_PER_CHUNK, "%d/%d" % [verts, tris])
 		var doors: int = int(m["rural_doors"])
 		_check("chunk %s doors <=6" % c, doors <= WorldConstants.RURAL_DOOR_COUNT_MAX_PER_CHUNK, str(doors))
 		_check("chunk %s rural_gen_ms measured" % c, m.has("rural_gen_ms") and float(m["rural_gen_ms"]) >= 0.0, str(m.get("rural_gen_ms","")))

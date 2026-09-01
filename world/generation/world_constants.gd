@@ -175,10 +175,10 @@ const RURAL_BUILDING_COUNT_FARMSTEAD_MIN := 1
 const RURAL_BUILDING_COUNT_FARMSTEAD_MAX := 2
 const RURAL_BUILDING_COUNTS: Dictionary = {"village": Vector2i(4,6), "hamlet": Vector2i(2,3), "farmstead": Vector2i(1,2), "isolated_farm": Vector2i(1,1)}
 const MAX_RURAL_BUILDINGS_PER_CHUNK := 6
-const MAX_RURAL_VERTS_PER_CHUNK := 480
-const MAX_RURAL_VERTS_TYPICAL := 280
-const MAX_RURAL_TRIS_PER_CHUNK := 360
-const MAX_RURAL_TRIS_TYPICAL := 210
+const MAX_RURAL_VERTS_PER_CHUNK := 720
+const MAX_RURAL_VERTS_TYPICAL := 360
+const MAX_RURAL_TRIS_PER_CHUNK := 420
+const MAX_RURAL_TRIS_TYPICAL := 280
 const MAX_RURAL_COLLIDERS_PER_CHUNK := 1
 const MAX_ACTIVE_RURAL_COLLIDERS := 9
 const RURAL_DOOR_COUNT_MAX_PER_CHUNK := 6
@@ -199,6 +199,40 @@ const RURAL_CRATE_MAX_PER_HAMLET := 1
 const RURAL_CRATE_ITEMS_MIN := 1
 const RURAL_CRATE_ITEMS_MAX_VILLAGE := 4
 const RURAL_CRATE_ITEMS_MAX_HAMLET := 2
+
+# --- Rural settlement front-end realization (existing hamlet/village concepts) ---
+# These are presentation budgets, not new simulation entities. Paths and
+# dressing have no physics body; buildings/doors retain their existing body
+# budget and interactable contracts.
+const RURAL_PATH_MAIN_WIDTH := 2.8
+const RURAL_PATH_HAMLET_WIDTH := 2.4
+const RURAL_PATH_FOOT_WIDTH := 1.55
+const RURAL_PATH_FOOT_HAMLET_WIDTH := 1.35
+const RURAL_PATH_LIFT_M := 0.035
+const RURAL_YARD_RADIUS_HAMLET := 7.0
+const RURAL_YARD_RADIUS_VILLAGE := 10.0
+const RURAL_FENCE_HEIGHT_MIN := 1.05
+const RURAL_FENCE_HEIGHT_MAX := 1.30
+const RURAL_FENCE_MAX_PER_HAMLET := 7
+const RURAL_FENCE_MAX_PER_VILLAGE := 10
+const RURAL_CLUTTER_MAX_PER_HAMLET := 8
+const RURAL_CLUTTER_MAX_PER_VILLAGE := 14
+const RURAL_SETTLEMENT_TREES_HAMLET := 8
+const RURAL_SETTLEMENT_TREES_VILLAGE := 12
+const RURAL_SETTLEMENT_TREE_MIN_SPACING := 4.5
+const RURAL_SETTLEMENT_TREE_ROAD_CLEARANCE := 5.0
+const RURAL_SETTLEMENT_TREE_PATH_CLEARANCE := 3.5
+const RURAL_SETTLEMENT_TREE_BUILDING_CLEARANCE := 5.0
+const RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK := 64
+const COL_RURAL_PATH_CART := Color("8b7656")
+const COL_RURAL_PATH_FOOT := Color("a08a68")
+const COL_RURAL_YARD := Color("71814d")
+const COL_RURAL_FENCE := Color("6b4b32")
+const COL_RURAL_FENCE_CAP := Color("89633f")
+const COL_RURAL_TREE_TRUNK := Color("5a402c")
+const COL_RURAL_TREE_BEECH := Color("486b3c")
+const COL_RURAL_TREE_BIRCH := Color("668653")
+const COL_RURAL_TREE_PINE := Color("31553a")
 
 # --- Rural Homestead Renewables (P4.4) authoritative numerics ---
 const RURAL_FORAGE_VOCAB: Array[StringName] = [&"bush_berry", &"mushroom_cluster", &"herb_patch"]
@@ -232,7 +266,7 @@ const RURAL_FORAGE_WELL_SPACING := 4.0
 # --- Rural Hearth Habitation (P4.5) authoritative numerics — hearth reuses furniture anchors, no new mesh/collider budget ---
 # Unified collider peak is now 54 (9 city+9 terrain+9 water+9 biome+9 road+9 rural where rural is single shell+well Concave) not 63
 # Well is baked into same Concave (no second WellBody); forage/hearth are Area3D monitorable ACTIVE-only, no collider.
-# Hearth shares furniture mesh vertices (24 verts /12 tris already counted), so MAX_RURAL 480/360 280/210 unchanged.
+# Hearth shares furniture mesh vertices (24 verts /12 tris already counted), so MAX_RURAL 720/420 360/280 dense/typical.
 const RURAL_HEARTH_VOCAB: Array[StringName] = [&"stove", &"bed"] # subset of RURAL_FURNITURE_VOCAB, deterministic reuse
 const RURAL_STOVE_MAX_PER_CHUNK := 2
 const RURAL_BED_MAX_PER_CHUNK := 2
@@ -361,9 +395,9 @@ const CAVE_ENTRANCE_SIZE := Vector3(3.6, 2.2, 3.6)
 const COL_CAVE_ENTRANCE := Color("5a4a3a")
 const CAVE_ENTRANCE_MAX_PER_CHUNK := 1
 const CAVE_ENTRANCE_MAX_PER_LANDSCAPE_CELL := 1
-const MAX_CAVE_VERTS_PER_CHUNK := 24
-const MAX_CAVE_TRIS_PER_CHUNK := 12
-const MAX_ACTIVE_CAVE_COLLIDERS := 0 # Area3D only, no collider counted toward 54 peak
+const MAX_CAVE_VERTS_PER_CHUNK := 96
+const MAX_CAVE_TRIS_PER_CHUNK := 48
+const MAX_ACTIVE_CAVE_COLLIDERS := 1 # one aggregated room body per active cave chunk
 const CAVE_ENTRANCE_SPACING_MIN := 32.0
 const CAVE_ENTRANCE_BUILDING_GAP_MIN := 8.0
 const CAVE_ENTRANCE_WELL_GAP_MIN := 8.0
@@ -373,6 +407,20 @@ const CAVE_ENTRANCE_WATER_GAP := 11.0 # BANK_W 9 + 2
 const CAVE_ENTRANCE_LIFT_M := 0.01
 const QUARRY_SUITABILITY_CAVE_THRESHOLD := 0.72
 const CAVE_SLOPE_MIN_DEG := 28.0
+
+# --- Playable cave slice (direct continuation of an existing entrance) ---
+const CAVE_SLICE_SIZE := Vector3(8.0, 3.2, 8.0)
+const CAVE_SLICE_FLOOR_OFFSET_M := -4.0
+const CAVE_SLICE_ENTRY_OFFSET_M := 1.5
+const CAVE_SLICE_WALL_THICKNESS := 0.30
+const CAVE_SLICE_DOOR_WIDTH := 2.2
+const CAVE_SLICE_DOOR_HEIGHT := 2.2
+const CAVE_SLICE_ROCK_COLOR := Color("49392f")
+const CAVE_SLICE_ROCK_DARK := Color("2b2521")
+const CAVE_SLICE_FLOOR_COLOR := Color("5b4938")
+const CAVE_SLICE_EXIT_COLOR := Color("6e5842")
+const CAVE_SLICE_MAX_PER_CHUNK := 1
+const CAVE_SLICE_COLLIDERS_PER_CHUNK := 1
 
 # --- Vertical Survivor Network (G8 M4) authoritative numerics — roof bridge prototype ---
 const VERTICAL_BRIDGE_VOCAB: Array[StringName] = [&"roof_bridge"]
@@ -491,6 +539,12 @@ const BIOME_FOREST_FIELD_THRESHOLD := 0.52
 const BIOME_FERTILITY_ARABLE_MIN := 0.55
 const BIOME_FERTILITY_PASTURE_MIN := 0.42
 const BIOME_DENSITY_FOREST_MIN := 0.48
+const FOREST_ART_CANDIDATE_SPACING := 13.0
+const FOREST_ART_MIN_SPACING := 8.5
+const FOREST_ART_MAX_SLOPE_DEG := 30.0
+const FOREST_CLEARING_CELL_M := 96.0
+const FOREST_CLEARING_MIN := 0.28
+const BIOME_TREE_LIFT_M := 0.04
 const BIOME_ORCHARD_THRESHOLD := 0.55
 const QUARRY_SUITABILITY_THRESHOLD := 0.72
 const QUARRY_SLOPE_MIN_DEG := 28.0
