@@ -345,6 +345,13 @@ func _aabb_gap(a: Rect2, b: Rect2) -> float:
 		return sqrt(dx*dx + dy*dy)
 	return maxf(dx, dy)
 
+func _hamlet_has_house(arr: Array[Dictionary]) -> bool:
+	for b in arr:
+		var k: StringName = b.get("kind", &"") as StringName
+		if k == &"cottage" or k == &"village_house" or k == &"farmhouse":
+			return true
+	return false
+
 func _door_for_building(center: Vector2, footprint: Vector2, yaw: float, settlement_center: Vector2, id_hash: int, k: int) -> Dictionary:
 	var eff := _effective_footprint(footprint, yaw)
 	var hx_local: float = footprint.x * 0.5
@@ -1491,7 +1498,7 @@ func _generate() -> void:
 			var base_angle: float = atan2(slot_center.y - s_center.y, slot_center.x - s_center.x)
 			var success := false
 			var building_dict: Dictionary = {}
-			for attempt in 24:
+			for attempt in 48:
 				var cur_radius: float = radius
 				var cur_angle: float = base_angle
 				if attempt > 0:
@@ -1604,6 +1611,8 @@ func _generate() -> void:
 					if w_road <= 0.0:
 						w_road = WorldConstants.ROAD_WIDTH_TRACK
 					var required: float = WorldConstants.RURAL_BUILDING_ROAD_SETBACK
+					if skind == &"hamlet" and k == 0:
+						required = 2.0
 					if d_road < required - 1e-6:
 						road_ok = false
 					if road_ok and d_road < w_road * 0.5 + 4.0 + 1e-6:
@@ -1701,6 +1710,70 @@ func _generate() -> void:
 				placed.append(building_dict)
 			else:
 				continue
+		# Hamlet house guarantee — if hamlet has no dwelling after main slots, force one (deterministic fallback)
+		var _hamlet_placed_arr_check: Array[Dictionary] = _by_settlement.get(sid, []) as Array[Dictionary]
+		if skind == &"hamlet" and _hamlet_placed_arr_check.size() >= 1 and not _hamlet_has_house(_hamlet_placed_arr_check):
+			var _fb_kind: StringName = &"cottage"
+			var _fb_footprint: Vector2 = _footprint_for_kind(_fb_kind, id_hash, 99)
+			var _fb_yaw: float = _yaw_for(s_center + Vector2(7, -7), id_hash, 99)
+			var _fb_pos: Vector2 = s_center + Vector2(7, -7)
+			var _fb_success := false
+			for _fb_attempt in 8:
+				var _fb_angle: float = TAU * float(_fb_attempt) / 8.0
+				var _fb_test: Vector2 = s_center + Vector2(cos(_fb_angle), sin(_fb_angle)) * 10.0
+				if terrain.terrain_class_at(_fb_test) == &"cliff":
+					continue
+				if hydrology.water_body_at(_fb_test) != &"" or hydrology.is_floodplain(_fb_test):
+					continue
+				if hydrology.distance_to_water(_fb_test) <= WorldConstants.BANK_W + 2.0:
+					continue
+				var _fb_eff: Vector2 = _effective_footprint(_fb_footprint, _fb_yaw)
+				var _fb_aabb: Rect2 = Rect2(_fb_test - _fb_eff * 0.5, _fb_eff)
+				var _fb_ok := true
+				for _pb in _hamlet_placed_arr_check:
+					if _aabb_gap(_fb_aabb, _pb["aabb"] as Rect2) < 6.0:
+						_fb_ok = false
+						break
+				if not _fb_ok:
+					continue
+				_fb_pos = _fb_test
+				_fb_success = true
+				break
+			if _fb_success:
+				var _fb_door: Dictionary = _door_for_building(_fb_pos, _fb_footprint, _fb_yaw, s_center, id_hash, 99)
+				var _fb_id: String = "rural_%s_house_fallback" % sid
+				var _fb_dict: Dictionary = {
+					"id": _fb_id,
+					"kind": _fb_kind,
+					"center": _fb_pos,
+					"footprint": _fb_footprint,
+					"yaw": _fb_yaw,
+					"height": WorldConstants.RURAL_BUILDING_HEIGHT_SINGLE,
+					"floors": 1,
+					"settlement_id": sid,
+					"settlement_kind": skind,
+					"door_pos": _fb_door["pos"] as Vector2,
+					"door_yaw": float(_fb_door["yaw"]),
+					"slope_deg": terrain.slope_at(_fb_pos),
+					"dist_to_water": hydrology.distance_to_water(_fb_pos),
+					"dist_to_road": road_network.distance_to_road(_fb_pos) if road_network != null else INF,
+					"aabb": Rect2(_fb_pos - _effective_footprint(_fb_footprint, _fb_yaw) * 0.5, _effective_footprint(_fb_footprint, _fb_yaw)),
+					"color": _palette_color(_fb_kind, id_hash, 99),
+					"roof_color": _roof_color(_fb_kind, id_hash, 99),
+					"allow_gate_barn": false,
+				}
+				var _fb_hash: int = _hash_id(_fb_id)
+				var _fb_walls: Array[Dictionary] = _generate_partition_wall(_fb_dict, _fb_hash)
+				for w in _fb_walls:
+					w["building_id"] = _fb_dict["id"]
+				var _fb_furn: Array[Dictionary] = _generate_furniture(_fb_dict, _fb_walls, _fb_hash)
+				for f in _fb_furn:
+					f["building_id"] = _fb_dict["id"]
+				var _fb_hearth: Dictionary = _build_hearth(_fb_furn, _fb_dict)
+				_fb_dict["interior"] = {"walls": _fb_walls, "furniture": _fb_furn, "crate": {}, "hearth": _fb_hearth}
+				_buildings.append(_fb_dict)
+				(_by_settlement[sid] as Array[Dictionary]).append(_fb_dict)
+				_by_id[_fb_id] = _fb_dict
 		# Post settlement interior crate assignment and hamlet strict補填
 		var placed_arr: Array[Dictionary] = _by_settlement[sid] as Array[Dictionary]
 		# Ensure hamlet at least 2 buildings if target was 2-3 but dropped to 1 -> try to补 one more with relaxed attempts
