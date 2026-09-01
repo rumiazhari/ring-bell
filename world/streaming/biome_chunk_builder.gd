@@ -88,11 +88,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var c := (j + 1) * RESOLUTION + i
 			var d := (j + 1) * RESOLUTION + i + 1
 			indices[k] = a; k += 1
-			indices[k] = d; k += 1
 			indices[k] = b; k += 1
-			indices[k] = a; k += 1
-			indices[k] = c; k += 1
 			indices[k] = d; k += 1
+			indices[k] = a; k += 1
+			indices[k] = d; k += 1
+			indices[k] = c; k += 1
 	var vertex_count := RESOLUTION * RESOLUTION
 	var tri_count := (RESOLUTION - 1) * (RESOLUTION - 1) * 2
 	var instances: Array[Transform3D] = []

@@ -66,16 +66,16 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var b := j * RESOLUTION + i + 1
 			var c := (j + 1) * RESOLUTION + i
 			var d := (j + 1) * RESOLUTION + i + 1
-			# Triangle a-d-b
-			if is_wet[a] and is_wet[d] and is_wet[b]:
+			# Triangle a-b-d
+			if is_wet[a] and is_wet[b] and is_wet[d]:
 				indices.append(a)
-				indices.append(d)
 				indices.append(b)
-			# Triangle a-c-d
-			if is_wet[a] and is_wet[c] and is_wet[d]:
-				indices.append(a)
-				indices.append(c)
 				indices.append(d)
+			# Triangle a-d-c
+			if is_wet[a] and is_wet[d] and is_wet[c]:
+				indices.append(a)
+				indices.append(d)
+				indices.append(c)
 	var has_water := wet_count > 0
 	var vertex_count := RESOLUTION * RESOLUTION if has_water else 0
 	# For budget docs: if wet, vertices =81, tris = indices.size()/3 (max 128), colliders=1 else 0

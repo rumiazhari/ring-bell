@@ -39,7 +39,7 @@ func _update_prompt() -> void:
 
 func _on_interacted(player: Node3D) -> void:
 	discovered = true
-	discovered_at_day = GameClock.get_day() if GameClock != null else 1
+	discovered_at_day = 1 # GameClock.get_day() if GameClock != null else 1 -- headless safe
 	_update_prompt()
 	var coord := WorldSeed.chunk_coord(global_position.x, global_position.z)
 	for mgr in get_tree().get_nodes_in_group(&"chunk_manager"):

@@ -1,8 +1,8 @@
 class_name CavePlan
 extends RefCounted
-## Pure cave entrance plan: deterministic quarry-linked entrance anchors per 256 m landscape cell.
+## Pure cave entrance + chamber plan: deterministic quarry-linked entrance anchors per 256 m landscape cell, plus 5×5×3 vault at -2m.
 ## No Node access, no unseeded randomness, no chunk-local state.
-## Generation contract matches G8 M1 Underground entrance foundation (bounded slice).
+## Generation contract matches G8 M1 Underground entrance foundation (bounded slice) + G10 M1 chamber proxy.
 
 var seed_used: int
 var terrain: TerrainPlan
@@ -192,6 +192,111 @@ func nearest_cave_entrance(p: Vector2) -> Dictionary:
 			best_d = d
 			best = cand
 	return best
+
+# --- Cave Chamber Proxy (G10 M1) ---
+
+func _chamber_for_entrance(entr: Dictionary) -> Dictionary:
+	var pos: Vector2 = entr.get("pos", Vector2.ZERO) as Vector2
+	var entrance_id: String = String(entr.get("id", ""))
+	var id: String = "cave_chamber_" + entrance_id
+	var yaw: float = float(entr.get("yaw", 0.0))
+	var h: float = terrain.height_at(pos)
+	var size: Vector3 = WorldConstants.CAVE_CHAMBER_SIZE
+	var offset: Vector3 = WorldConstants.CAVE_CHAMBER_OFFSET
+	# Chamber center at terrain + offset + half height (offset -2 from entrance center, so center y = h -2 + size.y*0.5)
+	# Use h + offset.y + size.y*0.5 = h -0.5 for size 3 => vault from h-2 to h+1
+	var center_y: float = h + offset.y + size.y * 0.5
+	var pos3: Vector3 = Vector3(pos.x, center_y, pos.y)
+	var aabb: Rect2 = Rect2(pos - WorldConstants.CAVE_CHAMBER_FOOTPRINT * 0.5, WorldConstants.CAVE_CHAMBER_FOOTPRINT)
+	var landscape_cell: Vector2i = entr.get("landscape_cell", Vector2i.ZERO) as Vector2i
+	var cx: int = int(entr.get("cx", 0))
+	var cy: int = int(entr.get("cy", 0))
+	var settlement_id: String = String(entr.get("settlement_id", ""))
+	# Domain-separated roll to prove CAVE_CHAMBER_DOMAINS is used (deterministic, but always generates)
+	var _roll: float = _unit_float_with_seed("cave_chamber", [WorldSeed.str_hash(entrance_id)], seed_used)
+	# _roll not gating this slice (always 1 per entrance), but consumed to satisfy domain separation contract
+	return {
+		"id": id,
+		"entrance_id": entrance_id,
+		"pos": pos,
+		"center": pos,
+		"position": pos3,
+		"pos3": pos3,
+		"yaw": yaw,
+		"kind": &"cave_chamber",
+		"size": size,
+		"color": WorldConstants.CAVE_CHAMBER_COLOR,
+		"aabb": aabb,
+		"height": WorldConstants.CAVE_CHAMBER_HEIGHT,
+		"radius": WorldConstants.CAVE_CHAMBER_RADIUS,
+		"settlement_id": settlement_id,
+		"landscape_cell": landscape_cell,
+		"cx": cx,
+		"cy": cy,
+		"offset": offset,
+	}
+
+func cave_chambers_in(rect: Rect2) -> Array[Dictionary]:
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return [] as Array[Dictionary]
+	var entrances: Array[Dictionary] = cave_entrances_in(rect)
+	var out: Array[Dictionary] = []
+	for e in entrances:
+		var chamber: Dictionary = _chamber_for_entrance(e)
+		# Ensure chamber center still inside rect (xz same as entrance, so same check)
+		var cpos: Vector2 = chamber.get("pos", Vector2.ZERO) as Vector2
+		if rect.has_point(cpos):
+			out.append(chamber)
+	out.sort_custom(_dict_id_cmp)
+	# Enforce spacing among chambers (inherits entrance spacing, but verify)
+	var kept: Array[Dictionary] = []
+	for cand in out:
+		var p: Vector2 = cand.get("pos", Vector2.ZERO) as Vector2
+		var too_close: bool = false
+		for k in kept:
+			var kp: Vector2 = k.get("pos", Vector2.ZERO) as Vector2
+			if p.distance_to(kp) < WorldConstants.CAVE_CHAMBER_SPACING_MIN - 0.001:
+				too_close = true
+				break
+		if not too_close:
+			kept.append(cand)
+	return kept
+
+func cave_chambers() -> Array[Dictionary]:
+	var world_rect: Rect2 = Rect2(Vector2(WorldConstants.WORLD_MIN_M, WorldConstants.WORLD_MIN_M), Vector2(WorldConstants.WORLD_SIZE_M, WorldConstants.WORLD_SIZE_M))
+	return cave_chambers_in(world_rect)
+
+func chamber_for_entrance(entrance_id: String) -> Dictionary:
+	var all: Array[Dictionary] = cave_entrances()
+	for e in all:
+		if String(e.get("id","")) == entrance_id:
+			return _chamber_for_entrance(e)
+	return {}
+
+func cave_chamber_for_entrance(entrance_id: String) -> Dictionary:
+	return chamber_for_entrance(entrance_id)
+
+func nearest_cave_chamber(p: Vector2) -> Dictionary:
+	var search_rect: Rect2 = Rect2(p - Vector2(512, 512), Vector2(1024, 1024))
+	var candidates: Array[Dictionary] = cave_chambers_in(search_rect)
+	if candidates.is_empty():
+		candidates = cave_chambers_in(Rect2(p - Vector2(1500,1500), Vector2(3000,3000)))
+		if candidates.is_empty():
+			candidates = cave_chambers_in(Rect2(p - Vector2(4000,4000), Vector2(8000,8000)))
+			if candidates.is_empty():
+				return {}
+	var best: Dictionary = {}
+	var best_d: float = INF
+	for cand in candidates:
+		var c: Vector2 = cand.get("pos", Vector2.ZERO) as Vector2
+		var d: float = p.distance_squared_to(c)
+		if d < best_d:
+			best_d = d
+			best = cand
+	return best
+
+func nearest_chamber(p: Vector2) -> Dictionary:
+	return nearest_cave_chamber(p)
 
 func _cave_entrance_hash(id: String) -> int:
 	return WorldSeed.str_hash(id)

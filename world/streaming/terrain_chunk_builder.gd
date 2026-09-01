@@ -61,11 +61,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var c := (j + 1) * RESOLUTION + i
 			var d := (j + 1) * RESOLUTION + i + 1
 			indices[k] = a; k += 1
-			indices[k] = d; k += 1
 			indices[k] = b; k += 1
-			indices[k] = a; k += 1
-			indices[k] = c; k += 1
 			indices[k] = d; k += 1
+			indices[k] = a; k += 1
+			indices[k] = d; k += 1
+			indices[k] = c; k += 1
 	var compatibility_mode := "world_plan_surface_v1"
 	var gen_ms := float(Time.get_ticks_usec() - t0) / 1000.0
 	var vertex_count := RESOLUTION * RESOLUTION

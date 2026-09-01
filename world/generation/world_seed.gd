@@ -103,6 +103,7 @@ const ORCHARD_PARCEL_DOMAINS: Array[StringName] = [&"orchard_parcel", &"orchard_
 const RURAL_WORKBENCH_DOMAINS: Array[StringName] = [&"rural_workbench",&"rural_workbench_hamlet_roll"]
 const RURAL_GRANARY_DOMAINS: Array[StringName] = [&"rural_granary",&"rural_granary_hamlet_roll"]
 const CAVE_ENTRANCE_DOMAINS: Array[StringName] = [&"cave_entrance",&"cave_entrance_yaw"]
+const CAVE_CHAMBER_DOMAINS: Array[StringName] = [&"cave_chamber"]
 const INDUSTRIAL_CORRIDOR_DOMAINS: Array[StringName] = [&"industrial_corridor", &"industrial_corridor_density"]
 const VERTICAL_BRIDGE_DOMAINS: Array[StringName] = [&"vertical_bridge", &"vertical_bridge_yaw"]
 const SOCIETY_WORK_DOMAINS: Array[StringName] = [&"society_work", &"society_work_site"]

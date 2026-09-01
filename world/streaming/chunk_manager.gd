@@ -81,6 +81,7 @@ var _cave_vertices_total := 0
 var _cave_triangles_total := 0
 var _cave_colliders_total := 0
 var _cave_entrances_total := 0
+var _cave_chambers_total := 0
 var _cave_mat_ms_total := 0.0
 var _vertical_vertices_total := 0
 var _vertical_triangles_total := 0
@@ -193,6 +194,7 @@ func reset_stream() -> void:
 	_cave_triangles_total = 0
 	_cave_colliders_total = 0
 	_cave_entrances_total = 0
+	_cave_chambers_total = 0
 	_cave_mat_ms_total = 0.0
 	_total_cave_gen_ms = 0.0
 	_vertical_vertices_total = 0
@@ -915,6 +917,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var cave_tris := int(cavstats.get("cave_triangles", 0))
 	var cave_cols := int(cavstats.get("cave_colliders", 0))
 	var cave_entrances := int(cavstats.get("cave_entrances", 0))
+	var cave_chambers := int(cavstats.get("cave_chambers", 0))
 	var vertical_verts := int(vertstats.get("vertical_vertices", 0))
 	var vertical_tris := int(vertstats.get("vertical_triangles", 0))
 	var vertical_cols := int(vertstats.get("vertical_colliders", 0))
@@ -998,6 +1001,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"cave_triangles": cave_tris,
 		"cave_colliders": cave_cols,
 		"cave_entrances": cave_entrances,
+		"cave_chambers": cave_chambers,
 		"cave_manifest": cave_manifest,
 		"vertical_vertices": vertical_verts,
 		"vertical_triangles": vertical_tris,
@@ -1079,6 +1083,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_cave_triangles_total += cave_tris
 	_cave_colliders_total += cave_cols
 	_cave_entrances_total += cave_entrances
+	_cave_chambers_total += cave_chambers
 	_cave_mat_ms_total += float(cavstats.get("cave_mat_ms", 0.0))
 	_vertical_vertices_total += vertical_verts
 	_vertical_triangles_total += vertical_tris
@@ -1174,6 +1179,7 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_cave_triangles_total -= int(rec.get("cave_triangles", 0))
 		_cave_colliders_total -= int(rec.get("cave_colliders", 0))
 		_cave_entrances_total -= int(rec.get("cave_entrances", 0))
+		_cave_chambers_total -= int(rec.get("cave_chambers", 0))
 		_cave_mat_ms_total -= float(rec.get("cave_mat_ms", 0.0))
 		_total_cave_gen_ms -= float(rec.get("cave_gen_ms", 0.0))
 		_vertical_vertices_total -= int(rec.get("vertical_vertices", 0))
@@ -1698,8 +1704,8 @@ func debug_lines() -> Array[String]:
 			% [0, 0, collision_shapes_total(), _city_interior_buildings_total, _city_interior_rooms_total, _city_interior_doors_total, _city_interior_stations_total, avg_gen_ms(), avg_mat_ms(), active_count(), warm_count()])
 	lines.append("city interior verts %d | tris %d | rooms %d | doors %d | stations %d | buildings %d | t_city_interior_gen %.1f ms | t_city_interior_mat %.1f ms | active city interior %d (warm %d)"
 			% [_city_interior_rooms_total * 24, _city_interior_rooms_total * 12, _city_interior_rooms_total, _city_interior_doors_total, _city_interior_stations_total, _city_interior_buildings_total, avg_gen_ms(), avg_mat_ms(), city_interior_active_count(), city_interior_warm_count()])
-	lines.append("cave verts %d | tris %d | colliders %d | entrances %d | t_cave_gen %.1f ms | t_cave_mat %.1f ms | active cave %d (warm %d)"
-			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
+	lines.append("cave verts %d | tris %d | colliders %d | entrances %d | chambers %d | t_cave_gen %.1f ms | t_cave_mat %.1f ms | active cave %d (warm %d)"
+			% [_cave_vertices_total, _cave_triangles_total, _cave_colliders_total, _cave_entrances_total, _cave_chambers_total, avg_cave_gen_ms(), _cave_mat_ms_total, cave_active_count(), cave_warm_count()])
 	lines.append("vertical verts %d | tris %d | colliders %d | bridges %d | t_vertical_gen %.1f ms | t_vertical_mat %.1f ms | active vertical %d (warm %d)"
 			% [_vertical_vertices_total, _vertical_triangles_total, _vertical_colliders_total, _vertical_bridges_total, avg_vertical_gen_ms(), _vertical_mat_ms_total, vertical_active_count(), vertical_warm_count()])
 	var soc_workers: int = 0
@@ -1732,7 +1738,13 @@ func _set_caves_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
 					var inter = portal.get("interactable")
 					if inter != null and is_instance_valid(inter):
 						inter.enabled = enabled
-
+		elif child is Area3D:
+			if String(child.name).begins_with("CaveChamberPortal_"):
+				if is_instance_valid(child) and not child.is_queued_for_deletion() and child.is_inside_tree():
+					child.monitorable = enabled
+					for sub in child.get_children():
+						if sub is InteractableComponent:
+							sub.enabled = enabled
 func _apply_cave_states(parent: Node, coord: Vector2i, discovered: Dictionary) -> void:
 	var cave_node: Node = parent.get_node_or_null(NodePath("Cave_%d_%d" % [coord.x, coord.y]))
 	if cave_node == null:
