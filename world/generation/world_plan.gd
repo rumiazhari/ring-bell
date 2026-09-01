@@ -344,6 +344,16 @@ func nearest_crossing(p: Vector2) -> Dictionary:
 func road_width_at(p: Vector2) -> float:
 	return road_network.road_width_at(p)
 
+func bridge_at(p: Vector2) -> Dictionary:
+	return road_network.bridge_at(p)
+
+func walkable_surface_height_at(p: Vector2) -> float:
+	var bridge: Dictionary = bridge_at(p)
+	if not bridge.is_empty() and hydrology.water_body_at(p) != &"":
+		return water_level_at(p) + WorldConstants.BRIDGE_DECK_LIFT_M
+	return surface_height_at(p)
+
+
 # --- Rural building forwarding (pure, deterministic) ---
 
 func rural_buildings() -> Array[Dictionary]:
@@ -408,6 +418,36 @@ func nearest_rural_granary(p: Vector2) -> Dictionary:
 
 func granary_for_building(building_id: String) -> Dictionary:
 	return rural_building.granary_for_building(building_id)
+
+func settlement_paths() -> Array[Dictionary]:
+	return rural_building.settlement_paths()
+
+func settlement_paths_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_paths_in(rect)
+
+func settlement_yards() -> Array[Dictionary]:
+	return rural_building.settlement_yards()
+
+func settlement_yards_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_yards_in(rect)
+
+func settlement_fences() -> Array[Dictionary]:
+	return rural_building.settlement_fences()
+
+func settlement_fences_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_fences_in(rect)
+
+func settlement_clutter() -> Array[Dictionary]:
+	return rural_building.settlement_clutter()
+
+func settlement_clutter_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_clutter_in(rect)
+
+func settlement_trees() -> Array[Dictionary]:
+	return rural_building.settlement_trees()
+
+func settlement_trees_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_trees_in(rect)
 
 # --- Cave entrance forwarding (pure, deterministic) ---
 
