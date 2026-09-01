@@ -1727,6 +1727,8 @@ func _generate() -> void:
 					continue
 				if hydrology.distance_to_water(_fb_test) <= WorldConstants.BANK_W + 2.0:
 					continue
+				if road_network != null and road_network.distance_to_road(_fb_test) < WorldConstants.RURAL_BUILDING_ROAD_SETBACK - 1e-6:
+					continue
 				var _fb_eff: Vector2 = _effective_footprint(_fb_footprint, _fb_yaw)
 				var _fb_aabb: Rect2 = Rect2(_fb_test - _fb_eff * 0.5, _fb_eff)
 				var _fb_ok := true
@@ -1757,10 +1759,13 @@ func _generate() -> void:
 					"slope_deg": terrain.slope_at(_fb_pos),
 					"dist_to_water": hydrology.distance_to_water(_fb_pos),
 					"dist_to_road": road_network.distance_to_road(_fb_pos) if road_network != null else INF,
+					"strata": geology.strata_at(_fb_pos),
+					"tile": Vector2i(floori(_fb_pos.x / WorldConstants.LANDSCAPE_CELL_M), floori(_fb_pos.y / WorldConstants.LANDSCAPE_CELL_M)),
 					"aabb": Rect2(_fb_pos - _effective_footprint(_fb_footprint, _fb_yaw) * 0.5, _effective_footprint(_fb_footprint, _fb_yaw)),
 					"color": _palette_color(_fb_kind, id_hash, 99),
 					"roof_color": _roof_color(_fb_kind, id_hash, 99),
 					"allow_gate_barn": false,
+					"gate_id": "",
 				}
 				var _fb_hash: int = _hash_id(_fb_id)
 				var _fb_walls: Array[Dictionary] = _generate_partition_wall(_fb_dict, _fb_hash)
