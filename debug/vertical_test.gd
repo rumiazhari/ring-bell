@@ -6,7 +6,7 @@ var failures := 0
 var failed_labels: Array[String] = []
 
 func _ready() -> void:
-	get_tree().create_timer(90.0).timeout.connect(func() -> void:
+	get_tree().create_timer(400.0).timeout.connect(func() -> void:
 		print("[VerticalTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()

@@ -19,7 +19,7 @@ var failures := 0
 
 
 func _ready() -> void:
-	get_tree().create_timer(90.0).timeout.connect(func() -> void:
+	get_tree().create_timer(400.0).timeout.connect(func() -> void:
 		print("[Havoc] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	_run()

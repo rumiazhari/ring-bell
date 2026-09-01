@@ -5,6 +5,7 @@ extends RefCounted
 ## P4.3 adds interior partition walls + furniture proxies batched into same mesh + FoodCrate leaves.
 
 const CHUNK_M := 64.0
+const RuralArt = preload("res://art/rural_art.gd")
 const COL_PLASTER := Color("ddd0c0")
 const COL_BRICK := Color("b07a5a")
 const COL_TIMBER := Color("7a5a3a")
@@ -64,6 +65,44 @@ static func _add_box(verts: PackedVector3Array, normals: PackedVector3Array, col
 		indices.append(b0); indices.append(b0+2); indices.append(b0+3)
 		base_idx +=4
 
+static func _clip_segment_to_rect(a: Vector2, b: Vector2, rect: Rect2, pad: float) -> Array[Vector2]:
+	var expanded: Rect2 = rect.grow(pad)
+	var t0: float = 0.0
+	var t1: float = 1.0
+	var dx: float = b.x - a.x
+	var dz: float = b.y - a.y
+	var pvals: Array[float] = [-dx, dx, -dz, dz]
+	var qvals: Array[float] = [a.x - expanded.position.x, expanded.end.x - a.x, a.y - expanded.position.y, expanded.end.y - a.y]
+	for i in 4:
+		var pv: float = pvals[i]
+		var qv: float = qvals[i]
+		if absf(pv) < 0.000001:
+			if qv < 0.0:
+				return [] as Array[Vector2]
+			continue
+		var r: float = qv / pv
+		if pv < 0.0:
+			if r > t1:
+				return [] as Array[Vector2]
+			if r > t0:
+				t0 = r
+		else:
+			if r < t0:
+				return [] as Array[Vector2]
+			if r < t1:
+				t1 = r
+	if t1 < t0:
+		return [] as Array[Vector2]
+	return [a.lerp(b, t0), a.lerp(b, t1)] as Array[Vector2]
+
+static func _tree_palette(kind: StringName) -> Array[Color]:
+	match kind:
+		&"birch":
+			return [WorldConstants.COL_RURAL_TREE_TRUNK, WorldConstants.COL_RURAL_TREE_BIRCH, Color("7a9a5f")] as Array[Color]
+		&"pine":
+			return [WorldConstants.COL_RURAL_TREE_TRUNK, WorldConstants.COL_RURAL_TREE_PINE, Color("426b48")] as Array[Color]
+		_:
+			return [WorldConstants.COL_RURAL_TREE_TRUNK, WorldConstants.COL_RURAL_TREE_BEECH, Color("5d8048")] as Array[Color]
 static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
 	var origin := Vector2(coord) * CHUNK_M
@@ -113,7 +152,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var hid: int = WorldSeed.str_hash(bid)
 		var hinge_r: float = float(WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("rural_building_palette"), hid]) % 1000003) / 1000003.0
 		var hinge_left: bool = hinge_r < 0.5
-		var ground_y: float = world_plan.surface_height_at(dpos) + 0.01
+		var ground_y: float = world_plan.surface_height_at(b.get("center", dpos) as Vector2) + WorldConstants.RURAL_OVERLAY_LIFT_M
 		var door_width: float = 1.0
 		var door_height: float = 2.1
 		if String(b["kind"]) == "barn" or String(b["kind"]) == "stable":
@@ -422,8 +461,68 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		granary_manifests = granary_manifests.slice(0, WorldConstants.RURAL_GRANARY_MAX_PER_CHUNK)
 	granary_manifests.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
 	var has_granary: bool = granary_manifests.size() > 0
-	# has_rural now true if buildings or wells/forage present (well gives collider, forage alone still visual but we treat as rural for mesh, collider only for building/well)
-	var has_any_visual: bool = has_rural or has_well or has_forage or has_workbench or has_granary
+	# Settlement dressing is a separate visual mesh: it has no StaticBody and
+	# therefore cannot inflate the existing ACTIVE rural collider budget.
+	var dressing_verts := PackedVector3Array()
+	var dressing_normals := PackedVector3Array()
+	var dressing_colors := PackedColorArray()
+	var dressing_indices := PackedInt32Array()
+	var dressing_instances: int = 0
+	if not suppress and world_plan != null:
+		for path in world_plan.settlement_paths_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var pa: Vector2 = path.get("a", Vector2.ZERO) as Vector2
+			var pb: Vector2 = path.get("b", Vector2.ZERO) as Vector2
+			var pw: float = float(path.get("width", WorldConstants.RURAL_PATH_FOOT_WIDTH))
+			var clipped: Array[Vector2] = _clip_segment_to_rect(pa, pb, rect, pw * 0.5 + 0.1)
+			if clipped.size() < 2:
+				continue
+			var path_col: Color = WorldConstants.COL_RURAL_PATH_CART if StringName(str(path.get("kind", &"footpath"))) == &"cart_track" else WorldConstants.COL_RURAL_PATH_FOOT
+			RuralArt.append_path(dressing_verts, dressing_normals, dressing_colors, dressing_indices, clipped[0], clipped[1], world_plan.surface_height_at(clipped[0]) + WorldConstants.RURAL_PATH_LIFT_M, world_plan.surface_height_at(clipped[1]) + WorldConstants.RURAL_PATH_LIFT_M, pw, path_col)
+			dressing_instances += 1
+		for yard in world_plan.settlement_yards_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var yard_center: Vector2 = yard.get("center", Vector2.ZERO) as Vector2
+			if not rect.has_point(yard_center):
+				continue
+			RuralArt.append_yard(dressing_verts, dressing_normals, dressing_colors, dressing_indices, yard_center, world_plan.surface_height_at(yard_center) + WorldConstants.RURAL_PATH_LIFT_M, float(yard.get("radius", WorldConstants.RURAL_YARD_RADIUS_HAMLET)), WorldConstants.COL_RURAL_YARD)
+			dressing_instances += 1
+		for fence in world_plan.settlement_fences_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var fa: Vector2 = fence.get("a", Vector2.ZERO) as Vector2
+			var fb: Vector2 = fence.get("b", Vector2.ZERO) as Vector2
+			var fh: float = float(fence.get("height", WorldConstants.RURAL_FENCE_HEIGHT_MIN))
+			var fence_clip: Array[Vector2] = _clip_segment_to_rect(fa, fb, rect, 0.15)
+			if fence_clip.size() < 2:
+				continue
+			RuralArt.append_fence(dressing_verts, dressing_normals, dressing_colors, dressing_indices, fence_clip[0], fence_clip[1], world_plan.surface_height_at((fence_clip[0] + fence_clip[1]) * 0.5) + WorldConstants.RURAL_PATH_LIFT_M, fh, WorldConstants.COL_RURAL_FENCE, WorldConstants.COL_RURAL_FENCE_CAP)
+			dressing_instances += 1
+		for prop in world_plan.settlement_clutter_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var prop_pos: Vector2 = prop.get("pos", Vector2.ZERO) as Vector2
+			if not rect.has_point(prop_pos):
+				continue
+			var prop_center := Vector3(prop_pos.x, world_plan.surface_height_at(prop_pos) + WorldConstants.RURAL_PATH_LIFT_M, prop_pos.y)
+			RuralArt.append_clutter(dressing_verts, dressing_normals, dressing_colors, dressing_indices, prop.get("kind", &"barrel") as StringName, prop_center, float(prop.get("scale", 1.0)), float(prop.get("yaw", 0.0)))
+			dressing_instances += 1
+		for tree in world_plan.settlement_trees_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var tree_pos: Vector2 = tree.get("pos", Vector2.ZERO) as Vector2
+			if not rect.has_point(tree_pos):
+				continue
+			var palette: Array[Color] = _tree_palette(tree.get("kind", &"beech") as StringName)
+			var tree_center := Vector3(tree_pos.x, world_plan.surface_height_at(tree_pos) + WorldConstants.RURAL_PATH_LIFT_M, tree_pos.y)
+			RuralArt.append_tree(dressing_verts, dressing_normals, dressing_colors, dressing_indices, tree_center, float(tree.get("scale", 1.0)), float(tree.get("yaw", 0.0)), palette[0], palette[1], palette[2])
+			dressing_instances += 1
+	var dressing_vertices: int = dressing_verts.size()
+	var dressing_triangles: int = dressing_indices.size() / 3
+	# has_rural now true if buildings/resources/dressing are present.
+	var has_any_visual: bool = has_rural or has_well or has_forage or has_workbench or has_granary or dressing_vertices > 0
 	var has_collider: bool = has_rural or has_well
 	# Generate batched mesh geometry
 	var verts := PackedVector3Array()
@@ -434,6 +533,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var tri_count := 0
 	var aabbs: Array[Rect2] = []
 	var building_colors: Array[Color] = []
+	var building_ground_by_id: Dictionary = {}
 	# For collider we need separate verts for shell+wall only
 	var collider_verts := PackedVector3Array()
 	var collider_indices := PackedInt32Array()
@@ -445,50 +545,16 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var height: float = float(b["height"])
 		var wall_col: Color = b.get("color", COL_PLASTER) as Color
 		var roof_col: Color = b.get("roof_color", COL_ROOF_RED) as Color
-		var ground: float = world_plan.surface_height_at(b_center) + 0.01
-		var eff: Vector2 = _effective_footprint(footprint, yaw)
-		var hx: float = eff.x * 0.5
-		var hz: float = eff.y * 0.5
-		var x0: float = b_center.x - hx
-		var x1: float = b_center.x + hx
-		var z0: float = b_center.y - hz
-		var z1: float = b_center.y + hz
-		var y0: float = ground
-		var y1: float = ground + height
-		var corners: Array[Vector3] = [
-			Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(x1, y0, z1), Vector3(x0, y0, z1),
-			Vector3(x0, y1, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1), Vector3(x0, y1, z1)
-		]
-		var faces: Array[Dictionary] = [
-			{"idx": [0,1,2,3], "normal": Vector3.DOWN, "color": wall_col},
-			{"idx": [4,7,6,5], "normal": Vector3.UP, "color": roof_col},
-			{"idx": [0,4,5,1], "normal": Vector3(0,0,-1), "color": wall_col},
-			{"idx": [2,6,7,3], "normal": Vector3(0,0,1), "color": wall_col},
-			{"idx": [1,5,6,2], "normal": Vector3(1,0,0), "color": wall_col},
-			{"idx": [3,7,4,0], "normal": Vector3(-1,0,0), "color": wall_col},
-		]
-		var base_idx: int = verts.size()
-		var collider_base: int = collider_verts.size()
-		for f in faces:
-			var idxs: Array = f["idx"] as Array
-			var n: Vector3 = f["normal"] as Vector3
-			var col: Color = f["color"] as Color
-			var face_verts: Array[Vector3] = [corners[idxs[0]], corners[idxs[1]], corners[idxs[2]], corners[idxs[3]]]
-			for v in face_verts:
-				verts.append(v)
-				normals.append(n)
-				colors.append(col)
-				collider_verts.append(v)
-			var b0: int = base_idx
-			indices.append(b0); indices.append(b0+1); indices.append(b0+2)
-			indices.append(b0); indices.append(b0+2); indices.append(b0+3)
-			var c0: int = collider_base
-			collider_indices.append(c0); collider_indices.append(c0+1); collider_indices.append(c0+2)
-			collider_indices.append(c0); collider_indices.append(c0+2); collider_indices.append(c0+3)
-			base_idx +=4
-			collider_base +=4
-		vert_count +=24
-		tri_count +=12
+		var ground: float = world_plan.surface_height_at(b_center) + WorldConstants.RURAL_OVERLAY_LIFT_M
+		building_ground_by_id[String(b.get("id", ""))] = ground
+		var door_width: float = 1.2 if b.get("kind", &"") == &"barn" or b.get("kind", &"") == &"stable" else 1.0
+		var door_height: float = 2.2 if door_width > 1.0 else 2.1
+		var visual_before: int = verts.size()
+		var visual_tri_before: int = indices.size()
+		RuralArt.append_building(verts, normals, colors, indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height, b.get("kind", &"cottage") as StringName, wall_col, roof_col, COL_TIMBER, Color("415a60"), owned.size() <= 3)
+		RuralArt.append_building_collision(collider_verts, collider_indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height)
+		vert_count += verts.size() - visual_before
+		tri_count += (indices.size() - visual_tri_before) / 3
 		aabbs.append(b["aabb"] as Rect2)
 		building_colors.append(wall_col)
 	# Interior walls
@@ -502,18 +568,13 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var base_col: Color = COL_PLASTER
 		# Try to find building color for wall's building? Use darkened
 		var dark_col: Color = Color(base_col.r*COL_WALL_DARK_FACTOR, base_col.g*COL_WALL_DARK_FACTOR, base_col.b*COL_WALL_DARK_FACTOR)
-		# ground height at wall pos
-		var ground_w: float = world_plan.surface_height_at(wpos) + 0.01
+		var owner_id: String = String(w.get("building_id", ""))
+		var ground_w: float = float(building_ground_by_id.get(owner_id, world_plan.surface_height_at(wpos) + WorldConstants.RURAL_OVERLAY_LIFT_M))
 		var wall_center: Vector3 = Vector3(wpos.x, ground_w + wsize.y*0.5, wpos.y)
-		var w_verts_before: int = verts.size()
-		_add_box(verts, normals, colors, indices, wall_center, wsize, dark_col)
-		# also add to collider with dummy arrays
-		var dummy_n := PackedVector3Array()
-		var dummy_c := PackedColorArray()
-		var dummy_idx := PackedInt32Array()
-		# we need to generate collider box separately: reuse _add_box but throw away its normals
+		RuralArt._append_oriented_box(verts, normals, colors, indices, wall_center, wsize, wyaw, dark_col)
+		# Keep the same oriented wall in the single aggregated structural body.
 		var c_verts_before: int = collider_verts.size()
-		_add_box(collider_verts, dummy_n, dummy_c, collider_indices, wall_center, wsize, dark_col)
+		RuralArt._append_collision_box(collider_verts, collider_indices, wall_center, wsize, wyaw)
 		interior_vertices +=24
 		interior_triangles +=12
 	# Furniture proxies (visual only, not in collider)
@@ -533,11 +594,12 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				fcol = COL_FURNITURE_STOVE
 			_:
 				fcol = COL_FURNITURE_SHELF
-		var ground_f: float = world_plan.surface_height_at(fpos) + 0.01
-		var f_center: Vector3 = Vector3(fpos.x, ground_f + fsize.y*0.5, fpos.y)
-		_add_box(verts, normals, colors, indices, f_center, fsize, fcol)
-		interior_vertices +=24
-		interior_triangles +=12
+		var owner_id_f: String = String(f.get("building_id", ""))
+		var ground_f: float = float(building_ground_by_id.get(owner_id_f, world_plan.surface_height_at(fpos) + WorldConstants.RURAL_OVERLAY_LIFT_M))
+		var f_center: Vector3 = Vector3(fpos.x, ground_f + fsize.y * 0.5, fpos.y)
+		RuralArt._append_oriented_box(verts, normals, colors, indices, f_center, fsize, float(f.get("yaw", 0.0)), fcol)
+		interior_vertices += 24
+		interior_triangles += 12
 	# Wells (batched into same mesh, also into collider)
 	var well_vertices := 0
 	var well_triangles := 0
@@ -546,12 +608,13 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var ground_w: float = world_plan.surface_height_at(wpos) + 0.01
 		var wpos3: Vector3 = Vector3(wpos.x, ground_w + WorldConstants.RURAL_WELL_HEIGHT*0.5, wpos.y)
 		var wsize: Vector3 = Vector3(WorldConstants.RURAL_WELL_RADIUS*2, WorldConstants.RURAL_WELL_HEIGHT, WorldConstants.RURAL_WELL_RADIUS*2)
-		# Stone wall box approximation of cylinder (single box, vertex-colored wall+water)
-		_add_box(verts, normals, colors, indices, wpos3, wsize, COL_WELL_WALL)
-		# Collider: same box into collider
+		var well_visual_before: int = verts.size()
+		var well_tri_before: int = indices.size()
+		RuralArt.append_well(verts, normals, colors, indices, Vector3(wpos.x, ground_w, wpos.y), 1.0, float(w.get("yaw", 0.0)))
+		# Collider remains a single conservative well box baked into RuralBody.
 		_add_box(collider_verts, PackedVector3Array(), PackedColorArray(), collider_indices, wpos3, wsize, COL_WELL_WALL)
-		well_vertices += 24
-		well_triangles += 12
+		well_vertices += verts.size() - well_visual_before
+		well_triangles += (indices.size() - well_tri_before) / 3
 	# Forage patches (visual only, not in collider)
 	var forage_vertices := 0
 	var forage_triangles := 0
@@ -670,6 +733,18 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"indices": indices,
 		"collider_verts": collider_verts,
 		"collider_indices": collider_indices,
+		"settlement_path_count": world_plan.settlement_paths_in(rect).size() if world_plan != null else 0,
+		"settlement_yard_count": world_plan.settlement_yards_in(rect).size() if world_plan != null else 0,
+		"settlement_fence_count": world_plan.settlement_fences_in(rect).size() if world_plan != null else 0,
+		"settlement_clutter_count": world_plan.settlement_clutter_in(rect).size() if world_plan != null else 0,
+		"settlement_tree_count": world_plan.settlement_trees_in(rect).size() if world_plan != null else 0,
+		"dressing_instances": dressing_instances,
+		"dressing_vertices": dressing_vertices,
+		"dressing_triangles": dressing_triangles,
+		"dressing_verts": dressing_verts,
+		"dressing_normals": dressing_normals,
+		"dressing_colors": dressing_colors,
+		"dressing_indices": dressing_indices,
 	}
 
 static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
@@ -743,20 +818,48 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	if not colors.is_empty():
 		arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
-	var mesh := ArrayMesh.new()
 	if indices.size() >= 3 and verts.size() >= 3:
+		var mesh := ArrayMesh.new()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mat := StandardMaterial3D.new()
 		mat.vertex_color_use_as_albedo = true
 		mat.roughness = 0.85
 		mat.metallic = 0.0
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mesh.surface_set_material(0, mat)
-	else:
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mi := MeshInstance3D.new()
-	mi.name = "RuralMesh"
-	mi.mesh = mesh
-	rural_node.add_child(mi)
+		var mi := MeshInstance3D.new()
+		mi.name = "RuralMesh"
+		mi.mesh = mesh
+		rural_node.add_child(mi)
+	# Paths, yards, fences, clutter, and tree edges share one visual mesh but
+	# stay outside the structural RuralBody. Their category colors and
+	# low-poly silhouettes are authored by RuralArt, not a shared green cube.
+	var dressing_verts: PackedVector3Array = manifest.get("dressing_verts", PackedVector3Array()) as PackedVector3Array
+	var dressing_normals: PackedVector3Array = manifest.get("dressing_normals", PackedVector3Array()) as PackedVector3Array
+	var dressing_colors: PackedColorArray = manifest.get("dressing_colors", PackedColorArray()) as PackedColorArray
+	var dressing_indices: PackedInt32Array = manifest.get("dressing_indices", PackedInt32Array()) as PackedInt32Array
+	if dressing_verts.size() >= 3 and dressing_indices.size() >= 3:
+		var dressing_arrays := []
+		dressing_arrays.resize(Mesh.ARRAY_MAX)
+		dressing_arrays[Mesh.ARRAY_VERTEX] = dressing_verts
+		dressing_arrays[Mesh.ARRAY_NORMAL] = dressing_normals
+		dressing_arrays[Mesh.ARRAY_COLOR] = dressing_colors
+		dressing_arrays[Mesh.ARRAY_INDEX] = dressing_indices
+		var dressing_mesh := ArrayMesh.new()
+		dressing_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, dressing_arrays)
+		var dressing_mat := StandardMaterial3D.new()
+		dressing_mat.vertex_color_use_as_albedo = true
+		dressing_mat.roughness = 0.92
+		dressing_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dressing_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		dressing_mesh.surface_set_material(0, dressing_mat)
+		var dressing_instance := MeshInstance3D.new()
+		dressing_instance.name = "SettlementDressingMesh"
+		dressing_instance.mesh = dressing_mesh
+		dressing_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		rural_node.add_child(dressing_instance)
+
 	var has_collider: bool = has_rural or has_well
 	if has_collider:
 		var body := StaticBody3D.new()
@@ -948,6 +1051,14 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"granary_manifests": granary_count,
 		"rural_furniture": int(manifest.get("rural_furniture", 0)),
 		"rural_buildings": int((manifest.get("rural_buildings", []) as Array).size()),
+		"settlement_paths": int(manifest.get("settlement_path_count", 0)),
+		"settlement_yards": int(manifest.get("settlement_yard_count", 0)),
+		"settlement_fences": int(manifest.get("settlement_fence_count", 0)),
+		"settlement_clutter": int(manifest.get("settlement_clutter_count", 0)),
+		"settlement_trees": int(manifest.get("settlement_tree_count", 0)),
+		"dressing_instances": int(manifest.get("dressing_instances", 0)),
+		"dressing_vertices": int(manifest.get("dressing_vertices", 0)),
+		"dressing_triangles": int(manifest.get("dressing_triangles", 0)),
 		"has_rural": true,
 		"rural_gen_ms": float(manifest.get("rural_gen_ms", 0.0)),
 		"rural_mat_ms": mat_ms,

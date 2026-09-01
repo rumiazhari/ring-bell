@@ -409,6 +409,36 @@ func nearest_rural_granary(p: Vector2) -> Dictionary:
 func granary_for_building(building_id: String) -> Dictionary:
 	return rural_building.granary_for_building(building_id)
 
+func settlement_paths() -> Array[Dictionary]:
+	return rural_building.settlement_paths()
+
+func settlement_paths_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_paths_in(rect)
+
+func settlement_yards() -> Array[Dictionary]:
+	return rural_building.settlement_yards()
+
+func settlement_yards_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_yards_in(rect)
+
+func settlement_fences() -> Array[Dictionary]:
+	return rural_building.settlement_fences()
+
+func settlement_fences_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_fences_in(rect)
+
+func settlement_clutter() -> Array[Dictionary]:
+	return rural_building.settlement_clutter()
+
+func settlement_clutter_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_clutter_in(rect)
+
+func settlement_trees() -> Array[Dictionary]:
+	return rural_building.settlement_trees()
+
+func settlement_trees_in(rect: Rect2) -> Array[Dictionary]:
+	return rural_building.settlement_trees_in(rect)
+
 # --- Cave entrance forwarding (pure, deterministic) ---
 
 func cave_entrances() -> Array[Dictionary]:
@@ -428,6 +458,19 @@ func cave_entrance_at(p: Vector2) -> Dictionary:
 		if aabb.has_point(p):
 			return c
 	return nearest_cave_entrance(p) if not cands.is_empty() else {}
+# --- Cave chamber forwarding (pure, deterministic) ---
+func cave_chambers() -> Array[Dictionary]:
+	return cave.cave_chambers()
+
+func cave_chambers_in(rect: Rect2) -> Array[Dictionary]:
+	return cave.cave_chambers_in(rect)
+
+func nearest_cave_chamber(p: Vector2) -> Dictionary:
+	return cave.nearest_cave_chamber(p)
+
+func cave_chamber_for_entrance(entrance_id: String) -> Dictionary:
+	return cave.cave_chamber_for_entrance(entrance_id)
+
 
 # --- Vertical bridge forwarding (pure, deterministic) ---
 

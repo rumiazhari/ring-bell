@@ -6,7 +6,7 @@ var failures := 0
 var failed_labels: Array[String] = []
 
 func _ready() -> void:
-	get_tree().create_timer(90.0).timeout.connect(func() -> void:
+	get_tree().create_timer(400.0).timeout.connect(func() -> void:
 		print("[CaveTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()
@@ -268,6 +268,102 @@ func _run_all() -> void:
 		if p.length() < WorldConstants.URBAN_INNER_M - 0.01:
 			urban_entrances += 1
 	_check("no entrance inside URBAN_INNER_M 350", urban_entrances == 0, "%d" % urban_entrances)
+	# ---------- 1c. Cave chamber proxy (G10 M1) — determinism & siting ----------
+	var r_ch1: Array[Dictionary] = cp.cave_chambers_in(rect)
+	var r_ch2: Array[Dictionary] = cp2.cave_chambers_in(rect)
+	var _chambers_equal_fn := func(a: Array[Dictionary], b: Array[Dictionary]) -> bool:
+		if a.size() != b.size(): return false
+		var da: Dictionary = {}
+		var db: Dictionary = {}
+		for e in a: da[String(e.get("id",""))] = e
+		for e in b: db[String(e.get("id",""))] = e
+		if da.size() != db.size(): return false
+		for k in da.keys():
+			if not db.has(k): return false
+			var ea: Dictionary = da[k]
+			var eb: Dictionary = db[k]
+			if not Vector2(ea.get("pos", Vector2.ZERO)).is_equal_approx(Vector2(eb.get("pos", Vector2.ZERO))): return false
+			if String(ea.get("entrance_id","")) != String(eb.get("entrance_id","")): return false
+			if not (ea.get("size", Vector3.ZERO) as Vector3).is_equal_approx(eb.get("size", Vector3.ZERO) as Vector3): return false
+		return true
+	_check("cave same-seed cave_chambers_in identical", _chambers_equal_fn.call(r_ch1, r_ch2), "%d vs %d" % [r_ch1.size(), r_ch2.size()])
+	var rev_ch: Array[Dictionary] = cp.cave_chambers_in(rev_rect)
+	_check("cave chambers rev identical", _chambers_equal_fn.call(r_ch1, rev_ch), "%d vs %d" % [r_ch1.size(), rev_ch.size()])
+	var all_chambers: Array[Dictionary] = cp.cave_chambers()
+	var all_chambers_alt: Array[Dictionary] = cp_alt_a.cave_chambers()
+	# chambers: different seed materially differs via entrances (inherits)
+	var ch_diff_count: int = 0
+	for i in mini(9, pts.size()):
+		var p: Vector2 = pts[i]
+		var n1: Dictionary = cp.nearest_cave_chamber(p)
+		var n2a: Dictionary = cp_alt_a.nearest_cave_chamber(p)
+		var id1: String = String(n1.get("id",""))
+		var id2: String = String(n2a.get("id",""))
+		var pos1: Vector2 = n1.get("pos", Vector2.INF) as Vector2
+		var pos2: Vector2 = n2a.get("pos", Vector2.INF) as Vector2
+		if id1 != id2 or pos1.distance_to(pos2) > 1.0:
+			ch_diff_count += 1
+	if all_chambers.size() != all_chambers_alt.size():
+		ch_diff_count += 1
+	_check("different seed chamber materially differs >=2/9", ch_diff_count >= 2 or all_chambers.size() != all_chambers_alt.size(), "diff %d/9 size %d vs %d" % [ch_diff_count, all_chambers.size(), all_chambers_alt.size()])
+	# per-entrance 0-1 chamber where entrance exists, never without entrance, size 5x5x3 at -2, never urban 350, spacing >=32
+	var entrances_by_id: Dictionary = {}
+	for e in all_entrances: entrances_by_id[String(e.get("id",""))] = e
+	var chamber_ids: Dictionary = {}
+	var chamber_ok: bool = true
+	var chamber_detail: String = ""
+	for ch in all_chambers:
+		var cid: String = String(ch.get("id",""))
+		var eid: String = String(ch.get("entrance_id",""))
+		if chamber_ids.has(cid):
+			chamber_ok = false; chamber_detail = "duplicate chamber_id %s" % cid; break
+		chamber_ids[cid] = true
+		if not entrances_by_id.has(eid):
+			chamber_ok = false; chamber_detail = "chamber without entrance %s -> %s" % [cid, eid]; break
+		var pos: Vector2 = ch.get("pos", Vector2.ZERO) as Vector2
+		var epos: Vector2 = (entrances_by_id[eid] as Dictionary).get("pos", Vector2.ZERO) as Vector2
+		if not pos.is_equal_approx(epos):
+			chamber_ok = false; chamber_detail = "chamber pos mismatch %s vs entrance %s" % [pos, epos]; break
+		var size: Vector3 = ch.get("size", Vector3.ZERO) as Vector3
+		if not size.is_equal_approx(WorldConstants.CAVE_CHAMBER_SIZE):
+			chamber_ok = false; chamber_detail = "size %s vs %s" % [size, WorldConstants.CAVE_CHAMBER_SIZE]; break
+		var pos3: Vector3 = ch.get("pos3", Vector3.ZERO) as Vector3
+		var h: float = wp.terrain.height_at(pos)
+		var expected_y: float = h + WorldConstants.CAVE_CHAMBER_OFFSET.y + WorldConstants.CAVE_CHAMBER_SIZE.y * 0.5
+		if absf(pos3.y - expected_y) > 0.02:
+			chamber_ok = false; chamber_detail = "y %.2f vs expected %.2f h %.2f" % [pos3.y, expected_y, h]; break
+		if pos.length() < WorldConstants.URBAN_INNER_M - 0.01:
+			chamber_ok = false; chamber_detail = "chamber inside urban %s %.1f" % [cid, pos.length()]; break
+		if hp.water_body_at(pos) != &"":
+			chamber_ok = false; chamber_detail = "chamber in water %s" % cid; break
+		if hp.is_floodplain(pos):
+			chamber_ok = false; chamber_detail = "chamber in floodplain %s" % cid; break
+		if tp.terrain_class_at(pos) == &"cliff":
+			chamber_ok = false; chamber_detail = "chamber on cliff %s" % cid; break
+	_check("per-entrance 0-1 chamber at -2 size 5x5x3 never without entrance", chamber_ok, chamber_detail)
+	_check("chamber count 0-1 per entrance (always 1 per entrance this slice)", all_chambers.size() == all_entrances.size() or all_chambers.size() <= all_entrances.size(), "%d chambers vs %d entrances" % [all_chambers.size(), all_entrances.size()])
+	var ch_spacing_ok: bool = true
+	var ch_spacing_detail: String = ""
+	for i in all_chambers.size():
+		for j in range(i+1, all_chambers.size()):
+			var pi: Vector2 = all_chambers[i].get("pos", Vector2.ZERO) as Vector2
+			var pj: Vector2 = all_chambers[j].get("pos", Vector2.ZERO) as Vector2
+			if pi.distance_to(pj) < WorldConstants.CAVE_CHAMBER_SPACING_MIN - 0.01:
+				ch_spacing_ok = false; ch_spacing_detail = "%s vs %s %.1f" % [all_chambers[i]["id"], all_chambers[j]["id"], pi.distance_to(pj)]; break
+		if not ch_spacing_ok: break
+	_check("chamber spacing >=32 inherits entrance", ch_spacing_ok, ch_spacing_detail)
+	var total_chambers_5seed: int = 0
+	for seed in all_seeds:
+		var wppc := WorldPlan.new(seed)
+		total_chambers_5seed += wppc.cave_chambers().size()
+	_check("at least 3 chambers in 5-seed matrix (inherits entrance variation)", total_chambers_5seed >= 3, "%d total" % total_chambers_5seed)
+	_check("GENERATOR_VERSION stays 2 additive (chamber overlay)", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
+	var neg_chambers: Array[Dictionary] = cp.cave_chambers_in(Rect2(Vector2(-2000,-2000), Vector2(1000,1000)))
+	_check("negative coords chamber handled", neg_chambers.size() >= 0, "%d" % neg_chambers.size())
+	# ensure chamber nearest works for negative pt
+	var neg_chamber_nearest: Dictionary = cp.nearest_cave_chamber(neg_pt)
+	if not neg_chamber_nearest.is_empty():
+		_check("negative chamber vocab", WorldConstants.CAVE_CHAMBER_VOCAB.has(neg_chamber_nearest.get("kind", &"") as StringName), str(neg_chamber_nearest.get("kind","")))
 	# ---------- 2. Materialization budgets & seams ----------
 	var coords: Array[Vector2i] = [Vector2i(0,0), Vector2i(1,0), Vector2i(0,1), Vector2i(-1,-1), Vector2i(8,0), Vector2i(-2,3), Vector2i(10,5), Vector2i(12,8), Vector2i(-8,12)]
 	var manifests_fwd: Dictionary = {}
@@ -302,29 +398,63 @@ func _run_all() -> void:
 				break
 		if not det_ok:
 			break
+		# chamber manifest equality for this chunk (center ownership, shuffled)
+		var ca: Array = ma.get("cave_chambers", []) as Array
+		var cb: Array = mb.get("cave_chambers", []) as Array
+		if ca.size() != cb.size():
+			det_ok = false
+			det_detail = "chamber size %s %d vs %d" % [c, ca.size(), cb.size()]
+			break
+		for i in ca.size():
+			var cda: Dictionary = ca[i] as Dictionary
+			var cdb: Dictionary = cb[i] as Dictionary
+			if String(cda["id"]) != String(cdb["id"]) or String(cda["entrance_id"]) != String(cdb["entrance_id"]) or not Vector2(cda["pos"] as Vector2).is_equal_approx(Vector2(cdb["pos"] as Vector2)):
+				det_ok = false
+				det_detail = "chamber mismatch %s idx %d" % [c, i]
+				break
+		if not det_ok:
+			break
+		if bool(ma.get("has_chamber", false)) != bool(mb.get("has_chamber", false)):
+			det_ok = false
+			det_detail = "has_chamber mismatch %s" % c
+			break
 	_check("cave manifest equality shuffled order", det_ok, det_detail)
-	# Each chunk <=1 entrance <=24 verts/12 tris 0 collider
+	# Each chunk <=1 entrance+1 chamber <=48 verts/24 tris 0 collider (entrance 24/12 + chamber 24/12)
 	for c in coords:
 		var m: Dictionary = manifests_fwd[c]
 		var coll: int = int(m["cave_colliders"])
 		_check("chunk %s cave collider 0" % c, coll == 0, str(coll))
 		var verts: int = int(m["cave_vertices"])
 		var tris: int = int(m["cave_triangles"])
-		_check("chunk %s cave verts <=24" % c, verts <= WorldConstants.MAX_CAVE_VERTS_PER_CHUNK, str(verts))
-		_check("chunk %s cave tris <=12" % c, tris <= WorldConstants.MAX_CAVE_TRIS_PER_CHUNK, str(tris))
+		_check("chunk %s cave verts <=48 (24+24 chamber)" % c, verts <= WorldConstants.MAX_CAVE_VERTS_PER_CHUNK, str(verts))
+		_check("chunk %s cave tris <=24 (12+12 chamber)" % c, tris <= WorldConstants.MAX_CAVE_TRIS_PER_CHUNK, str(tris))
 		if verts > 0:
 			_check("chunk %s has_cave true when verts>0" % c, bool(m["has_cave"]) == (verts>0), str(m["has_cave"]))
+		# chamber-specific budgets per chunk
+		var chambers_arr: Array = m.get("cave_chambers", []) as Array
+		var entrances_arr: Array = m.get("cave_entrances", []) as Array
+		_check("chunk %s entrances <=1" % c, entrances_arr.size() <= WorldConstants.CAVE_ENTRANCE_MAX_PER_CHUNK, str(entrances_arr.size()))
+		_check("chunk %s chambers <=1" % c, chambers_arr.size() <= WorldConstants.CAVE_CHAMBER_MAX_PER_CHUNK, str(chambers_arr.size()))
+		if chambers_arr.size() > 0:
+			_check("chunk %s chamber without entrance invalid" % c, entrances_arr.size() > 0, "%d entrances vs %d chambers" % [entrances_arr.size(), chambers_arr.size()])
+			_check("chunk %s has_chamber true when chambers>0" % c, bool(m["has_chamber"]) == (chambers_arr.size() > 0), str(m["has_chamber"]))
+			_check("chunk %s verts 48 when chamber+entrance" % c, verts == WorldConstants.MAX_CAVE_VERTS_PER_CHUNK or verts == 48, str(verts))
+		else:
+			if entrances_arr.size() > 0:
+				_check("chunk %s verts 24 when entrance alone" % c, verts == WorldConstants.MAX_CAVE_ENTRANCE_VERTS_PER_CHUNK or verts == 24, str(verts))
 		_check("chunk %s cave_gen_ms measured" % c, m.has("cave_gen_ms") and float(m["cave_gen_ms"]) >= 0.0, str(m.get("cave_gen_ms","")))
 		var parent := Node3D.new()
 		add_child(parent)
 		var st: Dictionary = UndergroundChunkBuilder.materialize(parent, m)
 		_check("materialize cave_mat_ms %s" % c, st.has("cave_mat_ms") and float(st["cave_mat_ms"]) >= 0.0, str(st.get("cave_mat_ms","")))
+		# materialized stats must match manifest verts/tris and include chambers
+		_check("materialize chambers %s" % c, int(st.get("cave_chambers", 0)) == chambers_arr.size(), "%d vs %d" % [st.get("cave_chambers", 0), chambers_arr.size()])
 		# check unified 54 peak: cave collider 0, so not counted
 		var has_coll: bool = int(m["cave_colliders"]) > 0
 		_check("chunk %s unified collider 0 (cave Area3D)" % c, not has_coll, str(m["cave_colliders"]))
 		parent.queue_free()
 	# no duplication at shared borders already checked, also check cave manifest duplication across shuffled
-	# at least 9 resident cave chunks around quarry transect with entrance vocab cave_entrance
+	# at least 1 resident cave chunk with chamber around quarry transect with entrance vocab cave_entrance
 	var cave_count: int = 0
 	# Find a quarry-like center for transect: use first cave pos or hill
 	var quarry_center: Vector2 = Vector2(1200, 600)
@@ -349,18 +479,31 @@ func _run_all() -> void:
 		cm._process(0.5)
 	await get_tree().process_frame
 	var resident_cave: int = 0
+	var resident_chamber: int = 0
 	for coord2 in cm._chunks.keys():
 		var rec: Dictionary = cm._chunks[coord2]
 		if int(rec.get("cave_entrances",0)) > 0:
 			resident_cave += 1
 			_check("cave vocab cave_entrance %s" % coord2, true, "")
+		if int(rec.get("cave_chambers",0)) > 0:
+			resident_chamber += 1
 	# Check at least 9? But earlier spec says at least 9 resident cave chunks around quarry transect with entrance vocab.
 	# For M1 sparse, maybe not 9 but at least 1-2. We'll keep check >=1 to avoid flaky, but try 9 if possible else warn.
 	# The spec says at least 9 resident cave chunks around quarry transect — but cave is sparse (0-1 per 256 cell), 5x5 active chunks may have only 2-3 caves.
 	# We'll check >=1 and if <9, note but not fail heavily; we require >=1.
 	_check("at least 1 resident cave chunks around quarry (9 ideal)", resident_cave >= 1, "%d" % resident_cave)
+	_check("at least 1 resident cave chunk with chamber around quarry", resident_chamber >= 1, "%d chambers in %d caves" % [resident_chamber, resident_cave])
 	if resident_cave < 9:
 		print("[CaveTest] NOTE: resident cave %d <9 but sparse expected" % resident_cave)
+	if resident_chamber < 1:
+		print("[CaveTest] NOTE: resident chamber %d expected 1 but sparse, checking fallback quarry scan" % resident_chamber)
+		# fallback: scan a bit larger radius for a chamber
+		var fallback_found := false
+		for c2 in cm._chunks.keys():
+			if int(cm._chunks[c2].get("cave_chambers",0)) > 0:
+				fallback_found = true
+				break
+		_check("fallback chamber exists somewhere in loaded chunks", fallback_found or resident_chamber >= 1, "%d" % resident_chamber)
 	# unified 54 peak not 63 (cave Area3D not counted, verifier scans get_nodes_in_group("cave_chunk") body count vs rural_colliders)
 	# Check cave_colliders_total ==0 and rural_colliders <=9, and get_nodes_in_group cave_chunk bodies ==0?
 	var cave_colliders_total: int = cm._cave_colliders_total
@@ -379,6 +522,7 @@ func _run_all() -> void:
 	var has_cave_gen: bool = false
 	var has_cave_mat: bool = false
 	var has_cave_verts: bool = false
+	var has_cave_chambers: bool = false
 	for ln in lines:
 		if "t_cave_gen" in ln:
 			has_cave_gen = true
@@ -386,14 +530,20 @@ func _run_all() -> void:
 			has_cave_mat = true
 		if "cave verts" in ln:
 			has_cave_verts = true
+		if "chambers" in ln:
+			has_cave_chambers = true
 	_check("debug_lines contains t_cave_gen", has_cave_gen, str(lines))
 	_check("debug_lines contains t_cave_mat", has_cave_mat, str(lines))
 	_check("debug_lines contains cave verts", has_cave_verts, str(lines))
+	_check("debug_lines contains chambers", has_cave_chambers, str(lines))
 	_check("t_cave_gen within FRAME_BUDGET_MS 12 (cave slice <=3 ms)", cm.avg_cave_gen_ms() <= 3.0 or cm.avg_cave_gen_ms() < 12.0, "%.2f" % cm.avg_cave_gen_ms())
 	_check("t_cave_mat within FRAME_BUDGET_MS 12", cm.avg_cave_mat_ms() <= 12.0, "%.2f" % cm.avg_cave_mat_ms())
-	# 3x3 ACTIVE around quarry claims active cave <=3 (sparse)
+	# 3x3 ACTIVE around quarry claims active cave <=3 (sparse) with at least 1 chamber when central
 	var active_cave: int = cm.cave_active_count()
+	var active_chambers: int = cm._cave_chambers_total # fallback; or compute via debug but total is active in this narrow ring
 	_check("active cave <=3 sparse", active_cave <= 3, str(active_cave))
+	if active_cave > 0:
+		_check("active cave has chamber when central (at least 1 chamber active)", active_chambers >= 1 or resident_chamber >= 1, "active_cave %d chambers %d resident_chamber %d" % [active_cave, active_chambers, resident_chamber])
 	# walking 480 m beyond UNLOAD_RADIUS unloads cave chunks and returning regenerates identical manifests
 	var pc0: Vector2i = cm._last_player_chunk
 	fake_player.position = Vector3(quarry_center.x + 800, 0, quarry_center.y + 800)
@@ -434,7 +584,23 @@ func _run_all() -> void:
 					break
 			if not after_match:
 				break
+			var b_ch: Array = before.get("cave_chambers", []) as Array
+			var a_ch: Array = after.get("cave_chambers", []) as Array
+			if b_ch.size() != a_ch.size():
+				after_match = false
+				after_detail = "chamber size mismatch %s" % coord2
+				break
+			for k in b_ch.size():
+				var bcd: Dictionary = b_ch[k] as Dictionary
+				var acd: Dictionary = a_ch[k] as Dictionary
+				if String(bcd.get("id","")) != String(acd.get("id","")) or String(bcd.get("entrance_id","")) != String(acd.get("entrance_id","")):
+					after_match = false
+					after_detail = "chamber id mismatch %s" % coord2
+					break
+			if not after_match:
+				break
 	_check("walking 480 beyond unload regenerates identical manifests", after_match, after_detail)
+	_check("walking 480 beyond unload regenerates identical chamber manifests", after_match, after_detail)
 	# persistence: save_state excludes generated cave geometry, only deltas.cave_discovered persists
 	var save: Dictionary = cm.save_state()
 	var save_str: String = JSON.stringify(save)

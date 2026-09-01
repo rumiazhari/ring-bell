@@ -28,8 +28,16 @@ var _granaries: Array[Dictionary] = []
 var _granaries_by_settlement: Dictionary = {} # settlement_id -> Array[Dictionary]
 var _granaries_by_id: Dictionary = {} # granary.id -> Dictionary
 var _granary_by_building: Dictionary = {} # building.id -> Dictionary
+# Player-facing settlement composition is still derived from the existing
+# settlement/building plan. These arrays contain only authored presentation
+# anchors; they do not introduce a new biome or simulation system.
+var _settlement_paths: Array[Dictionary] = []
+var _settlement_yards: Array[Dictionary] = []
+var _settlement_fences: Array[Dictionary] = []
+var _settlement_clutter: Array[Dictionary] = []
+var _settlement_trees: Array[Dictionary] = []
 
-static var _cache: Dictionary = {} # seed -> {buildings: Array, by_settlement: Dictionary, by_id: Dictionary, wells: Array, wells_by_settlement: Dictionary, wells_by_id: Dictionary, forage: Array, forage_by_id: Dictionary, workbenches: Array, workbenches_by_settlement: Dictionary, workbenches_by_id: Dictionary, workbench_by_building: Dictionary, granaries: Array, granaries_by_settlement: Dictionary, granaries_by_id: Dictionary, granary_by_building: Dictionary}
+static var _cache: Dictionary = {} # seed -> all deterministic rural manifests plus direct settlement dressing arrays
 
 static func _unit_float_with_seed(purpose: String, parts: Array, seed: int) -> float:
 	return float(WorldSeed.combine([seed, WorldSeed.str_hash(purpose)] + parts) % 1000003) / 1000003.0
@@ -75,6 +83,11 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 			_granaries_by_settlement[k] = (gbs[k] as Array[Dictionary]).duplicate()
 		_granaries_by_id = (cached.get("granaries_by_id", {}) as Dictionary).duplicate()
 		_granary_by_building = (cached.get("granary_by_building", {}) as Dictionary).duplicate()
+		_settlement_paths = (cached.get("settlement_paths", []) as Array[Dictionary]).duplicate()
+		_settlement_yards = (cached.get("settlement_yards", []) as Array[Dictionary]).duplicate()
+		_settlement_fences = (cached.get("settlement_fences", []) as Array[Dictionary]).duplicate()
+		_settlement_clutter = (cached.get("settlement_clutter", []) as Array[Dictionary]).duplicate()
+		_settlement_trees = (cached.get("settlement_trees", []) as Array[Dictionary]).duplicate()
 		# Invalidate stale cache without hearth (SPEC-C008): hearth derived from furniture must exist
 		var stale := false
 		if _buildings.size() > 0:
@@ -125,9 +138,30 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 							has_second_barn = true
 						break
 			if needs_second_barn and not has_second_barn:
-				stale = true
-		if not stale:
-			return
+					stale = true
+			if not stale:
+				# Invalidate stale hamlet composition missing house+barn guarantee (recovery port)
+				var hamlet_stale := false
+				for sid in _by_settlement.keys():
+					var arr2: Array[Dictionary] = _by_settlement[sid] as Array[Dictionary]
+					if arr2.size() >= 2:
+						var k0: StringName = arr2[0].get("settlement_kind", &"") as StringName
+						if k0 == &"hamlet":
+							var has_house_hamlet := false
+							var has_barn_hamlet := false
+							for b in arr2:
+								var kk: StringName = b.get("kind", &"") as StringName
+								if kk == &"barn" or kk == &"stable":
+									has_barn_hamlet = true
+								if kk == &"cottage" or kk == &"village_house" or kk == &"farmhouse":
+									has_house_hamlet = true
+							if not has_house_hamlet or not has_barn_hamlet:
+								hamlet_stale = true
+								break
+				if hamlet_stale:
+					stale = true
+			if not stale:
+				return
 		# stale: fall through to regeneration
 		_cache.erase(seed_used)
 	_generate()
@@ -144,10 +178,13 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 	var gbs_copy := {}
 	for k in _granaries_by_settlement.keys():
 		gbs_copy[k] = (_granaries_by_settlement[k] as Array[Dictionary]).duplicate()
-	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate(), "granaries": _granaries.duplicate(), "granaries_by_settlement": gbs_copy, "granaries_by_id": _granaries_by_id.duplicate(), "granary_by_building": _granary_by_building.duplicate()}
+	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate(), "granaries": _granaries.duplicate(), "granaries_by_settlement": gbs_copy, "granaries_by_id": _granaries_by_id.duplicate(), "granary_by_building": _granary_by_building.duplicate(), "settlement_paths": _settlement_paths.duplicate(), "settlement_yards": _settlement_yards.duplicate(), "settlement_fences": _settlement_fences.duplicate(), "settlement_clutter": _settlement_clutter.duplicate(), "settlement_trees": _settlement_trees.duplicate()}
 
 func _hash_id(s: String) -> int:
 	return WorldSeed.str_hash(s)
+
+static func _dict_id_cmp(a: Dictionary, b: Dictionary) -> bool:
+	return String(a.get("id", "")) < String(b.get("id", ""))
 
 func _footprint_for_kind(kind_building: StringName, id_hash: int, k: int) -> Vector2:
 	var r_x: float = _unit_float_with_seed("rural_building_fp_x", [id_hash, k], seed_used)
@@ -192,22 +229,13 @@ func _choose_building_kind(settlement_kind: StringName, id_hash: int, k: int, co
 			else:
 				return &"cottage"
 		&"hamlet":
-			if count == 2:
-				var has_barn: bool = _unit_float_with_seed("rural_building", [id_hash, 102], seed_used) > 0.5
-				if has_barn:
-					return &"barn" if k == 1 else (&"cottage" if r_kind > 0.5 else &"village_house")
-				else:
-					return &"cottage" if k == 0 else &"village_house" if r_kind > 0.5 else &"cottage"
-			else: # count 3
-				if k < 2:
-					# G8 M4: 35% second barn/stable for roof bridge
-					if k == 1:
-						var r2: float = _unit_float_with_seed("rural_building", [id_hash, 1031], seed_used)
-						if r2 > 0.65:
-							return &"barn" if r2 > 0.82 else &"stable"
-					return &"cottage" if k == 0 else &"village_house" if r_kind > 0.45 else &"cottage"
-				else:
-					return &"barn" if _unit_float_with_seed("rural_building", [id_hash, 103], seed_used) > 0.3 else &"stable"
+			# A hamlet always has one dwelling and one agricultural utility
+			# building. This is a composition guarantee, not a new category.
+			if k == 1:
+				return &"barn"
+			if count >= 3 and k == 2:
+				return &"stable" if _unit_float_with_seed("rural_building", [id_hash, 103], seed_used) > 0.3 else &"barn"
+			return &"cottage" if r_kind < 0.55 else &"village_house"
 		&"farmstead":
 			if count == 1:
 				return &"farmhouse"
@@ -433,11 +461,12 @@ func _palette_color(kind: StringName, id_hash: int, k: int) -> Color:
 			return Color("ddd0c0")
 
 func _roof_color(kind: StringName, id_hash: int, k: int) -> Color:
-	var r: float = _unit_float_with_seed("rural_building_palette", [id_hash, k + 100], seed_used)
-	if r < 0.6:
-		return Color("8a3a2a")
-	else:
+	# Red clay tile is the stable Czech rural cue. Keep sheds/weathered
+	# utilities on the grey variant, but never let a house become an
+	# indistinguishable grey platform because of a random roof roll.
+	if kind == &"shed":
 		return Color("5a5a5a")
+	return Color("9a4030")
 
 # --- Interior generation ---
 
@@ -561,8 +590,10 @@ func _generate_furniture(building: Dictionary, walls: Array[Dictionary], id_hash
 			target_count = 0 if r_cnt < 0.5 else 1
 		_:
 			target_count = 1 if r_cnt < 0.5 else 2
-	if target_count <= 0:
+	if target_count <= 0 and kind_building != &"barn" and kind_building != &"stable":
 		return [] as Array[Dictionary]
+	if target_count <= 0:
+		target_count = 1
 	var footprint: Vector2 = building["footprint"] as Vector2
 	var yaw: float = float(building["yaw"])
 	var center: Vector2 = building["center"] as Vector2
@@ -572,7 +603,67 @@ func _generate_furniture(building: Dictionary, walls: Array[Dictionary], id_hash
 	var has_wall: bool = walls.size() > 0
 	var wall_dict: Dictionary = {} if not has_wall else walls[0] as Dictionary
 	var furniture: Array[Dictionary] = [] as Array[Dictionary]
-	# Determine allowed kinds
+	# Robust deterministic furniture pass. The older wall-relative solver could
+	# reject every candidate after comparing world-space and local-space AABBs;
+	# this pass keeps furniture in the room, clear of the door and partition,
+	# and guarantees an inhabited interior for every enterable rural house.
+	var robust_target: int = 2 if kind_building == &"village_house" or kind_building == &"cottage" or kind_building == &"farmhouse" else 1
+	if kind_building == &"village_house" and r_cnt > 0.45:
+		robust_target = 3
+	if kind_building == &"barn" or kind_building == &"stable":
+		robust_target = 2
+	var door_local_robust: Vector2 = _world_to_local(center, yaw, door_pos)
+	var candidate_locals: Array[Vector2] = [
+		Vector2(-hx + 1.15, -hz + 1.05), Vector2(hx - 1.15, -hz + 1.05),
+		Vector2(-hx + 1.15, hz - 1.05), Vector2(hx - 1.15, hz - 1.05), Vector2(0.0, 0.0)
+	]
+	var candidate_kinds: Array[StringName] = [&"bed", &"shelf", &"table", &"stove", &"shelf"]
+	for ci in candidate_locals.size():
+		if furniture.size() >= robust_target:
+			break
+		var local_candidate: Vector2 = candidate_locals[ci]
+		if absf(local_candidate.x) > hx - 0.75 or absf(local_candidate.y) > hz - 0.75:
+			continue
+		if local_candidate.distance_to(door_local_robust) < 1.45:
+			continue
+		var world_candidate: Vector2 = _local_to_world(center, yaw, local_candidate)
+		var blocked_by_partition: bool = false
+		for wall in walls:
+			var wall_aabb: Rect2 = wall.get("aabb", Rect2()) as Rect2
+			if wall_aabb.grow(0.65).has_point(world_candidate):
+				blocked_by_partition = true
+				break
+		if blocked_by_partition:
+			continue
+		var furniture_kind: StringName = candidate_kinds[ci]
+		if (kind_building == &"barn" or kind_building == &"stable") and furniture_kind == &"bed":
+			furniture_kind = &"shelf"
+		var furniture_size: Vector3 = Vector3(1.8, 0.5, 0.9) if furniture_kind == &"bed" else (Vector3(1.2, 0.4, 0.6) if furniture_kind == &"shelf" else (Vector3(1.0, 0.9, 0.75) if furniture_kind == &"table" else Vector3(0.8, 0.8, 0.9)))
+		var furniture_aabb := Rect2(world_candidate - Vector2(furniture_size.x, furniture_size.z) * 0.5, Vector2(furniture_size.x, furniture_size.z))
+		var clear: bool = true
+		for other in furniture:
+			var other_aabb: Rect2 = other.get("aabb", Rect2()) as Rect2
+			if _aabb_gap(furniture_aabb, other_aabb) < 0.9 - 1e-6:
+				clear = false
+				break
+		if not clear:
+			continue
+		furniture.append({
+			"kind": furniture_kind,
+			"pos": world_candidate,
+			"local_pos": local_candidate,
+			"yaw": yaw,
+			"size": furniture_size,
+			"aabb": furniture_aabb,
+		})
+	if furniture.is_empty():
+		var fallback_local := Vector2(0.0, 0.0)
+		var fallback_world: Vector2 = _local_to_world(center, yaw, fallback_local)
+		furniture.append({"kind": &"table", "pos": fallback_world, "local_pos": fallback_local, "yaw": yaw, "size": Vector3(1.0, 0.9, 0.75), "aabb": Rect2(fallback_world - Vector2(0.5, 0.375), Vector2(1.0, 0.75))})
+	return furniture
+	# Legacy randomized wall solver retained below for historical reference;
+	# the deterministic robust pass above is the active path.
+
 	var allowed: Array[StringName] = []
 	if kind_building == &"barn" or kind_building == &"stable" or kind_building == &"shed":
 		allowed = [&"shelf", &"table"] as Array[StringName]
@@ -1307,6 +1398,53 @@ func _generate_forage() -> void:
 	# Sort forage by id
 	_forage.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return String(a["id"]) < String(b["id"]))
 
+func _layout_slot_center(settlement_center: Vector2, settlement_radius: float, settlement_kind: StringName, slot: int, id_hash: int) -> Vector2:
+	var road_point: Vector2 = _nearest_road_point(settlement_center)
+	var approach: Vector2 = Vector2.ZERO
+	if road_point.is_finite() and road_point.distance_to(settlement_center) > 0.5:
+		approach = (road_point - settlement_center).normalized()
+	if approach.length_squared() < 0.001:
+		var fallback_angle: float = _unit_float_with_seed("settlement_front", [id_hash], seed_used) * TAU
+		approach = Vector2(cos(fallback_angle), sin(fallback_angle))
+	var away: Vector2 = -approach
+	var side: Vector2 = Vector2(-approach.y, approach.x)
+	var depth: float = 14.0
+	var cross: float = 0.0
+	if settlement_kind == &"hamlet":
+		# House and barn face the same common lane; an optional stable sits
+		# behind them. The common remains open toward the road.
+		match slot:
+			0:
+				depth = 14.0; cross = -11.0
+			1:
+				depth = 14.0; cross = 11.0
+			_:
+				depth = 23.0; cross = 0.0
+	elif settlement_kind == &"village":
+		match slot:
+			0:
+				depth = 17.0; cross = -14.0
+			1:
+				depth = 17.0; cross = 14.0
+			2:
+				depth = 5.0; cross = -18.0
+			3:
+				depth = 5.0; cross = 18.0
+			4:
+				depth = 31.0; cross = -10.0
+			_:
+				depth = 31.0; cross = 10.0
+	else:
+		depth = 13.0 + float(slot) * 9.0
+		cross = 0.0 if slot == 0 else (-7.0 if slot % 2 == 0 else 7.0)
+	var jitter_depth: float = (_unit_float_with_seed("settlement_slot_jitter", [id_hash, slot, 0], seed_used) - 0.5) * 2.2
+	var jitter_cross: float = (_unit_float_with_seed("settlement_slot_jitter", [id_hash, slot, 1], seed_used) - 0.5) * 2.0
+	var local: Vector2 = away * (depth + jitter_depth) + side * (cross + jitter_cross)
+	var max_radius: float = maxf(10.0, settlement_radius * 0.90)
+	if local.length() > max_radius:
+		local = local.normalized() * max_radius
+	return settlement_center + local
+
 func _generate() -> void:
 	_buildings.clear()
 	_by_settlement.clear()
@@ -1347,14 +1485,13 @@ func _generate() -> void:
 					floors = 2 if rf > 0.55 else 1
 				else:
 					floors = 1
-			var height: float = WorldConstants.RURAL_BUILDING_HEIGHT_SINGLE + float(floors) * WorldConstants.RURAL_BUILDING_HEIGHT_VILLAGE_TWO_STOREY_EXTRA
-			var r_rad: float = _unit_float_with_seed("rural_building_radius", [id_hash, k], seed_used)
-			var radius: float = lerpf(0.28, 0.82, r_rad) * s_radius
-			var r_ang: float = _unit_float_with_seed("rural_building_angle", [id_hash, k], seed_used)
-			var base_angle: float = r_ang * TAU
+			var height: float = WorldConstants.RURAL_BUILDING_HEIGHT_SINGLE + float(maxi(0, floors - 1)) * WorldConstants.RURAL_BUILDING_HEIGHT_VILLAGE_TWO_STOREY_EXTRA
+			var slot_center: Vector2 = _layout_slot_center(s_center, s_radius, skind, k, id_hash)
+			var radius: float = slot_center.distance_to(s_center)
+			var base_angle: float = atan2(slot_center.y - s_center.y, slot_center.x - s_center.x)
 			var success := false
 			var building_dict: Dictionary = {}
-			for attempt in 8:
+			for attempt in 24:
 				var cur_radius: float = radius
 				var cur_angle: float = base_angle
 				if attempt > 0:
@@ -1549,7 +1686,11 @@ func _generate() -> void:
 				# Enrich with interior before appending (walls/furniture+hearth)
 				var b_id_hash: int = _hash_id(building_dict["id"] as String)
 				var walls: Array[Dictionary] = _generate_partition_wall(building_dict, b_id_hash)
+				for wall in walls:
+					wall["building_id"] = building_dict["id"]
 				var furn: Array[Dictionary] = _generate_furniture(building_dict, walls, b_id_hash)
+				for furniture in furn:
+					furniture["building_id"] = building_dict["id"]
 				var hearth: Dictionary = _build_hearth(furn, building_dict)
 				# Temporarily crate empty, will fill after settlement loop for hamlet/farmstead logic
 				var interior: Dictionary = {"walls": walls, "furniture": furn, "crate": {}, "hearth": hearth}
@@ -1563,7 +1704,7 @@ func _generate() -> void:
 		# Post settlement interior crate assignment and hamlet strict補填
 		var placed_arr: Array[Dictionary] = _by_settlement[sid] as Array[Dictionary]
 		# Ensure hamlet at least 2 buildings if target was 2-3 but dropped to 1 -> try to补 one more with relaxed attempts
-		if skind == &"hamlet" and placed_arr.size() == 1 and target_count >=2:
+		if (skind == &"hamlet" and placed_arr.size() == 1 and target_count >= 2) or (skind == &"village" and placed_arr.size() < 4):
 			# attempt one more building with extra attempts and relaxed spacing? we try again with k = target_count (extra index)
 			var k_extra: int = target_count
 			var kind_extra: StringName = _choose_building_kind(skind, id_hash, k_extra, target_count)
@@ -1596,7 +1737,7 @@ func _generate() -> void:
 				if not spacing_ok2: continue
 				var door2:Dictionary=_door_for_building(cand2, fp_extra, yaw2, s_center, id_hash, k_extra)
 				var floors2:int=1
-				var height2:float=WorldConstants.RURAL_BUILDING_HEIGHT_SINGLE+float(floors2)*WorldConstants.RURAL_BUILDING_HEIGHT_VILLAGE_TWO_STOREY_EXTRA
+				var height2:float=WorldConstants.RURAL_BUILDING_HEIGHT_SINGLE+float(maxi(0, floors2-1))*WorldConstants.RURAL_BUILDING_HEIGHT_VILLAGE_TWO_STOREY_EXTRA
 				var col2:Color=_palette_color(kind_extra, id_hash, k_extra)
 				var roof2:Color=_roof_color(kind_extra, id_hash, k_extra)
 				var bid2:String="rural_%s_%d_extra" % [sid, k_extra]
@@ -1628,7 +1769,11 @@ func _generate() -> void:
 				}
 				var idh2:int=_hash_id(bid2)
 				var walls2:Array[Dictionary]=_generate_partition_wall(bdict2, idh2)
+				for wall2 in walls2:
+					wall2["building_id"] = bdict2["id"]
 				var furn2:Array[Dictionary]=_generate_furniture(bdict2, walls2, idh2)
+				for furniture2 in furn2:
+					furniture2["building_id"] = bdict2["id"]
 				var hearth2:Dictionary=_build_hearth(furn2, bdict2)
 				bdict2["interior"]={"walls":walls2,"furniture":furn2,"crate":{},"hearth":hearth2}
 				_buildings.append(bdict2)
@@ -1781,6 +1926,7 @@ func _generate() -> void:
 	_generate_forage()
 	_generate_workbenches()
 	_generate_granaries()
+	_generate_settlement_dressing()
 	# Sort buildings by id
 	_buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return String(a["id"]) < String(b["id"])
@@ -2331,7 +2477,315 @@ func _nearest_gate_id(p: Vector2, gates: Array[Dictionary]) -> String:
 			best = String(g["id"])
 	return best
 
-# --- Public queries ---
+# --- Player-facing settlement composition ----------------------------------
+# These helpers turn already-generated settlement anchors/buildings into a
+# coherent place: a shared green, paths to the existing road, boundary fences,
+# practical clutter, and irregular edge trees. They are pure data derivation;
+# materialization remains the only code allowed to create scene nodes.
+
+func _point_near_building(p: Vector2, buildings: Array[Dictionary], gap: float) -> bool:
+	for b in buildings:
+		var aabb: Rect2 = b.get("aabb", Rect2()) as Rect2
+		if aabb.grow(gap).has_point(p):
+			return true
+	return false
+
+func _point_near_path(p: Vector2, paths: Array[Dictionary], clearance: float) -> bool:
+	for path in paths:
+		var a: Vector2 = path.get("a", Vector2.ZERO) as Vector2
+		var b: Vector2 = path.get("b", Vector2.ZERO) as Vector2
+		var d: Vector2 = b - a
+		var len2: float = d.length_squared()
+		if len2 < 0.0001:
+			continue
+		var t: float = clampf((p - a).dot(d) / len2, 0.0, 1.0)
+		if p.distance_to(a + d * t) < clearance:
+			return true
+	return false
+
+func _segment_touches_rect(a: Vector2, b: Vector2, rect: Rect2, pad: float) -> bool:
+	var expanded: Rect2 = rect.grow(pad)
+	for i in 25:
+		var t: float = float(i) / 24.0
+		if expanded.has_point(a.lerp(b, t)):
+			return true
+	return false
+
+func _dressing_basis(center: Vector2, id_hash: int) -> Dictionary:
+	var road_point: Vector2 = _nearest_road_point(center)
+	var toward_road: Vector2 = Vector2.ZERO
+	var tangent: Vector2 = _nearest_road_tangent(center)
+	if road_point.is_finite() and road_point.distance_to(center) > 0.5:
+		toward_road = (road_point - center).normalized()
+	if toward_road.length_squared() < 0.001 and tangent.length_squared() > 0.001:
+		toward_road = tangent.normalized()
+	if toward_road.length_squared() < 0.001:
+		var angle: float = _unit_float_with_seed("settlement_front", [id_hash], seed_used) * TAU
+		toward_road = Vector2(cos(angle), sin(angle))
+	return {"road_point": road_point, "toward_road": toward_road, "side": Vector2(-toward_road.y, toward_road.x)}
+
+func _append_settlement_path(sid: String, index: int, a: Vector2, b: Vector2, width: float, kind: StringName) -> Dictionary:
+	var path: Dictionary = {
+		"id": "settlement_path_%s_%02d" % [sid, index],
+		"settlement_id": sid,
+		"a": a,
+		"b": b,
+		"width": width,
+		"kind": kind,
+	}
+	_settlement_paths.append(path)
+	return path
+
+func _append_settlement_clutter(sid: String, index: int, kind: StringName, pos: Vector2, scale: float, yaw: float, building_id: String = "") -> void:
+	_settlement_clutter.append({
+		"id": "settlement_clutter_%s_%02d" % [sid, index],
+		"settlement_id": sid,
+		"building_id": building_id,
+		"kind": kind,
+		"pos": pos,
+		"scale": scale,
+		"yaw": yaw,
+	})
+
+func _generate_settlement_dressing() -> void:
+	_settlement_paths.clear()
+	_settlement_yards.clear()
+	_settlement_fences.clear()
+	_settlement_clutter.clear()
+	_settlement_trees.clear()
+	var anchors: Array[Dictionary] = settlement.settlement_anchors()
+	for anchor in anchors:
+		var sid: String = String(anchor.get("id", ""))
+		var skind: StringName = anchor.get("kind", &"hamlet") as StringName
+		if skind != &"hamlet" and skind != &"village" and skind != &"farmstead" and skind != &"isolated_farm":
+			continue
+		var center: Vector2 = anchor.get("center", Vector2.ZERO) as Vector2
+		var radius: float = float(anchor.get("radius", 28.0))
+		var id_hash: int = _hash_id(sid)
+		var buildings: Array[Dictionary] = (_by_settlement.get(sid, []) as Array[Dictionary]).duplicate()
+		buildings.sort_custom(_dict_id_cmp)
+		if buildings.is_empty():
+			continue
+		var basis: Dictionary = _dressing_basis(center, id_hash)
+		var road_point: Vector2 = basis["road_point"] as Vector2
+		var toward_road: Vector2 = basis["toward_road"] as Vector2
+		var side: Vector2 = basis["side"] as Vector2
+		var has_road: bool = road_point.is_finite() and road_point.distance_to(center) > 0.5
+		# The green is intentionally open. Wells and workstations generated by
+		# the existing resource plans remain separate functional nodes around it.
+		var yard_radius: float = WorldConstants.RURAL_YARD_RADIUS_HAMLET if skind == &"hamlet" else (WorldConstants.RURAL_YARD_RADIUS_VILLAGE if skind == &"village" else 5.5)
+		_settlement_yards.append({
+			"id": "settlement_yard_%s" % sid,
+			"settlement_id": sid,
+			"center": center,
+			"radius": yard_radius,
+			"kind": &"village_green" if skind == &"village" else &"common_yard",
+		})
+		var path_index: int = 0
+		if has_road:
+			_append_settlement_path(sid, path_index, road_point, center, WorldConstants.RURAL_PATH_MAIN_WIDTH if skind == &"village" else WorldConstants.RURAL_PATH_HAMLET_WIDTH, &"cart_track")
+			path_index += 1
+		# Every door gets a short footpath to the common space. This is what
+		# makes the radial building cluster read as one settlement rather than
+		# unrelated random props.
+		for b in buildings:
+			var door_pos: Vector2 = b.get("door_pos", b.get("center", center)) as Vector2
+			var join: Vector2 = center
+			var to_center: Vector2 = center - door_pos
+			if to_center.length_squared() > 0.001:
+				join = center - to_center.normalized() * minf(yard_radius * 0.72, to_center.length() * 0.35)
+			_append_settlement_path(sid, path_index, door_pos, join, WorldConstants.RURAL_PATH_FOOT_WIDTH if skind == &"village" else WorldConstants.RURAL_PATH_FOOT_HAMLET_WIDTH, &"footpath")
+			path_index += 1
+		# A small deterministic fence enclosure sits on the far side of the
+		# common, leaving the approach and all door paths open. Segment angles
+		# are jittered, so the boundary never exposes a polygon/grid pattern.
+		var fence_count: int = WorldConstants.RURAL_FENCE_MAX_PER_VILLAGE if skind == &"village" else (WorldConstants.RURAL_FENCE_MAX_PER_HAMLET if skind == &"hamlet" else 5)
+		var fence_radius: float = radius * 0.92
+		var fence_points: Array[Vector2] = []
+		for fi in fence_count + 1:
+			var fr: float = _unit_float_with_seed("settlement_fence_radius", [id_hash, fi], seed_used)
+			var jitter: float = (_unit_float_with_seed("settlement_fence_angle", [id_hash, fi], seed_used) - 0.5) * 0.20
+			var angle: float = atan2((-toward_road).y, (-toward_road).x) - 1.20 + float(fi) * 2.40 / float(fence_count) + jitter
+			var point_radius: float = fence_radius * (0.88 + fr * 0.12)
+			fence_points.append(center + Vector2(cos(angle), sin(angle)) * point_radius)
+		for fi in fence_count:
+			var fa: Vector2 = fence_points[fi]
+			var fb: Vector2 = fence_points[fi + 1]
+			var mid: Vector2 = (fa + fb) * 0.5
+			if _point_near_path(mid, _settlement_paths, 2.2) or _point_near_building(mid, buildings, 2.0):
+				continue
+			_settlement_fences.append({
+				"id": "settlement_fence_%s_%02d" % [sid, fi],
+				"settlement_id": sid,
+				"a": fa,
+				"b": fb,
+				"height": lerpf(WorldConstants.RURAL_FENCE_HEIGHT_MIN, WorldConstants.RURAL_FENCE_HEIGHT_MAX, _unit_float_with_seed("settlement_fence_height", [id_hash, fi], seed_used)),
+				"kind": &"yard_fence",
+			})
+		# Leave a real gate at the road approach. It is a visual cue and a
+		# navigable opening, not an opaque wall across the track.
+		var gate_pos: Vector2 = center + toward_road * fence_radius
+		if has_road:
+			gate_pos = center.lerp(road_point, 0.48)
+		_append_settlement_clutter(sid, 80, &"signpost", gate_pos, 0.9, atan2(toward_road.y, toward_road.x))
+		# Work yards are legible through purposeful clutter. Positions are
+		# derived from each existing building, never free-floating world noise.
+		var clutter_index: int = 0
+		for b in buildings:
+			var bid: String = String(b.get("id", ""))
+			var bcenter: Vector2 = b.get("center", center) as Vector2
+			var outward: Vector2 = (bcenter - center).normalized()
+			if outward.length_squared() < 0.001:
+				outward = toward_road
+			var door: Vector2 = b.get("door_pos", bcenter) as Vector2
+			var door_out: Vector2 = (door - bcenter).normalized()
+			if door_out.length_squared() < 0.001:
+				door_out = outward
+			var kind_b: StringName = b.get("kind", &"cottage") as StringName
+			var prop_pos: Vector2 = door + door_out * 1.8 + side * ((_unit_float_with_seed("settlement_clutter_side", [id_hash, clutter_index], seed_used) - 0.5) * 1.4)
+			if not _point_near_building(prop_pos, buildings, 0.4) and not _point_near_path(prop_pos, _settlement_paths, 1.0):
+				_append_settlement_clutter(sid, clutter_index, &"barrel", prop_pos, 0.85, _unit_float_with_seed("settlement_clutter_yaw", [id_hash, clutter_index], seed_used) * TAU, bid)
+				clutter_index += 1
+			if kind_b == &"barn" or kind_b == &"stable":
+				var yard_pos: Vector2 = bcenter + side * 3.0 - outward * 2.0
+				if not _point_near_building(yard_pos, buildings, 0.5):
+					_append_settlement_clutter(sid, clutter_index, &"cart", yard_pos, 0.9, atan2(toward_road.y, toward_road.x), bid)
+					clutter_index += 1
+				var wood_pos: Vector2 = bcenter - outward * 3.2 + side * 2.0
+				if not _point_near_building(wood_pos, buildings, 0.6):
+					_append_settlement_clutter(sid, clutter_index, &"wood_pile", wood_pos, 0.85, 0.0, bid)
+					clutter_index += 1
+			else:
+				var tool_pos: Vector2 = bcenter - outward * 2.6 + side * 1.5
+				if not _point_near_building(tool_pos, buildings, 0.5):
+					_append_settlement_clutter(sid, clutter_index, &"tool_rack", tool_pos, 0.72, atan2(door_out.y, door_out.x), bid)
+					clutter_index += 1
+		# Even a heavily rejected doorway prop should not leave the common
+		# visually empty. These deterministic common-yard pieces are placed
+		# only when the building-derived clutter did not find enough room.
+		var minimum_clutter: int = 6 if skind == &"village" else (4 if skind == &"hamlet" else 2)
+		var fallback_clutter_positions: Array[Vector2] = [
+			center + side * 3.8 - toward_road * 1.5,
+			center - side * 3.8 - toward_road * 1.5,
+			center + side * 2.8 + toward_road * 2.3,
+			center - side * 2.8 + toward_road * 2.3,
+			center - toward_road * 4.5,
+			center - toward_road * 6.0 + side * 1.8,
+		]
+		var fallback_kinds: Array[StringName] = [&"barrel", &"hay_stack", &"wood_pile", &"barrel", &"signpost", &"tool_rack"]
+		for fi in fallback_clutter_positions.size():
+			if clutter_index >= minimum_clutter:
+				break
+			var fallback_pos: Vector2 = fallback_clutter_positions[fi]
+			if not WorldConstants.is_inside_world(fallback_pos) or _point_near_building(fallback_pos, buildings, 0.25):
+				continue
+			_append_settlement_clutter(sid, 90 + fi, fallback_kinds[fi], fallback_pos, 0.72 + float(fi % 2) * 0.12, _unit_float_with_seed("settlement_fallback_clutter_yaw", [id_hash, fi], seed_used) * TAU)
+			clutter_index += 1
+		# Irregular boundary trees provide scale and a readable edge without
+		# competing with existing forest generation. The rejection checks are
+		# the exclusion zones for doors, buildings, roads and paths.
+		var tree_target: int = WorldConstants.RURAL_SETTLEMENT_TREES_VILLAGE if skind == &"village" else (WorldConstants.RURAL_SETTLEMENT_TREES_HAMLET if skind == &"hamlet" else 5)
+		var local_trees: Array[Vector2] = []
+		for ti in tree_target * 2:
+			if local_trees.size() >= tree_target:
+				break
+			var tr: float = _unit_float_with_seed("settlement_tree_radius", [id_hash, ti], seed_used)
+			var ta: float = _unit_float_with_seed("settlement_tree_angle", [id_hash, ti], seed_used) * TAU + float(ti) * 0.37
+			var tree_pos: Vector2 = center + Vector2(cos(ta), sin(ta)) * (radius * (1.10 + tr * 0.42))
+			if not WorldConstants.is_inside_world(tree_pos) or tree_pos.length() < WorldConstants.URBAN_INNER_M + 2.0:
+				continue
+			if terrain.terrain_class_at(tree_pos) == &"cliff" or terrain.slope_at(tree_pos) >= 30.0:
+				continue
+			if hydrology.water_body_at(tree_pos) != &"" or hydrology.is_floodplain(tree_pos):
+				continue
+			if road_network != null and road_network.distance_to_road(tree_pos) < WorldConstants.RURAL_SETTLEMENT_TREE_ROAD_CLEARANCE:
+				continue
+			if _point_near_building(tree_pos, buildings, WorldConstants.RURAL_SETTLEMENT_TREE_BUILDING_CLEARANCE) or _point_near_path(tree_pos, _settlement_paths, WorldConstants.RURAL_SETTLEMENT_TREE_PATH_CLEARANCE):
+				continue
+			var spaced: bool = true
+			for other_tree in local_trees:
+				if tree_pos.distance_to(other_tree) < WorldConstants.RURAL_SETTLEMENT_TREE_MIN_SPACING:
+					spaced = false
+					break
+			if not spaced:
+				continue
+			local_trees.append(tree_pos)
+			var species_roll: float = _unit_float_with_seed("settlement_tree_species", [id_hash, ti], seed_used)
+			var species: StringName = &"birch" if species_roll < 0.28 else (&"beech" if species_roll < 0.70 else &"pine")
+			_settlement_trees.append({
+				"id": "settlement_tree_%s_%02d" % [sid, local_trees.size() - 1],
+				"settlement_id": sid,
+				"pos": tree_pos,
+				"kind": species,
+				"scale": 0.82 + _unit_float_with_seed("settlement_tree_scale", [id_hash, ti], seed_used) * 0.48,
+				"yaw": _unit_float_with_seed("settlement_tree_yaw", [id_hash, ti], seed_used) * TAU,
+			})
+	# Stable ordering is part of the manifest contract and makes streamed
+	# chunk materialization independent of query order.
+	_settlement_paths.sort_custom(_dict_id_cmp)
+	_settlement_yards.sort_custom(_dict_id_cmp)
+	_settlement_fences.sort_custom(_dict_id_cmp)
+	_settlement_clutter.sort_custom(_dict_id_cmp)
+	_settlement_trees.sort_custom(_dict_id_cmp)
+
+func settlement_paths() -> Array[Dictionary]:
+	return _settlement_paths.duplicate()
+
+func settlement_paths_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for path in _settlement_paths:
+		var a: Vector2 = path.get("a", Vector2.ZERO) as Vector2
+		var b: Vector2 = path.get("b", Vector2.ZERO) as Vector2
+		var width: float = float(path.get("width", 1.5))
+		if _segment_touches_rect(a, b, rect, width * 0.5 + 0.1):
+			out.append(path)
+	return out
+
+func settlement_yards() -> Array[Dictionary]:
+	return _settlement_yards.duplicate()
+
+func settlement_yards_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for yard in _settlement_yards:
+		var center: Vector2 = yard.get("center", Vector2.ZERO) as Vector2
+		if rect.grow(float(yard.get("radius", 6.0)) + 0.1).has_point(center):
+			out.append(yard)
+	return out
+
+func settlement_fences() -> Array[Dictionary]:
+	return _settlement_fences.duplicate()
+
+func settlement_fences_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for fence in _settlement_fences:
+		var a: Vector2 = fence.get("a", Vector2.ZERO) as Vector2
+		var b: Vector2 = fence.get("b", Vector2.ZERO) as Vector2
+		if _segment_touches_rect(a, b, rect, 1.0):
+			out.append(fence)
+	return out
+
+func settlement_clutter() -> Array[Dictionary]:
+	return _settlement_clutter.duplicate()
+
+func settlement_clutter_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for prop in _settlement_clutter:
+		var pos: Vector2 = prop.get("pos", Vector2.ZERO) as Vector2
+		if rect.grow(2.0).has_point(pos):
+			out.append(prop)
+	return out
+
+func settlement_trees() -> Array[Dictionary]:
+	return _settlement_trees.duplicate()
+
+func settlement_trees_in(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for tree in _settlement_trees:
+		var pos: Vector2 = tree.get("pos", Vector2.ZERO) as Vector2
+		if rect.grow(2.0).has_point(pos):
+			out.append(tree)
+	return out
+
 
 func rural_buildings() -> Array[Dictionary]:
 	return _buildings.duplicate()
