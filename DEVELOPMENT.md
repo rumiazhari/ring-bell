@@ -330,3 +330,32 @@ City interior program G9 M1 residential ground floor 3-4 rooms 0.18 wall 0.95 op
 - ChunkManager mirrors cave/vertical pipeline: counters _cave_vertices_total/_triangles_total/_entrances_total/_chambers_total, _cave_active_colliders stays 0, debug_lines() as cave verts|tris|colliders|entrances|chambers t_cave_gen|t_cave_mat active cave (warm) (new chambers column), per-chunk record fields cave_vertices/cave_triangles/cave_colliders/cave_entrances/cave_chambers/cave_manifest/cave_gen_ms/cave_mat_ms, stats keys t_cave_gen/mat already exist and now include chamber derivation within same cave_gen_ms. Active-ring rule: cave portal and chamber portal ACTIVE-only; warm retains CaveMesh visual (entrance+chamber) but disables monitorable via _set_caves_enabled extended to handle CaveChamberPortal Area3D. save_state() excludes generated cave/chamber geometry, only deltas.cave_discovered persists, deterministic re-derive on load with per-chunk deltas re-applied before materialize keeps discovered flag. GENERATOR_VERSION stays 2 additive (chamber overlay, no parcel topology change). Compatibility: CityPlan IDs / Terrain 17x17 / hydrology CX etc unchanged proved by --citytest + --terrainmaterialtest + --hydrotest + --biometest + --roadtest + --ruraltest + --cavetest + --verticaltest each 0 failures with retained seams.
 - Streaming pacing: MAX_MATERIALIZATIONS_PER_FRAME 1 with early _collect_finished_jobs(pc) + freed-Zombie Variant guard (is_instance_valid + !is_queued_for_deletion() + is_inside_tree() before global_transform) documented as intentional pacing fix from 2a423d9 (do not revert; keep MAX_INFLIGHT 6). Note cave chamber 48/24 0 collider, 5×5×3 at -2, ACTIVE-only Area3D, 54 peak, pacing 1-per-frame + freed-Zombie guard verbatim, run_suite 400 etc.
 - Windowed proof: one normal windowed run log+PNG under .hermes/autopilot/reports/SPEC-CAVE-CHAMBER-windowed.* (1200×720, not --shot dummy) shows F3 overlay cave verts|tris|colliders|entrances|chambers alongside active city/rural/road/water/terrain/biome/vertical/industrial/society, then near quarry limestone upland slope≥28 with cave portal Box 3.6×3.6×2.2 5a4a3a "Enter cave" prompt at 1.8m and immediately visible vault Box 5×5×3 4a3a2a at -2m below terrain (chamber prompt "Explore chamber") without seam cracks at 64m borders, no teleport, unified 54 peak. Log line cave chamber <chamber_id> at <pos> entrance <entrance_id> distance -2.0 size 5x5x3 and cave entrances 1 chambers 1 in debug, referenced in WORLD-CONTRACT §28, ARCHITECTURE.md, DEVELOPMENT.md.
+
+## Part 1 City Fringe Visual Overhaul (this cycle)
+
+- **Goal:** make leaving the city not feel like leaving the finished game. Replace hard 350/600 radial cutoff with deformed fringe 300-1200 m.
+- **Run tests:**
+  ```
+  python tools/run_suite.py --import
+  python tools/run_suite.py --smoke
+  python tools/run_suite.py --citytest 400
+  python tools/run_suite.py --terraintest 90
+  python tools/run_suite.py --hydrotest 90
+  python tools/run_suite.py --roadtest 400
+  python tools/run_suite.py --ruraltest 400
+  python tools/run_suite.py --fringetest 120
+  ```
+  Fringe determinism, road-oriented, water/slope/cliff, overlap gaps inner1 outer6 peri10 rural8 city52, chunk seam, visible materialization, budgets 2800/1600, archetype diversity 5+, landmarks 2-40 spacing 180.
+- **Capture:**
+  ```
+  # windowed (1200x720) — 5 views per seed, 2 seeds
+  Godot_v4.7.2-stable_win64.exe --path . -- --fringe-capture
+  Godot_v4.7.2-stable_win64.exe --path . -- --fringe-capture --seed 20275774
+  # headless
+  Godot_v4.7.2-stable_win64.exe --headless --path . -- --fringe-capture
+  # outputs .hermes/autopilot/reports/fringe-part1/real/seed_*_*.png + .log
+  ```
+  Views: 01_city_toward_fringe (300→650), 02_inner_fringe_street, 03_industrial_fringe, 04_outer_peri_urban, 05_elevated_macro. Reject if circular cutoff, empty grass, floating houses, primitive cubes, prop spam, road ignorance, overlap, lighting loss.
+- **Budgets:** fringe `MAX_VERTS 2800` (typical 1200-1900) vs old 1600 rural, `MAX_BUILDINGS 8`, `1 collider` ACTIVE-only, `lazy per-seed cache`.
+- **Files:** `world/generation/fringe_plan.gd`, `world/streaming/fringe_chunk_builder.gd`, `world/generation/world_constants.gd` (FRINGE_*), `world/generation/world_seed.gd` (FRINGE_DOMAINS), `world/generation/world_plan.gd` (fringe forwarders), `world/streaming/chunk_manager.gd` (fringe streaming), `world/streaming/road_chunk_builder.gd` (blended road colors), `debug/fringe_test.gd`, `debug/fringe_capture.gd`, `world/main.gd` (--fringetest/--fringe-capture/--seed), `art/forest_art.gd` (const→static var fix).
+- **Scope stop:** do NOT proceed to village/forest/wilderness overhaul — next goals.

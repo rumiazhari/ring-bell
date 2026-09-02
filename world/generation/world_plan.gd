@@ -1,5 +1,6 @@
 class_name WorldPlan
 extends RefCounted
+const FringePlanScript = preload("res://world/generation/fringe_plan.gd")
 ## Thin facade owning one TerrainPlan and one HydrologyPlan and exposing stable queries.
 ## Does not touch scene tree, CityPlan caches, or ProjectSettings after construction.
 
@@ -11,6 +12,7 @@ var biome: BiomePlan
 var settlement: SettlementPlan
 var road_network: RoadNetworkPlan
 var rural_building: RuralBuildingPlan
+var fringe # FringePlan
 var cave: CavePlan
 var vertical: VerticalNetworkPlan
 var society: SocietyPlan
@@ -24,6 +26,13 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
+	var cp := CityPlan.new()
+	# CityPlan has internal caches keyed by WorldSeed.get_world_seed(); force correct seed for explicit WorldPlan instances (alt seeds)
+	cp.seed_used = seed
+	cp._cell_cache.clear()
+	cp._building_cache.clear()
+	cp._line_pos_cache = [{}, {}]
+	fringe = FringePlanScript.new(seed, terrain, hydrology, geology, biome, settlement, road_network, cp)
 	cave = CavePlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	vertical = VerticalNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	society = SocietyPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
@@ -509,3 +518,38 @@ func society_worker_for_settlement(settlement_id: String) -> Dictionary:
 
 func society_work_site_for_worker(worker_id: String) -> Dictionary:
 	return society.work_site_for_worker(worker_id)
+
+# --- Fringe forwarding (pure, deterministic) ---
+
+func fringe_buildings() -> Array[Dictionary]:
+	return fringe.fringe_buildings()
+
+func fringe_buildings_in(rect: Rect2) -> Array[Dictionary]:
+	return fringe.fringe_buildings_in(rect)
+
+func nearest_fringe_building(p: Vector2) -> Dictionary:
+	return fringe.nearest_fringe_building(p)
+
+func fringe_building_at(p: Vector2) -> Dictionary:
+	return fringe.fringe_building_at(p)
+
+func fringe_density_at(p: Vector2) -> float:
+	return fringe.fringe_density_at(p)
+
+func fringe_type_at(p: Vector2) -> StringName:
+	return fringe.fringe_type_at(p)
+
+func fringe_landmarks() -> Array[Dictionary]:
+	return fringe.landmarks()
+
+func fringe_landmarks_in(rect: Rect2) -> Array[Dictionary]:
+	return fringe.landmarks_in(rect)
+
+func fringe_walls_in(rect: Rect2) -> Array[Dictionary]:
+	return fringe.walls_in(rect)
+
+func fringe_yards_in(rect: Rect2) -> Array[Dictionary]:
+	return fringe.yards_in(rect)
+
+func fringe_trees_in(rect: Rect2) -> Array[Dictionary]:
+	return fringe.trees_in(rect)

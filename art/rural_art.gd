@@ -438,36 +438,119 @@ static func _append_cylinder(verts: PackedVector3Array, normals: PackedVector3Ar
 			indices.append(base + sides + n)
 			indices.append(base + sides + i)
 
+static func _append_cylinder_between(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, a: Vector3, b: Vector3, radius: float, sides: int, col: Color, col_alt: Color = Color.TRANSPARENT) -> void:
+	var axis := b - a
+	var length := axis.length()
+	if length < 0.01:
+		return
+	var forward := axis / length
+	var reference := Vector3.UP if absf(forward.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var side_axis := forward.cross(reference).normalized()
+	var up_axis := forward.cross(side_axis).normalized()
+	var base := verts.size()
+	var has_alt := col_alt != Color.TRANSPARENT
+	for end in 2:
+		var c := a if end == 0 else b
+		for i in sides:
+			var angle := TAU * float(i) / float(sides)
+			var radial := side_axis * cos(angle) + up_axis * sin(angle)
+			verts.append(c + radial * radius)
+			normals.append(radial)
+			colors.append(col_alt if has_alt and i % 2 == 1 else col)
+	for i in sides:
+		var n := (i + 1) % sides
+		indices.append(base + i); indices.append(base + n); indices.append(base + sides + n)
+		indices.append(base + i); indices.append(base + sides + n); indices.append(base + sides + i)
+
+static func _append_lobe(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, center: Vector3, radii: Vector3, sides: int, col: Color, col_alt: Color, variant: int = 0) -> void:
+	var base := verts.size()
+	var ring_scale: Array[float] = [0.58, 1.0, 0.62]
+	var has_alt := col_alt != Color.TRANSPARENT
+	for ring in 3:
+		var y_unit := -1.0 + float(ring)
+		for i in sides:
+			var angle := TAU * float(i) / float(sides) + float(variant % 2) * 0.13
+			var rr: float = ring_scale[ring]
+			var x := cos(angle) * radii.x * rr
+			var z := sin(angle) * radii.z * rr
+			var y := y_unit * radii.y
+			verts.append(center + Vector3(x, y, z))
+			normals.append(Vector3(x / maxf(0.01, radii.x), y / maxf(0.01, radii.y), z / maxf(0.01, radii.z)).normalized())
+			colors.append(col_alt if has_alt and (i + ring + variant) % 4 == 0 else col)
+	for ring in 2:
+		for i in sides:
+			var n := (i + 1) % sides
+			var a := base + ring * sides + i
+			var b := base + ring * sides + n
+			var c := base + (ring + 1) * sides + n
+			var d := base + (ring + 1) * sides + i
+			indices.append(a); indices.append(b); indices.append(c)
+			indices.append(a); indices.append(c); indices.append(d)
+	var bottom := verts.size()
+	verts.append(center - Vector3(0, radii.y, 0)); normals.append(Vector3.DOWN); colors.append(col)
+	var top := verts.size()
+	verts.append(center + Vector3(0, radii.y, 0)); normals.append(Vector3.UP); colors.append(col_alt if has_alt else col)
+	for i in sides:
+		var n := (i + 1) % sides
+		indices.append(bottom); indices.append(base + n); indices.append(base + i)
+		indices.append(top); indices.append(base + 2 * sides + i); indices.append(base + 2 * sides + n)
+
+
+static func _rotate_offset(offset: Vector3, yaw: float) -> Vector3:
+	var co := cos(yaw)
+	var si := sin(yaw)
+	return Vector3(offset.x * co - offset.z * si, offset.y, offset.x * si + offset.z * co)
+
+
 static func append_tree(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, center: Vector3, scale: float, yaw: float, trunk_col: Color, canopy_col: Color, canopy_alt: Color) -> void:
-	# A readable trunk/crown silhouette is more valuable than dense foliage at
-	# streamed-chunk distance, so keep the same low-poly budget but enlarge the
-	# crown slightly around a clearly visible trunk.
-	_append_cylinder(verts, normals, colors, indices, center + Vector3(0.0, 0.90 * scale, 0.0), 0.20 * scale, 1.8 * scale, 6, trunk_col, yaw)
-	var cy: float = center.y + 1.95 * scale
-	var r: float = 1.12 * scale
-	var base: int = verts.size()
-	var points: Array[Vector3] = [
-		Vector3(center.x, cy + 0.95 * scale, center.z),
-		Vector3(center.x, cy - 0.85 * scale, center.z),
-		Vector3(center.x + r, cy, center.z),
-		Vector3(center.x - r, cy, center.z),
-		Vector3(center.x, cy, center.z + r * 0.92),
-		Vector3(center.x, cy, center.z - r * 0.92),
-		Vector3(center.x + r * 0.62, cy + 0.35 * scale, center.z + r * 0.35),
-		Vector3(center.x - r * 0.58, cy + 0.28 * scale, center.z - r * 0.36)
-	]
-	for p in points:
-		verts.append(p)
-		normals.append((p - Vector3(center.x, cy, center.z)).normalized())
-		colors.append(canopy_col if verts.size() % 3 != 0 else canopy_alt)
-	var faces: Array[Array] = [
-		[0, 2, 6], [0, 6, 4], [0, 4, 7], [0, 7, 3], [0, 3, 5], [0, 5, 2],
-		[1, 6, 2], [1, 4, 6], [1, 7, 4], [1, 3, 7], [1, 5, 3], [1, 2, 5]
-	]
-	for f in faces:
-		indices.append(base + int(f[0]))
-		indices.append(base + int(f[1]))
-		indices.append(base + int(f[2]))
+	# Variant dispatch based on palette so birch/spruce have genuinely distinct silhouettes, not just recolored cube.
+	var is_birch: bool = canopy_col.is_equal_approx(Color("668653")) or canopy_col.is_equal_approx(WorldConstants.COL_RURAL_TREE_BIRCH)
+	var is_spruce_like: bool = canopy_col.is_equal_approx(Color("31553a")) or canopy_col.is_equal_approx(WorldConstants.COL_RURAL_TREE_PINE) or canopy_col.is_equal_approx(Color("426b48"))
+	# Heuristic: detect birch via light canopy_alt 7a9a5f, spruce via dark pine 31553a/426b48
+	var alt_is_birch_light: bool = canopy_alt.is_equal_approx(Color("7a9a5f")) or canopy_alt.is_equal_approx(Color("5d8048").lightened(0.12))
+	# Use trunk radius per kind
+	if is_spruce_like or canopy_col.is_equal_approx(WorldConstants.COL_RURAL_TREE_PINE):
+		# Spruce: tall slender trunk + stacked cone silhouette (vertical)
+		var th: float = 3.6 * scale
+		_append_cylinder(verts, normals, colors, indices, center + Vector3(0.0, th * 0.5, 0.0), 0.16 * scale, th, 6, trunk_col, yaw)
+		var base_y: float = center.y + th * 0.62
+		var tiers: int = 3
+		for ti in tiers:
+			var r: float = [1.22, 0.88, 0.58][ti] * scale
+			var h: float = [1.45, 1.12, 0.78][ti] * scale
+			var y0: float = base_y + float(ti) * 0.68 * scale
+			var y1: float = y0 + h
+			var base_idx: int = verts.size()
+			verts.append(Vector3(center.x, y1, center.z)); normals.append(Vector3.UP); colors.append(canopy_col)
+			for i in 6:
+				var ang: float = yaw + TAU * float(i) / 6.0
+				verts.append(Vector3(center.x + cos(ang)*r, y0, center.z + sin(ang)*r))
+				normals.append(Vector3(cos(ang), 0.35, sin(ang)).normalized()); colors.append(canopy_alt if i%2==0 else canopy_col)
+			for i in 6:
+				var n_idx: int = (i+1)%6
+				indices.append(base_idx); indices.append(base_idx+1+i); indices.append(base_idx+1+n_idx)
+		return
+	# Deciduous settlement trees use the same structural language as the forest:
+	# a visible trunk, real forked branches, and a closed multi-lobe crown.
+	var trunk_h: float = 1.9 * scale
+	var trunk_r: float = 0.20 * scale
+	if is_birch or alt_is_birch_light:
+		trunk_h = 2.35 * scale
+		trunk_r = 0.14 * scale
+	_append_cylinder(verts, normals, colors, indices, center + Vector3(0.0, trunk_h * 0.5, 0.0), trunk_r, trunk_h, 6, trunk_col, yaw)
+	var fork := center + Vector3(0.0, trunk_h * 0.58, 0.0)
+	var lobe_offsets: Array[Vector3]
+	var lobe_radii: Array[Vector3]
+	if is_birch or alt_is_birch_light:
+		lobe_offsets = [Vector3(0.0, trunk_h + 0.92, 0.0), Vector3(-0.42, trunk_h + 0.72, 0.06), Vector3(0.46, trunk_h + 0.78, -0.08)]
+		lobe_radii = [Vector3(0.78, 0.82, 0.70), Vector3(0.60, 0.64, 0.56), Vector3(0.64, 0.68, 0.58)]
+	else:
+		lobe_offsets = [Vector3(0.0, trunk_h + 1.02, 0.0), Vector3(-0.78, trunk_h + 0.82, 0.12), Vector3(0.82, trunk_h + 0.88, -0.10), Vector3(0.0, trunk_h + 0.78, 0.72)]
+		lobe_radii = [Vector3(1.05, 0.82, 1.00), Vector3(0.86, 0.68, 0.82), Vector3(0.88, 0.72, 0.84), Vector3(0.80, 0.64, 0.72)]
+	for i in lobe_offsets.size():
+		var lobe := center + _rotate_offset(lobe_offsets[i], yaw)
+		_append_cylinder_between(verts, normals, colors, indices, fork, lobe - Vector3(0, 0.20 * scale, 0), (0.075 if not (is_birch or alt_is_birch_light) else 0.05) * scale, 5, trunk_col.darkened(0.10))
+		_append_lobe(verts, normals, colors, indices, lobe, lobe_radii[i] * scale, 6, canopy_col, canopy_alt, i + int(absf(yaw) * 10.0))
 
 static func append_path(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, a: Vector2, b: Vector2, y_a: float, y_b: float, width: float, col: Color) -> void:
 	var d: Vector2 = b - a
@@ -496,6 +579,24 @@ static func append_yard(verts: PackedVector3Array, normals: PackedVector3Array, 
 		indices.append(base + i + 1)
 		indices.append(base + i + 2)
 
+static func append_undergrowth(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, center: Vector3, scale: float, yaw: float, variant: int = 0) -> void:
+	# Visual-only yard-edge clump: three low lobes plus a few upright blades.
+	# It is appended to the existing rural dressing mesh and never collides.
+	var bush_col := WorldConstants.COL_FOREST_BUSH.lightened(0.08)
+	var bush_alt := WorldConstants.COL_FOREST_BUSH_ALT.lightened(0.04)
+	var offsets: Array[Vector3] = [Vector3(-0.42, 0.42, 0.0), Vector3(0.36, 0.50, 0.10), Vector3(0.0, 0.62, 0.34)]
+	var radii: Array[Vector3] = [Vector3(0.62, 0.48, 0.54), Vector3(0.58, 0.52, 0.50), Vector3(0.48, 0.42, 0.44)]
+	for i in offsets.size():
+		var offset: Vector3 = _rotate_offset(offsets[i] * scale, yaw)
+		_append_lobe(verts, normals, colors, indices, center + offset, radii[i] * scale, 6, bush_col, bush_alt, variant + i)
+	var grass_col := WorldConstants.COL_FOREST_GRASS.lightened(0.06)
+	for i in 4:
+		var angle: float = yaw + float(i) * TAU / 4.0 + float(variant) * 0.21
+		var base_pos := center + Vector3(cos(angle) * 0.42 * scale, 0.04 * scale, sin(angle) * 0.42 * scale)
+		var tip_pos := center + Vector3(cos(angle) * 0.72 * scale, 0.86 * scale, sin(angle) * 0.72 * scale)
+		var side := Vector3(-sin(angle), 0.0, cos(angle)) * 0.16 * scale
+		_append_triangle(verts, normals, colors, indices, base_pos - side, base_pos + side, tip_pos, grass_col if i % 2 == 0 else grass_col.lightened(0.12), Vector3.UP)
+
 static func append_fence(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, a: Vector2, b: Vector2, y: float, height: float, col: Color, cap_col: Color) -> void:
 	var d: Vector2 = b - a
 	if d.length_squared() < 0.01:
@@ -503,10 +604,11 @@ static func append_fence(verts: PackedVector3Array, normals: PackedVector3Array,
 	var mid: Vector2 = (a + b) * 0.5
 	var length: float = d.length()
 	var yaw: float = atan2(d.y, d.x)
-	_append_oriented_box(verts, normals, colors, indices, Vector3(a.x, y + height * 0.5, a.y), Vector3(0.14, height, 0.14), 0.0, cap_col)
-	_append_oriented_box(verts, normals, colors, indices, Vector3(b.x, y + height * 0.5, b.y), Vector3(0.14, height, 0.14), 0.0, cap_col)
-	_append_oriented_box(verts, normals, colors, indices, Vector3(mid.x, y + height * 0.33, mid.y), Vector3(length, 0.10, 0.12), yaw, col)
-	_append_oriented_box(verts, normals, colors, indices, Vector3(mid.x, y + height * 0.72, mid.y), Vector3(length, 0.10, 0.12), yaw, col)
+	_append_oriented_box(verts, normals, colors, indices, Vector3(a.x, y + height * 0.5, a.y), Vector3(0.22, height, 0.22), 0.0, cap_col)
+	_append_oriented_box(verts, normals, colors, indices, Vector3(b.x, y + height * 0.5, b.y), Vector3(0.22, height, 0.22), 0.0, cap_col)
+	_append_oriented_box(verts, normals, colors, indices, Vector3(mid.x, y + height * 0.28, mid.y), Vector3(length, 0.18, 0.16), yaw, col)
+	_append_oriented_box(verts, normals, colors, indices, Vector3(mid.x, y + height * 0.58, mid.y), Vector3(length, 0.18, 0.16), yaw, col)
+	_append_oriented_box(verts, normals, colors, indices, Vector3(mid.x, y + height * 0.82, mid.y), Vector3(length, 0.14, 0.14), yaw, cap_col)
 static func append_well(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, ground_center: Vector3, scale: float, yaw: float) -> void:
 	var stone: Color = WorldConstants.RURAL_WELL_COLOR_WALL
 	var water: Color = WorldConstants.RURAL_WELL_COLOR_WATER

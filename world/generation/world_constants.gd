@@ -207,8 +207,8 @@ const RURAL_PATH_HAMLET_WIDTH := 2.4
 const RURAL_PATH_FOOT_WIDTH := 1.55
 const RURAL_PATH_FOOT_HAMLET_WIDTH := 1.35
 const RURAL_PATH_LIFT_M := 0.035
-const RURAL_YARD_RADIUS_HAMLET := 7.0
-const RURAL_YARD_RADIUS_VILLAGE := 10.0
+const RURAL_YARD_RADIUS_HAMLET := 10.0
+const RURAL_YARD_RADIUS_VILLAGE := 13.0
 const RURAL_FENCE_HEIGHT_MIN := 1.05
 const RURAL_FENCE_HEIGHT_MAX := 1.30
 const RURAL_FENCE_MAX_PER_HAMLET := 7
@@ -224,7 +224,7 @@ const RURAL_SETTLEMENT_TREE_BUILDING_CLEARANCE := 5.0
 const RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK := 64
 const COL_RURAL_PATH_CART := Color("8b7656")
 const COL_RURAL_PATH_FOOT := Color("a08a68")
-const COL_RURAL_YARD := Color("71814d")
+const COL_RURAL_YARD := Color("5b8a42")
 const COL_RURAL_FENCE := Color("6b4b32")
 const COL_RURAL_FENCE_CAP := Color("89633f")
 const COL_RURAL_TREE_TRUNK := Color("5a402c")
@@ -304,10 +304,10 @@ const HEDGEROW_TRUE_HEIGHT_MAX := 0.75
 const HEDGEROW_TRUE_COLOR := Color("5a7a3a")
 const HEDGEROW_WIDTH := 0.4
 const FIELD_PARCEL_HEDGEROW_WIDTH := 0.4
-const COL_FIELD_WHEAT := Color("c2b280")
-const COL_FIELD_BARLEY := Color("8faa6a")
-const COL_FIELD_POTATO := Color("6e635a")
-const COL_FIELD_BEET := Color("6a8a5a")
+const COL_FIELD_WHEAT := Color("a18a4e")
+const COL_FIELD_BARLEY := Color("789456")
+const COL_FIELD_POTATO := Color("75634c")
+const COL_FIELD_BEET := Color("6f965b")
 const MAX_FIELD_VERTS_PER_CHUNK := 96
 const MAX_FIELD_TRIS_PER_CHUNK := 64
 const FIELD_HEDGEROW_MAX_PER_CHUNK := 8
@@ -496,6 +496,109 @@ const MAX_ASSET_RESOLVES_PER_CHUNK: int = 4
 const ASSET_LIFT_M: float = 0.01
 const ASSET_CATALOG_VERSION: int = 1
 
+# --- City Fringe Composition System (Part 1) authoritative numerics — Prague 1900 inner/outer/peri-urban transition 300-1200 m ---
+# Four overlapping bands deformed by road proximity, terrain, water, noise; deterministic sparse landmarks; road surface transition; visual density via coherent built form.
+const FRINGE_INNER_START_M := 300.0
+const FRINGE_INNER_END_M := 550.0
+const FRINGE_OUTER_START_M := 450.0
+const FRINGE_OUTER_END_M := 800.0
+const FRINGE_PERI_START_M := 650.0
+const FRINGE_PERI_END_M := 1200.0
+const FRINGE_MAX_M := 1300.0
+const FRINGE_INNER_DENSITY_THRESHOLD := 0.52
+const FRINGE_OUTER_DENSITY_THRESHOLD := 0.28
+const FRINGE_PERI_DENSITY_THRESHOLD := 0.10
+const FRINGE_DENSITY_NOISE_CELL := 280.0
+const FRINGE_DENSITY_NOISE_AMPL := 0.32
+const FRINGE_ROAD_INFLUENCE_M := 120.0
+const FRINGE_ROAD_SETBACK_INNER := 3.0
+const FRINGE_ROAD_SETBACK_OUTER := 4.5
+const FRINGE_ROAD_SETBACK_PERI := 5.5
+const FRINGE_SLOPE_MAX_DEG_INNER := 18.0
+const FRINGE_SLOPE_MAX_DEG_OUTER := 22.0
+const FRINGE_SLOPE_MAX_DEG_PERI := 22.0
+const FRINGE_WATER_GAP := 11.0 # BANK 9 + 2
+const FRINGE_BUILDING_GAP_INNER := 1.0
+const FRINGE_BUILDING_GAP_OUTER := 6.0
+const FRINGE_BUILDING_GAP_PERI := 10.0
+const FRINGE_MAX_BUILDINGS_PER_CHUNK_INNER := 8
+const FRINGE_MAX_BUILDINGS_PER_CHUNK_OUTER := 6
+const FRINGE_MAX_BUILDINGS_PER_CHUNK_PERI := 4
+const FRINGE_MAX_BUILDINGS_PER_CHUNK := 8
+const FRINGE_MAX_VERTS_PER_CHUNK := 2800
+const FRINGE_MAX_TRIS_PER_CHUNK := 3600
+const FRINGE_MAX_VERTS_TYPICAL := 1600
+const FRINGE_MAX_TRIS_TYPICAL := 2200
+const FRINGE_OVERLAP_LIFT_M := 0.015
+const FRINGE_ARCHETYPES: Array[StringName] = [&"worker_row_house", &"small_tenement", &"detached_cottage", &"workshop", &"warehouse", &"small_factory", &"industrial_shed", &"courtyard_house", &"roadside_inn", &"utility_building"]
+const FRINGE_ARCHETYPE_FOOTPRINTS := {
+	&"worker_row_house": [Vector2(6.5, 10.0), Vector2(8.5, 13.0)],
+	&"small_tenement": [Vector2(9.0, 12.0), Vector2(11.5, 15.5)],
+	&"detached_cottage": [Vector2(7.0, 8.5), Vector2(9.0, 11.0)],
+	&"workshop": [Vector2(10.0, 9.0), Vector2(13.0, 12.5)],
+	&"warehouse": [Vector2(14.0, 12.0), Vector2(18.0, 16.0)],
+	&"small_factory": [Vector2(16.0, 14.0), Vector2(22.0, 18.0)],
+	&"industrial_shed": [Vector2(12.0, 12.0), Vector2(16.0, 20.0)],
+	&"courtyard_house": [Vector2(10.0, 10.0), Vector2(13.5, 13.5)],
+	&"roadside_inn": [Vector2(10.0, 9.0), Vector2(12.5, 11.5)],
+	&"utility_building": [Vector2(4.2, 5.0), Vector2(6.0, 7.0)],
+}
+const FRINGE_ARCHETYPE_FLOORS := {
+	&"worker_row_house": Vector2i(2, 3),
+	&"small_tenement": Vector2i(3, 4),
+	&"detached_cottage": Vector2i(1, 2),
+	&"workshop": Vector2i(1, 1),
+	&"warehouse": Vector2i(1, 2),
+	&"small_factory": Vector2i(2, 3),
+	&"industrial_shed": Vector2i(1, 1),
+	&"courtyard_house": Vector2i(1, 2),
+	&"roadside_inn": Vector2i(2, 2),
+	&"utility_building": Vector2i(1, 1),
+}
+const FRINGE_ARCHETYPE_FLOOR_H := {
+	&"worker_row_house": 3.05,
+	&"small_tenement": 3.15,
+	&"detached_cottage": 3.0,
+	&"workshop": 3.6,
+	&"warehouse": 4.2,
+	&"small_factory": 4.0,
+	&"industrial_shed": 4.5,
+	&"courtyard_house": 3.1,
+	&"roadside_inn": 3.15,
+	&"utility_building": 2.9,
+}
+const FRINGE_LANDMARK_VOCAB: Array[StringName] = [&"factory_compound", &"warehouse_yard", &"industrial_chimney", &"mill", &"large_workshop", &"brick_wall_lot", &"worker_court", &"market_garden", &"cemetery_edge", &"roadside_landmark_inn"]
+const FRINGE_LANDMARK_DENSITY_THRESHOLD := 0.38
+const FRINGE_LANDMARK_CHANCE := 0.18
+const FRINGE_LANDMARK_SPACING_MIN := 180.0
+const FRINGE_LANDMARK_MAX_PER_CHUNK := 1
+const FRINGE_LANDMARK_SIZE_FACTORY := Vector2(36, 28)
+const FRINGE_CHIMNEY_HEIGHT := 14.0
+const FRINGE_WALL_HEIGHT := 2.2
+const FRINGE_MAX_LANDMARK_VERTS_PER_CHUNK := 520
+const FRINGE_MAX_LANDMARK_TRIS_PER_CHUNK := 360
+const FRINGE_ROAD_SURFACE_BLEND_INNER := 0.0
+const FRINGE_ROAD_SURFACE_BLEND_OUTER := 0.5
+const FRINGE_ROAD_SURFACE_BLEND_PERI := 1.0
+const FRINGE_WALL_FENCE_MAX_PER_CHUNK := 8
+const FRINGE_DECOR_MAX_PER_CHUNK := 16
+const FRINGE_TREE_MAX_PER_CHUNK := 12
+const FRINGE_TREE_MIN_SPACING := 4.0
+const FRINGE_TREE_ROAD_CLEARANCE := 3.0
+const FRINGE_TREE_BUILDING_CLEARANCE := 4.0
+const FRINGE_DRESSING_MAX_INSTANCES_PER_CHUNK := 48
+const FRINGE_LANDMARK_MAX_VERTS := 520
+const FRINGE_LANDMARK_MAX_TRIS := 360
+const FRINGE_MAX_FRINGE_COLLIDERS_PER_CHUNK := 1
+const FRINGE_MAX_ACTIVE_FRINGE_COLLIDERS := 9
+const COL_FRINGE_WALL_BRICK := Color("8a3a2a")
+const COL_FRINGE_FENCE_WOOD := Color("6b4b32")
+const COL_FRINGE_YARD_DIRT := Color("8b7656")
+const COL_ROAD_COBBLE := Color("7a7878")
+const COL_ROAD_MIXED := Color("857a6b")
+const COL_ROAD_DIRT_PACKED := Color("6e5d4b")
+const COL_ROAD_DIRTY_STONE := Color("7d756a")
+
 # --- Settlement Society Work Schedule (G9 M3) authoritative numerics — hamlet worker 06:00-18:00 at workbench/granary/field ---
 # Deterministic work schedule overlay: each hamlet gets 0-1 worker (never village this slice) assigned to nearest
 # workbench / granary / field parcel within SOCIETY_WORK_RADIUS_M. Shift 06:00-18:00 via GameClock.total_minutes % 1440,
@@ -528,7 +631,90 @@ const MAX_INDUSTRIAL_INSTANCES := 6
 const INDUSTRIAL_CORRIDOR_DENSITY_CELL := 480.0
 const INDUSTRIAL_CORRIDOR_DENSITY_THRESHOLD := 0.48
 
-# --- Biome & Geology (P3.1) authoritative numerics ---
+# --- G10-P1 Forest Vegetation Rebuild (typed vegetation, forest composition, lit pipeline) ---
+# Placeholder BoxMesh forest has been removed. Typed vegetation groups provide
+# genuinely distinct meshes/silhouettes per class, batched by type via MultiMesh.
+# Budgets are raised intelligently: interior dense 56 trees + 20 bush + 18 grass + 4 log
+# stays batched, total <=96 per forest interior chunk (edge/sparse lower). Countryside
+# roadside/hedgerow/solitary remain restrained but visible. All rural vegetation uses
+# lit StandardMaterial3D (vertex_color_use_as_albedo, roughness 0.85-1.0, Per-Pixel),
+# never UNSHADED, matching city renderer stylized language.
+const VEGETATION_VOCAB: Array[StringName] = [&"beech", &"oak", &"birch", &"spruce", &"sapling", &"bush", &"grass", &"log", &"leaf_litter", &"stone", &"dead_branch", &"hedgerow", &"roadside_shrub", &"solitary_oak"]
+const FOREST_TREE_VOCAB: Array[StringName] = [&"beech", &"oak", &"birch", &"spruce"]
+const FOREST_UNDERSTORY_VOCAB: Array[StringName] = [&"bush", &"grass", &"log", &"leaf_litter", &"stone", &"dead_branch", &"sapling"]
+const COUNTRYSIDE_VOCAB: Array[StringName] = [&"hedgerow", &"roadside_shrub", &"solitary_oak"]
+# Caps for typed groups — total per-chunk never exceeds MAX_BIOME_INSTANCES_PER_CHUNK (96)
+const MAX_FOREST_TREES_PER_CHUNK := 56
+const MAX_FOREST_SAPLING_PER_CHUNK := 12
+const MAX_FOREST_BUSH_PER_CHUNK := 20
+const MAX_FOREST_GRASS_PER_CHUNK := 18
+const MAX_FOREST_LOG_PER_CHUNK := 4
+const MAX_FOREST_LEAF_LITTER_PER_CHUNK := 8
+const MAX_FOREST_STONE_PER_CHUNK := 4
+const MAX_FOREST_DEAD_BRANCH_PER_CHUNK := 3
+const MAX_UNDERSTORY_PER_CHUNK := 36 # bush+grass+log+floor dressing combined bound for dense interior
+const MAX_COUNTRYSIDE_VEG_PER_CHUNK := 32 # field/hedge/roadside/solitary dressing; global biome cap remains 96
+const MAX_FOREST_INSTANCES_PER_CHUNK := 96 # total forest+understory+floor budget for dense interior
+# Per-chunk typed MultiMesh budget: tree families, understory, and floor dressing are separate groups.
+const MAX_VEGETATION_MULTIMESH_PER_CHUNK := 24
+# Geometry authoritative sizes — trunk/crown proportions tuned for Czech temperate silhouette
+const TREE_TRUNK_RADIUS_BEECH := 0.22
+const TREE_TRUNK_RADIUS_OAK := 0.26
+const TREE_TRUNK_RADIUS_BIRCH := 0.18
+const TREE_TRUNK_RADIUS_SPRUCE := 0.24
+const TREE_TRUNK_HEIGHT_BEECH_MIN := 3.2
+const TREE_TRUNK_HEIGHT_BEECH_MAX := 5.0
+const TREE_TRUNK_HEIGHT_OAK_MIN := 3.0
+const TREE_TRUNK_HEIGHT_OAK_MAX := 4.6
+const TREE_TRUNK_HEIGHT_BIRCH_MIN := 3.8
+const TREE_TRUNK_HEIGHT_BIRCH_MAX := 5.6
+const TREE_TRUNK_HEIGHT_SPRUCE_MIN := 4.2
+const TREE_TRUNK_HEIGHT_SPRUCE_MAX := 6.5
+const TREE_CANOPY_RADIUS_BEECH := 1.9
+const TREE_CANOPY_RADIUS_OAK := 2.2
+const TREE_CANOPY_RADIUS_BIRCH := 1.4
+const TREE_CANOPY_RADIUS_SPRUCE_BASE := 1.5
+const TREE_SCALE_MIN := 0.92
+const TREE_SCALE_MAX := 1.58
+const BUSH_SIZE_MIN := 0.90
+const BUSH_SIZE_MAX := 1.80
+const GRASS_CLUMP_SIZE := 0.72
+const LOG_LENGTH := 3.8
+const LOG_RADIUS := 0.34
+const FOREST_TREE_MIN_SPACING := 2.35
+const FOREST_UNDERSTORY_MIN_SPACING := 1.6
+const FOREST_FLOOR_LIFT_M := 0.02
+const FOREST_UNDERSTORY_LIFT_M := 0.10
+const FOREST_CLEARING_PROBABILITY := 0.07
+const FOREST_EDGE_FALLOFF_RADIUS := 18.0
+const COUNTRYSIDE_ROADSIDE_INTERVAL := 12.0
+const COUNTRYSIDE_SOLITARY_CHANCE := 0.18
+# Lit pipeline: rural vegetation must NOT use SHADING_MODE_UNSHADED. Matches city StandardMaterial3D
+# vertex_color_use_as_albedo true, roughness 0.85-1.0, metallic 0, shading Per-Pixel, cull disabled for foliage.
+const VEGETATION_MATERIAL_ROUGHNESS := 0.85
+const VEGETATION_SHADING_MODE := 0 # BaseMaterial3D.SHADING_MODE_PER_PIXEL (0), not UNSHADED (2)
+const VEGETATION_TRUNK_ROUGHNESS := 0.92
+const COL_FOREST_CANOPY_BEECH := Color("3a6b2a")
+const COL_FOREST_CANOPY_BEECH_ALT := Color("4a7a30")
+const COL_FOREST_CANOPY_OAK := Color("345a1e")
+const COL_FOREST_CANOPY_OAK_ALT := Color("3d6b24")
+const COL_FOREST_CANOPY_BIRCH := Color("5a8a3e")
+const COL_FOREST_CANOPY_BIRCH_ALT := Color("6a9a4a")
+const COL_FOREST_CANOPY_SPRUCE := Color("2a4a2a")
+const COL_FOREST_CANOPY_SPRUCE_ALT := Color("2f5a30")
+const COL_FOREST_TRUNK_BEECH := Color("5e4a32")
+const COL_FOREST_TRUNK_OAK := Color("5a402c")
+const COL_FOREST_TRUNK_BIRCH := Color("7a6a55")
+const COL_FOREST_TRUNK_SPRUCE := Color("4a3a2a")
+const COL_FOREST_BUSH := Color("6f9138")
+const COL_FOREST_BUSH_ALT := Color("8aa74a")
+const COL_FOREST_GRASS := Color("9abf50")
+const COL_FOREST_GRASS_ALT := Color("b9d865")
+const COL_FOREST_LOG := Color("5c4a32")
+const COL_FOREST_LOG_DARK := Color("3e352a")
+const COL_FOREST_FLOOR_LITTER := Color("3a3d2a")
+const COL_FOREST_FLOOR_GRASS := Color("3e5a2a")
+# Biome & Geology (P3.1) authoritative numerics (preserved for test compatibility — instance caps raised for visual density)
 const GEOLOGY_STRATA_VOCAB: Array[StringName] = [&"alluvial", &"loess", &"limestone", &"sandstone", &"granite_like"]
 const GEOLOGY_SOIL_VOCAB: Array[StringName] = [&"alluvial_soil", &"loess_soil", &"limestone_soil", &"sandstone_soil", &"granite_soil"]
 const WATER_DISTRICT_HINTS: Array[StringName] = [&"urban_basin", &"rural_plateau", &"river_valley"]
@@ -555,10 +741,10 @@ const BIOME_OVERLAY_RESOLUTION := 9
 const BIOME_OVERLAY_VERTS := 81
 const BIOME_OVERLAY_TRIS_MAX := 128
 const BIOME_OVERLAY_LIFT_M := 0.03
-const BIOME_INSTANCE_CAP_FOREST := 48
+const BIOME_INSTANCE_CAP_FOREST := 56 # raised from 48 to support dense interior + edge sapling (was placeholder budget)
 const BIOME_INSTANCE_CAP_FIELD := 12
 const BIOME_INSTANCE_CAP_QUARRY := 6
-const MAX_BIOME_INSTANCES_PER_CHUNK := 48
+const MAX_BIOME_INSTANCES_PER_CHUNK := 96 # raised from 48 to accommodate typed forest + understory + countryside without sacrificing density (verified 96 peak, still batched)
 
 static func is_inside_world(p: Vector2) -> bool:
 	return p.x >= WORLD_MIN_M and p.x < WORLD_MAX_M and p.y >= WORLD_MIN_M and p.y < WORLD_MAX_M

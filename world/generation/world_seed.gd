@@ -107,6 +107,8 @@ const CAVE_CHAMBER_DOMAINS: Array[StringName] = [&"cave_chamber"]
 const INDUSTRIAL_CORRIDOR_DOMAINS: Array[StringName] = [&"industrial_corridor", &"industrial_corridor_density"]
 const VERTICAL_BRIDGE_DOMAINS: Array[StringName] = [&"vertical_bridge", &"vertical_bridge_yaw"]
 const SOCIETY_WORK_DOMAINS: Array[StringName] = [&"society_work", &"society_work_site"]
+const FRINGE_DOMAINS: Array[StringName] = [&"fringe_density", &"fringe_deform", &"fringe_arch", &"fringe_fp_x", &"fringe_fp_y", &"fringe_yaw", &"fringe_landmark", &"fringe_landmark_kind", &"fringe_palette", &"fringe_secondary", &"fringe_wall", &"fringe_yard"]
+const FOREST_VEGETATION_DOMAINS: Array[StringName] = [&"forest_beech", &"forest_oak", &"forest_birch", &"forest_spruce", &"forest_sapling", &"forest_bush", &"forest_grass", &"forest_log", &"forest_density", &"forest_species", &"forest_scale", &"forest_yaw", &"forest_variant", &"forest_clearing", &"forest_floor_tint", &"forest_floor_litter", &"forest_floor_stone", &"forest_floor_dead_branch", &"countryside_roadside", &"countryside_solitary", &"vegetation_color"]
 # City interior reuses existing "interior" domain via WorldSeed.rng_for("interior", [hash(bid), fi])
 # No new CITY_INTERIOR_DOMAINS needed for G9 M1 slice — additive reuse keeps GENERATOR_VERSION 2.
 

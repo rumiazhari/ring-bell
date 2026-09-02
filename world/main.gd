@@ -56,6 +56,13 @@ var _game_started := false
 
 func _ready() -> void:
 	SaveManager.register_world_provider(self)
+	# --seed override for deterministic captures (fringe part 1)
+	var __seed_args := OS.get_cmdline_user_args()
+	var __seed_idx := __seed_args.find("--seed")
+	if __seed_idx != -1 and __seed_idx + 1 < __seed_args.size():
+		var __s_val := int(__seed_args[__seed_idx + 1])
+		WorldSeed.set_world_seed(__s_val)
+		print("[Main] seed override --seed %d" % __s_val)
 
 	var args := OS.get_cmdline_user_args()
 	_mode = WorldMode.STREAMED_CITY
@@ -151,6 +158,10 @@ func _ready() -> void:
 		var tester6f: Node = load("res://debug/rural_test.gd").new()
 		tester6f.name = "RuralTest"
 		add_child(tester6f)
+	elif user_args.has("--fringetest"):
+		var tester6fr: Node = load("res://debug/fringe_test.gd").new()
+		tester6fr.name = "FringeTest"
+		add_child(tester6fr)
 	elif user_args.has("--cavetest"):
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
@@ -171,6 +182,18 @@ func _ready() -> void:
 		var probe: Node = load("res://debug/shot_probe.gd").new()
 		probe.name = "ShotProbe"
 		add_child(probe)
+	elif user_args.has("--g10p1-capture"):
+		var cap: Node = load("res://debug/g10p1_capture.gd").new()
+		cap.name = "G10P1Capture"
+		add_child(cap)
+	elif user_args.has("--fringe-capture"):
+		var cap2: Node = load("res://debug/fringe_capture.gd").new()
+		cap2.name = "FringeCapture"
+		add_child(cap2)
+	elif user_args.has("--fringe-dump"):
+		var dump: Node = load("res://debug/fringe_dump.gd").new()
+		dump.name = "FringeDump"
+		add_child(dump)
 
 
 func _process(_delta: float) -> void:
@@ -199,17 +222,19 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		return false
 	# Any test flag bypasses menu
 	var test_flags: Array[String] = [
-		"--smoke", "--soak", "--legacy-block",
-		"--citytest", "--cityruntime", "--walkthrough", "--havoctest",
-		"--terraintest", "--terrainmaterialtest",
-		"--hydrotest", "--hydromaterialtest",
-		"--biometest", "--biomaterialtest",
-		"--roadtest", "--settlementtest", "--roadmaterialtest",
-		"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
-		"--cavetest",
+			"--smoke", "--soak", "--legacy-block",
+			"--citytest", "--cityruntime", "--walkthrough", "--havoctest",
+			"--terraintest", "--terrainmaterialtest",
+			"--hydrotest", "--hydromaterialtest",
+			"--biometest", "--biomaterialtest",
+			"--roadtest", "--settlementtest", "--roadmaterialtest",
+			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
+			"--fringetest",
+			"--cavetest",
+		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
-		"--animationtest", "--streamingregressiontest",
-		"--import", "--shot", "--doortest"
+			"--animationtest", "--streamingregressiontest",
+			"--import", "--shot", "--doortest", "--g10p1-capture"
 	]
 	for f in test_flags:
 		if args.has(f):
@@ -432,6 +457,11 @@ func _build_streamed_city() -> void:
 	chunk_manager.name = "Chunks"
 	add_child(chunk_manager)
 	chunk_manager.setup_world(city_plan, wplan)
+	if OS.get_cmdline_user_args().has("--g10p1-capture"):
+		# The real windowed evidence runner still uses the production builders and
+		# Forward+ renderer, but avoids worker/cache races while it jumps between
+		# six far deterministic locations.
+		chunk_manager.synchronous = true
 
 
 func _spawn_city_population() -> void:

@@ -183,7 +183,13 @@ func _run_all() -> void:
 		_check("WorldPlan height matches %s" % p, is_equal_approx(wp.terrain_height_at(p), tp.height_at(p)), "%f vs %f" % [wp.terrain_height_at(p), tp.height_at(p)])
 		_check("WorldPlan slope matches %s" % p, is_equal_approx(wp.terrain_slope_at(p), tp.slope_at(p)), str(p))
 		_check("WorldPlan class matches %s" % p, wp.terrain_class_at(p) == tp.terrain_class_at(p), str(p))
-		_check("WorldPlan material matches %s" % p, wp.surface_material_at(p) == tp.surface_material_at(p), str(p))
+		var wp_mat: StringName = wp.terrain_surface_material_at(p)
+		var tp_mat: StringName = tp.surface_material_at(p)
+		var wp_h: float = wp.surface_height_at(p)
+		var tp_h: float = tp.height_at(p)
+		var wp_c: StringName = wp.surface_class_at(p)
+		var tp_c: StringName = tp.terrain_class_at(p)
+		_check("WorldPlan material matches %s" % p, wp_mat == tp_mat, "%s vs %s | wp_h %.2f tp_h %.2f wp_c %s tp_c %s" % [wp_mat, tp_mat, wp_h, tp_h, wp_c, tp_c])
 		_check("WorldPlan buildable matches %s" % p, wp.is_buildable(p, Vector2(10,10)) == tp.is_buildable(p, Vector2(10,10)), str(p))
 
 	# 6. No mutation of CityPlan manifests — same instance before/after + fresh canonical

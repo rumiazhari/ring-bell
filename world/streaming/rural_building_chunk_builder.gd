@@ -489,6 +489,57 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				continue
 			RuralArt.append_yard(dressing_verts, dressing_normals, dressing_colors, dressing_indices, yard_center, world_plan.surface_height_at(yard_center) + WorldConstants.RURAL_PATH_LIFT_M, float(yard.get("radius", WorldConstants.RURAL_YARD_RADIUS_HAMLET)), WorldConstants.COL_RURAL_YARD)
 			dressing_instances += 1
+		# Low visual-only growth softens the maintained yard into the surrounding
+		# rural edge. It shares this batch and is excluded from collision.
+		for yard in world_plan.settlement_yards_in(rect):
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var yard_center: Vector2 = yard.get("center", Vector2.ZERO) as Vector2
+			var yard_radius: float = float(yard.get("radius", WorldConstants.RURAL_YARD_RADIUS_HAMLET))
+			var yard_seed: int = WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("rural_yard_undergrowth"), int(yard_center.x), int(yard_center.y)])
+			for ui in 8:
+				if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+					break
+				var angle: float = float(yard_seed % 1000) / 1000.0 * TAU + float(ui) * 2.05
+				var radius_factor: float = 0.62 + float((absi(yard_seed / (ui + 1)) % 24)) / 100.0
+				var under_pos: Vector2 = yard_center + Vector2(cos(angle), sin(angle)) * yard_radius * radius_factor
+				if not rect.has_point(under_pos) or world_plan.water_body_at(under_pos) != &"":
+					continue
+				var under_y: float = world_plan.surface_height_at(under_pos) + WorldConstants.RURAL_PATH_LIFT_M
+				var under_scale: float = 1.05 + float((absi(yard_seed / (ui + 3)) % 35)) / 100.0
+				RuralArt.append_undergrowth(dressing_verts, dressing_normals, dressing_colors, dressing_indices, Vector3(under_pos.x, under_y, under_pos.y), under_scale, angle, ui)
+				dressing_instances += 1
+		# Ensure every materialized rural building has a readable maintained edge,
+		# even when its shared settlement yard anchor falls in a neighbor chunk.
+		for settle_b in owned:
+			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+				break
+			var settle_center: Vector2 = settle_b.get("center", Vector2.ZERO) as Vector2
+			var settle_door: Vector2 = settle_b.get("door_pos", settle_center) as Vector2
+			var settle_outward: Vector2 = (settle_door - settle_center).normalized()
+			if settle_outward.length_squared() < 0.01:
+				settle_outward = Vector2.RIGHT
+			var building_yard: Vector2 = settle_door + settle_outward * 3.0
+			if world_plan.water_body_at(building_yard) != &"":
+				continue
+			var building_yard_y: float = world_plan.surface_height_at(building_yard) + WorldConstants.RURAL_PATH_LIFT_M
+			RuralArt.append_yard(dressing_verts, dressing_normals, dressing_colors, dressing_indices, building_yard, building_yard_y, 12.0, WorldConstants.COL_RURAL_YARD)
+			dressing_instances += 1
+			var settle_side: Vector2 = Vector2(-settle_outward.y, settle_outward.x)
+			var settle_aabb: Rect2 = settle_b.get("aabb", Rect2()) as Rect2
+			var settle_seed: int = WorldSeed.combine([world_plan.seed_used, WorldSeed.str_hash("rural_building_edge_growth"), int(settle_center.x), int(settle_center.y)])
+			for settle_i in 4:
+				if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
+					break
+				var settle_angle: float = float(settle_seed % 1000) / 1000.0 * TAU + float(settle_i) * 1.57
+				var settle_pos: Vector2 = building_yard + Vector2(cos(settle_angle), sin(settle_angle)) * (3.8 + float(settle_i % 2) * 0.8)
+				if settle_aabb.grow(1.0).has_point(settle_pos):
+					continue
+				if world_plan.water_body_at(settle_pos) != &"" or world_plan.is_floodplain(settle_pos):
+					continue
+				var settle_y: float = world_plan.surface_height_at(settle_pos) + WorldConstants.RURAL_PATH_LIFT_M
+				RuralArt.append_undergrowth(dressing_verts, dressing_normals, dressing_colors, dressing_indices, Vector3(settle_pos.x, settle_y, settle_pos.y), 1.05 + float(settle_i % 3) * 0.12, settle_angle, settle_i)
+				dressing_instances += 1
 		for fence in world_plan.settlement_fences_in(rect):
 			if dressing_instances >= WorldConstants.RURAL_SETTLEMENT_DRESSING_MAX_INSTANCES_PER_CHUNK:
 				break
@@ -825,12 +876,13 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		mat.vertex_color_use_as_albedo = true
 		mat.roughness = 0.85
 		mat.metallic = 0.0
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mesh.surface_set_material(0, mat)
 		var mi := MeshInstance3D.new()
 		mi.name = "RuralMesh"
 		mi.mesh = mesh
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		rural_node.add_child(mi)
 	# Paths, yards, fences, clutter, and tree edges share one visual mesh but
 	# stay outside the structural RuralBody. Their category colors and
@@ -850,8 +902,9 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		dressing_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, dressing_arrays)
 		var dressing_mat := StandardMaterial3D.new()
 		dressing_mat.vertex_color_use_as_albedo = true
-		dressing_mat.roughness = 0.92
-		dressing_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dressing_mat.roughness = 0.88
+		dressing_mat.metallic = 0.0
+		dressing_mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 		dressing_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		dressing_mesh.surface_set_material(0, dressing_mat)
 		var dressing_instance := MeshInstance3D.new()

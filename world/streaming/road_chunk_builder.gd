@@ -25,6 +25,50 @@ static func _color_for_hierarchy(hier: StringName, is_bridge: bool) -> Color:
 		_:
 			return COL_TRACK
 
+static func _fringe_blended_color(world_plan: WorldPlan, p: Vector2, hier: StringName, is_bridge: bool) -> Color:
+	if is_bridge:
+		return COL_BRIDGE
+	var base: Color = _color_for_hierarchy(hier, false)
+	var d: float = p.length()
+	# Blend based on radial fringe bands deformed via density; no hard boundary
+	if d < WorldConstants.URBAN_INNER_M - 30.0:
+		return base
+	# Sample fringe density for local deformation (road proximity already encoded)
+	var fringe_d: float = 0.0
+	if world_plan != null and world_plan.has_method("fringe_density_at"):
+		fringe_d = world_plan.fringe_density_at(p)
+	# Transition zones: 320-520 inner mixed, 520-820 dirty stone, 820-1180 packed dirt
+	if d < 320.0:
+		return base.lerp(WorldConstants.COL_ROAD_COBBLE, 0.22) if hier == &"track" else base
+	elif d < 520.0:
+		var t: float = clampf((d - 320.0) / 200.0, 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var mixed: Color = WorldConstants.COL_ROAD_MIXED
+		# Road hierarchy influences dirtiness: track dirtier sooner
+		var bias: float = 0.35 if hier == &"track" else (0.18 if hier == &"secondary" else 0.08)
+		bias += fringe_d * 0.12
+		t = clampf(t + bias, 0.0, 1.0)
+		return base.lerp(mixed, t * 0.85)
+	elif d < 820.0:
+		var t: float = clampf((d - 520.0) / 300.0, 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var dirty: Color = WorldConstants.COL_ROAD_DIRTY_STONE
+		var bias2: float = 0.18 if hier == &"track" else 0.08
+		bias2 += fringe_d * 0.10
+		t = clampf(t + bias2, 0.0, 1.0)
+		var mixed: Color = WorldConstants.COL_ROAD_MIXED
+		var mid: Color = mixed.lerp(dirty, t)
+		return base.lerp(mid, 0.78)
+	elif d < 1180.0:
+		var t: float = clampf((d - 820.0) / 360.0, 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var packed: Color = WorldConstants.COL_ROAD_DIRT_PACKED
+		var dirty: Color = WorldConstants.COL_ROAD_DIRTY_STONE
+		var mid: Color = dirty.lerp(packed, t)
+		return base.lerp(mid, 0.92)
+	else:
+		return base.lerp(WorldConstants.COL_ROAD_DIRT_PACKED, 0.96)
+
 static func _clip_polyline_to_rect(poly: PackedVector2Array, rect: Rect2) -> PackedVector2Array:
 	if poly.size() < 2:
 		return PackedVector2Array()
@@ -147,6 +191,16 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var n: int = poly.size()
 			# For each point compute left/right
 			var base_vertex_index: int = verts.size()
+			var avg_p: Vector2 = Vector2.ZERO
+			for pt in poly:
+				avg_p += pt
+			if poly.size() > 0:
+				avg_p /= float(poly.size())
+			var col: Color
+			if world_plan != null:
+				col = _fringe_blended_color(world_plan, avg_p, hier, is_bridge)
+			else:
+				col = _color_for_hierarchy(hier, is_bridge)
 			# Precompute left/right points and Y
 			for i in n:
 				var p: Vector2 = poly[i]
@@ -186,7 +240,6 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				verts.append(v_right)
 				normals.append(Vector3.UP)
 				normals.append(Vector3.UP)
-				var col: Color = _color_for_hierarchy(hier, is_bridge)
 				colors.append(col)
 				colors.append(col)
 			# Indices for quads

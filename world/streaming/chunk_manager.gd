@@ -1,5 +1,6 @@
 class_name ChunkManager
 extends Node3D
+const FringeChunkBuilderScript = preload("res://world/streaming/fringe_chunk_builder.gd")
 ## Streams the procedural city in 64 m chunks around the player.
 ##
 ## States (chebyshev distance from the player's chunk):
@@ -77,6 +78,16 @@ var _rural_beds_total := 0
 var _rural_workbenches_total := 0
 var _rural_granaries_total := 0
 var _rural_mat_ms_total := 0.0
+var _fringe_vertices_total := 0
+var _fringe_triangles_total := 0
+var _fringe_colliders_total := 0
+var _fringe_doors_total := 0
+var _fringe_buildings_total := 0
+var _fringe_walls_total := 0
+var _fringe_yards_total := 0
+var _fringe_trees_total := 0
+var _fringe_landmarks_total := 0
+var _fringe_mat_ms_total := 0.0
 var _cave_vertices_total := 0
 var _cave_triangles_total := 0
 var _cave_colliders_total := 0
@@ -110,6 +121,7 @@ var _total_water_gen_ms := 0.0          # water manifest generation
 var _total_biome_gen_ms := 0.0          # biome manifest generation
 var _total_road_gen_ms := 0.0           # road manifest generation
 var _total_rural_gen_ms := 0.0          # rural manifest generation
+var _total_fringe_gen_ms := 0.0          # fringe manifest generation
 var _total_cave_gen_ms := 0.0           # cave manifest generation
 var _total_vertical_gen_ms := 0.0       # vertical manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
@@ -190,6 +202,17 @@ func reset_stream() -> void:
 	_rural_granaries_total = 0
 	_rural_mat_ms_total = 0.0
 	_total_rural_gen_ms = 0.0
+	_fringe_vertices_total = 0
+	_fringe_triangles_total = 0
+	_fringe_colliders_total = 0
+	_fringe_doors_total = 0
+	_fringe_buildings_total = 0
+	_fringe_walls_total = 0
+	_fringe_yards_total = 0
+	_fringe_trees_total = 0
+	_fringe_landmarks_total = 0
+	_fringe_mat_ms_total = 0.0
+	_total_fringe_gen_ms = 0.0
 	_cave_vertices_total = 0
 	_cave_triangles_total = 0
 	_cave_colliders_total = 0
@@ -347,6 +370,8 @@ func _launch_batch_jobs() -> void:
 			holder["road_gen_ms"] = 0.0
 			holder["rural"] = {}
 			holder["rural_gen_ms"] = 0.0
+			holder["fringe"] = {}
+			holder["fringe_gen_ms"] = 0.0
 			holder["cave"] = {}
 			holder["cave_gen_ms"] = 0.0
 			holder["vertical"] = {}
@@ -361,16 +386,17 @@ func _launch_batch_jobs() -> void:
 			var b_gen: float = float(holder.get("biome_gen_ms", 0.0))
 			var r_gen: float = float(holder.get("road_gen_ms", 0.0))
 			var ru_gen: float = float(holder.get("rural_gen_ms", 0.0))
+			var fr_gen: float = float(holder.get("fringe_gen_ms", 0.0))
 			var cav_gen: float = float(holder.get("cave_gen_ms", 0.0))
 			var vert_gen: float = float(holder.get("vertical_gen_ms", 0.0))
-			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "cave": holder.get("cave", {}), "vertical": holder.get("vertical", {}), "task_id": -1,
-					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "cave_gen_ms": cav_gen, "vertical_gen_ms": vert_gen}
+			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "fringe": holder.get("fringe", {}), "cave": holder.get("cave", {}), "vertical": holder.get("vertical", {}), "task_id": -1,
+					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "fringe_gen_ms": fr_gen, "cave_gen_ms": cav_gen, "vertical_gen_ms": vert_gen}
 		else:
 			var task_id := WorkerThreadPool.add_task(
 					_thread_build.bind(batcher, c, holder, seed_used), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
-					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "cave_gen_ms": 0.0, "vertical_gen_ms": 0.0}
+					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "fringe_gen_ms": 0.0, "cave_gen_ms": 0.0, "vertical_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
@@ -424,6 +450,14 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 	else:
 		holder["rural"] = {}
 		holder["rural_gen_ms"] = 0.0
+	if holder.has("fringe"):
+		var tfr0 := Time.get_ticks_usec()
+		var frm := FringeChunkBuilderScript.build_manifest(shared_world, coord)
+		holder["fringe"] = frm
+		holder["fringe_gen_ms"] = float(Time.get_ticks_usec() - tfr0) / 1000.0
+	else:
+		holder["fringe"] = {}
+		holder["fringe_gen_ms"] = 0.0
 	if holder.has("cave"):
 		var tcav0 := Time.get_ticks_usec()
 		var cavm := UndergroundChunkBuilder.build_manifest(shared_world, coord)
@@ -491,6 +525,8 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 		var road_gen_ms: float = float(job.get("road_gen_ms", 0.0))
 		var rural_manifest: Dictionary = {}
 		var rural_gen_ms: float = float(job.get("rural_gen_ms", 0.0))
+		var fringe_manifest: Dictionary = {}
+		var fringe_gen_ms: float = float(job.get("fringe_gen_ms", 0.0))
 		var cave_manifest: Dictionary = {}
 		var cave_gen_ms: float = float(job.get("cave_gen_ms", 0.0))
 		var vertical_manifest: Dictionary = {}
@@ -502,6 +538,7 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			biome_manifest = job.get("biome", {})
 			road_manifest = job.get("road", {})
 			rural_manifest = job.get("rural", {})
+			fringe_manifest = job.get("fringe", {})
 			cave_manifest = job.get("cave", {})
 			vertical_manifest = job.get("vertical", {})
 			composition = job.get("composition", {})
@@ -517,18 +554,20 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			road_gen_ms = float(holder.get("road_gen_ms", 0.0))
 			rural_manifest = holder.get("rural", {})
 			rural_gen_ms = float(holder.get("rural_gen_ms", 0.0))
+			fringe_manifest = holder.get("fringe", {})
+			fringe_gen_ms = float(holder.get("fringe_gen_ms", 0.0))
 			cave_manifest = holder.get("cave", {})
 			cave_gen_ms = float(holder.get("cave_gen_ms", 0.0))
 			vertical_manifest = holder.get("vertical", {})
 			vertical_gen_ms = float(holder.get("vertical_gen_ms", 0.0))
 			composition = holder.get("composition", {})
 			gen_ms = float(holder.get("gen_ms", 0.0))
-		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, composition, cave_manifest, cave_gen_ms, vertical_manifest, vertical_gen_ms)
+		_materialize(c, job["batcher"], terrain_manifest, gen_ms, pc, terrain_gen_ms, water_manifest, water_gen_ms, biome_manifest, biome_gen_ms, road_manifest, road_gen_ms, rural_manifest, rural_gen_ms, fringe_manifest, fringe_gen_ms, composition, cave_manifest, cave_gen_ms, vertical_manifest, vertical_gen_ms)
 		materialized += 1
 
 
 func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dictionary, gen_ms: float,
-		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, composition: Dictionary = {}, cave_manifest: Dictionary = {}, cave_gen_ms: float = 0.0, vertical_manifest: Dictionary = {}, vertical_gen_ms: float = 0.0) -> void:
+		pc: Vector2i, terrain_gen_ms: float = 0.0, water_manifest: Dictionary = {}, water_gen_ms: float = 0.0, biome_manifest: Dictionary = {}, biome_gen_ms: float = 0.0, road_manifest: Dictionary = {}, road_gen_ms: float = 0.0, rural_manifest: Dictionary = {}, rural_gen_ms: float = 0.0, fringe_manifest: Dictionary = {}, fringe_gen_ms: float = 0.0, composition: Dictionary = {}, cave_manifest: Dictionary = {}, cave_gen_ms: float = 0.0, vertical_manifest: Dictionary = {}, vertical_gen_ms: float = 0.0) -> void:
 	# PERSISTENCE-FIRST PIPELINE (P0-2): this chunk's destruction delta is
 	# re-applied to the FRESH worker batcher BEFORE any scene work, so the
 	# first and ONLY materialization below already omits destroyed cells
@@ -784,6 +823,23 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 				_set_rural_hearth_enabled(chunk_node_ru, coord, true)
 				_set_rural_workbench_enabled(chunk_node_ru, coord, true)
 				_set_rural_granary_enabled(chunk_node_ru, coord, true)
+	# Materialize fringe under same chunk if manifest present
+	var frstats := {}
+	if not fringe_manifest.is_empty():
+		var chunk_node_fr := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk_node_fr != null:
+			frstats = FringeChunkBuilderScript.materialize(chunk_node_fr, fringe_manifest)
+			if not include_collision:
+				var fr_body := chunk_node_fr.get_node_or_null(NodePath("Fringe_%d_%d/Static" % [coord.x, coord.y]))
+				# MeshBatcher Static body for fringe is named Static under Fringe node, but chunk_node_fr's Static is city; need to handle fringe body disabling via Fringe node
+				var fringe_parent := chunk_node_fr.get_node_or_null(NodePath("Fringe_%d_%d" % [coord.x, coord.y]))
+				if fringe_parent != null:
+					var fr_static := fringe_parent.get_node_or_null(NodePath("Static"))
+					if fr_static != null and is_instance_valid(fr_static):
+						(fr_static as StaticBody3D).collision_layer = 0
+				_set_fringe_enabled(chunk_node_fr, coord, false)
+			else:
+				_set_fringe_enabled(chunk_node_fr, coord, true)
 	# Materialize cave under same chunk if manifest present
 	var cavstats := {}
 	if not cave_manifest.is_empty():
@@ -884,6 +940,15 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var biome_tris := int(bstats.get("biome_triangles", 0))
 	var biome_cols := int(bstats.get("biome_colliders", 0))
 	var biome_instances := int(bstats.get("biome_instances", 0))
+	var veg_counts: Dictionary = bstats.get("vegetation_counts", biome_manifest.get("vegetation_counts", {})) as Dictionary
+	var forest_beech := int(veg_counts.get(&"beech", biome_manifest.get("forest_beech", 0)))
+	var forest_oak := int(veg_counts.get(&"oak", biome_manifest.get("forest_oak", 0)))
+	var forest_birch := int(veg_counts.get(&"birch", biome_manifest.get("forest_birch", 0)))
+	var forest_spruce := int(veg_counts.get(&"spruce", biome_manifest.get("forest_spruce", 0)))
+	var forest_sapling := int(veg_counts.get(&"sapling", biome_manifest.get("forest_sapling", 0)))
+	var forest_bush := int(veg_counts.get(&"bush", biome_manifest.get("forest_bush", 0)))
+	var forest_grass := int(veg_counts.get(&"grass", biome_manifest.get("forest_grass", 0)))
+	var forest_log := int(veg_counts.get(&"log", biome_manifest.get("forest_log", 0)))
 	var field_parcels := int(bstats.get("field_parcels", 0))
 	var field_crops := int(bstats.get("field_crops", 0))
 	var field_vertices := int(bstats.get("field_vertices", 0))
@@ -913,6 +978,15 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var rural_beds := int(rustats.get("rural_beds", 0))
 	var rural_workbenches := int(rustats.get("rural_workbenches", rustats.get("workbenches", 0)))
 	var rural_granaries := int(rustats.get("rural_granaries", rustats.get("granaries", 0)))
+	var fringe_verts := int(frstats.get("fringe_vertices", 0))
+	var fringe_tris := int(frstats.get("fringe_triangles", 0))
+	var fringe_cols := int(frstats.get("fringe_colliders", 0))
+	var fringe_doors := int(frstats.get("fringe_doors", 0))
+	var fringe_buildings := int(frstats.get("fringe_buildings", 0))
+	var fringe_walls := int(frstats.get("fringe_walls", 0))
+	var fringe_yards := int(frstats.get("fringe_yards", 0))
+	var fringe_trees := int(frstats.get("fringe_trees", 0))
+	var fringe_landmarks := int(frstats.get("fringe_landmarks", 0))
 	var cave_verts := int(cavstats.get("cave_vertices", 0))
 	var cave_tris := int(cavstats.get("cave_triangles", 0))
 	var cave_cols := int(cavstats.get("cave_colliders", 0))
@@ -950,6 +1024,21 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"biome_colliders_active": biome_cols if include_collision else 0,
 		"biome_instances": biome_instances,
 		"biome_manifest": biome_manifest,
+		"forest_beech": forest_beech,
+		"forest_oak": forest_oak,
+		"forest_birch": forest_birch,
+		"forest_spruce": forest_spruce,
+		"forest_sapling": forest_sapling,
+		"forest_bush": forest_bush,
+		"forest_grass": forest_grass,
+		"forest_log": forest_log,
+		"forest_leaf_litter": int(veg_counts.get(&"leaf_litter", biome_manifest.get("forest_leaf_litter", 0))),
+		"forest_stone": int(veg_counts.get(&"stone", biome_manifest.get("forest_stone", 0))),
+		"forest_dead_branch": int(veg_counts.get(&"dead_branch", biome_manifest.get("forest_dead_branch", 0))),
+		"forest_floor_vertices": int(bstats.get("forest_floor_vertices", 0)),
+		"forest_floor_triangles": int(bstats.get("forest_floor_triangles", 0)),
+		"forest_floor_cells": int(bstats.get("forest_floor_cells", 0)),
+		"forest_floor_skipped": int(bstats.get("forest_floor_skipped", 0)),
 		"quarry_feature": bool(biome_manifest.get("quarry_feature", false)),
 		"quarry_excavation_depth": float(biome_manifest.get("quarry_excavation_depth", 0.0)),
 		"field_parcels": field_parcels,
@@ -997,6 +1086,19 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"rural_stoves_active": rural_stoves if include_collision else 0,
 		"rural_beds_active": rural_beds if include_collision else 0,
 		"rural_manifest": rural_manifest,
+		"fringe_vertices": fringe_verts,
+		"fringe_triangles": fringe_tris,
+		"fringe_colliders": fringe_cols,
+		"fringe_colliders_active": fringe_cols if include_collision else 0,
+		"fringe_doors": fringe_doors,
+		"fringe_buildings": fringe_buildings,
+		"fringe_walls": fringe_walls,
+		"fringe_yards": fringe_yards,
+		"fringe_trees": fringe_trees,
+		"fringe_landmarks": fringe_landmarks,
+		"fringe_manifest": fringe_manifest,
+		"fringe_doors_active": fringe_doors if include_collision else 0,
+		"fringe_buildings_active": fringe_buildings if include_collision else 0,
 		"cave_vertices": cave_verts,
 		"cave_triangles": cave_tris,
 		"cave_colliders": cave_cols,
@@ -1030,6 +1132,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"road_mat_ms": float(rstats.get("road_mat_ms", 0.0)),
 		"rural_gen_ms": rural_gen_ms,
 		"rural_mat_ms": float(rustats.get("rural_mat_ms", 0.0)),
+		"fringe_gen_ms": fringe_gen_ms,
+		"fringe_mat_ms": float(frstats.get("fringe_mat_ms", 0.0)),
 		"cave_gen_ms": cave_gen_ms,
 		"cave_mat_ms": float(cavstats.get("cave_mat_ms", 0.0)),
 		"vertical_gen_ms": vertical_gen_ms,
@@ -1079,6 +1183,16 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_rural_workbenches_total += rural_workbenches
 	_rural_granaries_total += rural_granaries
 	_rural_mat_ms_total += float(rustats.get("rural_mat_ms", 0.0))
+	_fringe_vertices_total += fringe_verts
+	_fringe_triangles_total += fringe_tris
+	_fringe_colliders_total += fringe_cols
+	_fringe_doors_total += fringe_doors
+	_fringe_buildings_total += fringe_buildings
+	_fringe_walls_total += fringe_walls
+	_fringe_yards_total += fringe_yards
+	_fringe_trees_total += fringe_trees
+	_fringe_landmarks_total += fringe_landmarks
+	_fringe_mat_ms_total += float(frstats.get("fringe_mat_ms", 0.0))
 	_cave_vertices_total += cave_verts
 	_cave_triangles_total += cave_tris
 	_cave_colliders_total += cave_cols
@@ -1102,6 +1216,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	_total_biome_gen_ms += biome_gen_ms
 	_total_road_gen_ms += road_gen_ms
 	_total_rural_gen_ms += rural_gen_ms
+	_total_fringe_gen_ms += fringe_gen_ms
 	_total_cave_gen_ms += cave_gen_ms
 	_total_vertical_gen_ms += vertical_gen_ms
 	# Unload adjustment: subtract on unload
@@ -1175,6 +1290,17 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		_rural_granaries_total -= int(rec.get("rural_granaries", rec.get("granaries", 0)))
 		_rural_mat_ms_total -= float(rec.get("rural_mat_ms", 0.0))
 		_total_rural_gen_ms -= float(rec.get("rural_gen_ms", 0.0))
+		_fringe_vertices_total -= int(rec.get("fringe_vertices", 0))
+		_fringe_triangles_total -= int(rec.get("fringe_triangles", 0))
+		_fringe_colliders_total -= int(rec.get("fringe_colliders", 0))
+		_fringe_doors_total -= int(rec.get("fringe_doors", 0))
+		_fringe_buildings_total -= int(rec.get("fringe_buildings", 0))
+		_fringe_walls_total -= int(rec.get("fringe_walls", 0))
+		_fringe_yards_total -= int(rec.get("fringe_yards", 0))
+		_fringe_trees_total -= int(rec.get("fringe_trees", 0))
+		_fringe_landmarks_total -= int(rec.get("fringe_landmarks", 0))
+		_fringe_mat_ms_total -= float(rec.get("fringe_mat_ms", 0.0))
+		_total_fringe_gen_ms -= float(rec.get("fringe_gen_ms", 0.0))
 		_cave_vertices_total -= int(rec.get("cave_vertices", 0))
 		_cave_triangles_total -= int(rec.get("cave_triangles", 0))
 		_cave_colliders_total -= int(rec.get("cave_colliders", 0))
@@ -1252,6 +1378,14 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					(rural_body as StaticBody3D).collision_layer = 1
 				elif previous_state == &"active":
 					(rural_body as StaticBody3D).collision_layer = 0
+			var fringe_body := get_node_or_null(NodePath("Chunk_%d_%d/Fringe_%d_%d/Static" % [coord.x, coord.y, coord.x, coord.y]))
+			if fringe_body == null:
+				fringe_body = get_node_or_null(NodePath("Chunk_%d_%d/Fringe_%d_%d/FringeBody" % [coord.x, coord.y, coord.x, coord.y]))
+			if fringe_body != null and is_instance_valid(fringe_body):
+				if desired_state == &"active":
+					(fringe_body as StaticBody3D).collision_layer = 1
+				elif previous_state == &"active":
+					(fringe_body as StaticBody3D).collision_layer = 0
 			# Rural crates/wells/forage/hearth ACTIVE-only
 			if desired_state == &"active" and previous_state != &"active":
 				var rural_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Rural_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
@@ -1262,6 +1396,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_hearth_enabled(rural_node_active, coord, true)
 					_set_rural_workbench_enabled(rural_node_active, coord, true)
 					_set_rural_granary_enabled(rural_node_active, coord, true)
+				var fringe_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Fringe_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if fringe_node_active != null:
+					_set_fringe_enabled(fringe_node_active, coord, true)
 				var biome_node_active := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if biome_node_active != null:
 					_set_field_crops_enabled(biome_node_active, coord, true)
@@ -1284,6 +1421,9 @@ func _update_chunk_states(pc: Vector2i) -> void:
 					_set_rural_hearth_enabled(rural_node_warm, coord, false)
 					_set_rural_workbench_enabled(rural_node_warm, coord, false)
 					_set_rural_granary_enabled(rural_node_warm, coord, false)
+				var fringe_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Fringe_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
+				if fringe_node_warm != null:
+					_set_fringe_enabled(fringe_node_warm, coord, false)
 				var biome_node_warm := get_node_or_null(NodePath("Chunk_%d_%d/Biome_%d_%d" % [coord.x, coord.y, coord.x, coord.y]))
 				if biome_node_warm != null:
 					_set_field_crops_enabled(biome_node_warm, coord, false)
@@ -1694,10 +1834,11 @@ func debug_lines() -> Array[String]:
 			% [_terrain_vertices_total, _terrain_triangles_total, _terrain_colliders_total, avg_terrain_gen_ms(), _terrain_mat_ms_total, terrain_active_count(), terrain_warm_count()])
 	lines.append("water verts %d | tris %d | colliders %d | t_water_gen %.1f ms | t_water_mat %.1f ms | active water %d (warm %d)"
 			% [_water_vertices_total, _water_triangles_total, _water_colliders_total, avg_water_gen_ms(), _water_mat_ms_total, water_active_count(), water_warm_count()])
-	lines.append("biome verts %d | tris %d | colliders %d | instances %d | field_parcels %d | field_crops %d | orchard_parcels %d | fruit_patches %d | t_biome_gen %.1f ms | t_biome_mat %.1f ms | active biome %d (warm %d)"
-			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, _field_parcels_total, _field_crops_total, _orchard_parcels_total, _fruit_patches_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
+	lines.append("biome verts %d | tris %d | colliders %d | instances %d | forest beech %d oak %d birch %d spruce %d sapling %d bush %d grass %d log %d floor %d | field_parcels %d | field_crops %d | orchard_parcels %d | fruit_patches %d | t_biome_gen %.1f ms | t_biome_mat %.1f ms | active biome %d (warm %d)"
+			% [_biome_vertices_total, _biome_triangles_total, _biome_colliders_total, _biome_instances_total, forest_beech_active(), forest_oak_active(), forest_birch_active(), forest_spruce_active(), forest_sapling_active(), forest_bush_active(), forest_grass_active(), forest_log_active(), forest_floor_active(), _field_parcels_total, _field_crops_total, _orchard_parcels_total, _fruit_patches_total, avg_biome_gen_ms(), _biome_mat_ms_total, biome_active_count(), biome_warm_count()])
 	lines.append("road verts %d | tris %d | colliders %d | bridges %d | t_road_gen %.1f ms | t_road_mat %.1f ms | active road %d (warm %d)"
 			% [_road_vertices_total, _road_triangles_total, _road_colliders_total, _road_bridges_total, avg_road_gen_ms(), _road_mat_ms_total, road_active_count(), road_warm_count()])
+	lines.append("fringe verts %d | tris %d | colliders %d | doors %d | buildings %d | walls %d | yards %d | trees %d | landmarks %d | t_fringe_gen %.1f ms | t_fringe_mat %.1f ms | active fringe %d (warm %d)" % [_fringe_vertices_total, _fringe_triangles_total, _fringe_colliders_total, _fringe_doors_total, _fringe_buildings_total, _fringe_walls_total, _fringe_yards_total, _fringe_trees_total, _fringe_landmarks_total, avg_fringe_gen_ms(), _fringe_mat_ms_total, fringe_active_count(), fringe_warm_count()])
 	lines.append("rural verts %d | tris %d | colliders %d | doors %d | buildings %d | crates %d | furniture %d | wells %d | forage %d | hearth %d | stoves %d | beds %d | workbenches %d | granaries %d | t_rural_gen %.1f ms | t_rural_mat %.1f ms | active rural %d (warm %d)"
 			% [_rural_vertices_total, _rural_triangles_total, _rural_colliders_total, _rural_doors_total, _rural_buildings_total, _rural_crates_total, _rural_furniture_total, _rural_wells_total, _rural_forage_total, _rural_hearths_total, _rural_stoves_total, _rural_beds_total, _rural_workbenches_total, _rural_granaries_total, avg_rural_gen_ms(), _rural_mat_ms_total, rural_active_count(), rural_warm_count()])
 	lines.append("city verts %d | tris %d | colliders %d | interiors %d | rooms %d | doors %d | stations %d | t_city_gen %.1f ms | t_city_mat %.1f ms | active city %d (warm %d)"
@@ -1934,6 +2075,26 @@ func city_interior_total_doors() -> int:
 func city_interior_total_stations() -> int:
 	return _city_interior_stations_total
 
+func avg_fringe_gen_ms() -> float:
+	return _total_fringe_gen_ms / maxf(1.0, float(_total_loads))
+
+func avg_fringe_mat_ms() -> float:
+	return _fringe_mat_ms_total / maxf(1.0, float(maxi(1, _fringe_vertices_total)))
+
+func fringe_active_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active" and int(v.get("fringe_colliders", 0)) > 0:
+			n += 1
+	return n
+
+func fringe_warm_count() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"warm" and int(v.get("fringe_colliders", 0)) > 0:
+			n += 1
+	return n
+
 func avg_vertical_gen_ms() -> float:
 	return _total_vertical_gen_ms / maxf(1.0, float(_total_loads))
 
@@ -1981,6 +2142,65 @@ func biome_warm_count() -> int:
 		if v.get("state", "") == &"warm" and int(v.get("biome_colliders", 0)) > 0:
 			n += 1
 	return n
+
+func forest_beech_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_beech", 0))
+	return n
+func forest_oak_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_oak", 0))
+	return n
+func forest_birch_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_birch", 0))
+	return n
+func forest_spruce_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_spruce", 0))
+	return n
+func forest_sapling_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_sapling", 0))
+	return n
+func forest_bush_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_bush", 0))
+	return n
+func forest_grass_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_grass", 0))
+	return n
+func forest_log_active() -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get("forest_log", 0))
+	return n
+
+func _forest_value_active(key: StringName) -> int:
+	var n := 0
+	for v in _chunks.values():
+		if v.get("state", "") == &"active":
+			n += int(v.get(key, 0))
+	return n
+
+func forest_floor_active() -> int:
+	return _forest_value_active(&"forest_leaf_litter") + _forest_value_active(&"forest_stone") + _forest_value_active(&"forest_dead_branch")
 
 func road_active_count() -> int:
 	var n := 0
@@ -2112,6 +2332,41 @@ func _set_rural_hearth_enabled(rural_parent: Node, coord: Vector2i, enabled: boo
 					var inter = bed.get("interactable")
 					if inter != null and is_instance_valid(inter):
 						inter.enabled = enabled
+
+func _set_fringe_enabled(parent: Node, coord: Vector2i, enabled: bool) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	var fringe_node: Node = null
+	if String(parent.name).begins_with("Fringe_"):
+		fringe_node = parent
+	else:
+		fringe_node = parent.get_node_or_null(NodePath("Fringe_%d_%d" % [coord.x, coord.y]))
+		if fringe_node == null:
+			# Also try generic search for any Fringe child under chunk
+			for child in parent.get_children():
+				if String(child.name).begins_with("Fringe_"):
+					fringe_node = child
+					break
+	if fringe_node == null or not is_instance_valid(fringe_node):
+		return
+	for child in fringe_node.get_children():
+		if child is Door:
+			var door: Door = child as Door
+			if is_instance_valid(door) and not door.is_queued_for_deletion() and door.is_inside_tree():
+				if door.has_method("set_active_enabled"):
+					door.call("set_active_enabled", enabled)
+				else:
+					door.monitorable = enabled
+					var inter = door.get("interactable")
+					if inter != null and is_instance_valid(inter):
+						inter.enabled = enabled
+		elif child is StaticBody3D:
+			# Fringe collider - handled via body layer, but also handle if present
+			(child as StaticBody3D).collision_layer = 1 if enabled else 0
+	# Also disable/enable the fringe Static body directly if present as Fringe/Static
+	var fr_static := fringe_node.get_node_or_null(NodePath("Static"))
+	if fr_static != null and is_instance_valid(fr_static):
+		(fr_static as StaticBody3D).collision_layer = 1 if enabled else 0
 
 func _set_field_crops_enabled(biome_parent: Node, coord: Vector2i, enabled: bool) -> void:
 	var biome_node: Node = biome_parent

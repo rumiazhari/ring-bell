@@ -403,7 +403,7 @@ func _run_all() -> void:
 		if idsz0[idx_a] == idsz1[idx_b]:
 			agree_z += 1
 	_check("shared edge +Z agreement >=7/9", agree_z >= 7, "%d/9" % agree_z)
-	# Each chunk <=1 biome collider (0 if no proxies), instances budgets
+	# Each chunk <=1 biome collider (0 if no proxies), instances budgets (typed vegetation 96)
 	for c in coords:
 		var m: Dictionary = manifests_fwd[c]
 		var coll: int = int(m["biome_colliders"])
@@ -412,23 +412,82 @@ func _run_all() -> void:
 		var has_forest: bool = bool(m["has_forest"])
 		var has_field: bool = bool(m["has_field"])
 		var has_quarry: bool = bool(m["has_quarry"])
+		var max_inst: int = WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK
 		if has_forest:
-			_check("chunk %s forest instances <=48" % c, inst <= 48, str(inst))
+			_check("chunk %s forest instances <= %d" % [c, max_inst], inst <= max_inst, str(inst))
+			# Also check typed per-class caps
+			var veg_counts: Dictionary = m.get("vegetation_counts", {}) as Dictionary
+			if not veg_counts.is_empty():
+				_check("chunk %s beech <=56" % c, int(veg_counts.get(&"beech", 0)) <= WorldConstants.MAX_FOREST_TREES_PER_CHUNK, str(veg_counts.get(&"beech", 0)))
+				_check("chunk %s total typed <=96" % c, inst <= WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK, str(inst))
 		elif has_field and not has_forest:
-			# field hedgerow <=12, but overall still <=48
-			_check("chunk %s field instances <=12* (or <=48 total)" % c, inst <= 48, str(inst))
-			if inst > 12 and not has_forest and has_field:
-				# field dominant should be <=12, but if mixed we allow up to 48 total; check field-only
-				if not has_quarry:
-					_check("chunk %s field-only <=12" % c, inst <= 12, str(inst))
+			# field hedgerow + countryside up to 12+16, total still <=96
+			_check("chunk %s field instances <= %d" % [c, max_inst], inst <= max_inst, str(inst))
 		if has_quarry:
-			# quarry 2-6 but total still <=48
-			_check("chunk %s quarry instances <=48" % c, inst <= 48, str(inst))
+			# quarry 2-6 but total still <=96
+			_check("chunk %s quarry instances <= %d" % [c, max_inst], inst <= max_inst, str(inst))
 		if not has_forest and not has_quarry:
 			_check("chunk %s non-forest/quarry collider 0" % c, coll == 0, str(coll))
 		_check("chunk %s verts 81" % c, int(m["biome_vertices"]) == 81, str(m["biome_vertices"]))
 		_check("chunk %s tris <=128" % c, int(m["biome_triangles"]) <= 128 and int(m["biome_triangles"]) >= 0, str(m["biome_triangles"]))
 		_check("chunk %s biome_gen_ms measured" % c, m.has("biome_gen_ms") and float(m["biome_gen_ms"]) >= 0.0, str(m.get("biome_gen_ms", "")))
+	# G10-P1 Forest composition validation: typed groups, forest floor, countryside
+	var any_forest_typed_ok := false
+	var any_understory_ok := false
+	var any_floor_dressing_ok := false
+	var any_countryside_ok := false
+	for c in coords:
+		var m2: Dictionary = manifests_fwd[c]
+		var veg: Dictionary = m2.get("vegetation_counts", {}) as Dictionary
+		if veg.is_empty():
+			continue
+		var beech: int = int(veg.get(&"beech", 0))
+		var oak: int = int(veg.get(&"oak", 0))
+		var birch: int = int(veg.get(&"birch", 0))
+		var spruce: int = int(veg.get(&"spruce", 0))
+		var sap: int = int(veg.get(&"sapling", 0))
+		var bush: int = int(veg.get(&"bush", 0))
+		var grass: int = int(veg.get(&"grass", 0))
+		var litter: int = int(veg.get(&"leaf_litter", 0))
+		var stones: int = int(veg.get(&"stone", 0))
+		var deadwood: int = int(veg.get(&"dead_branch", 0))
+		var total_forest: int = beech + oak + birch + spruce + sap
+		var distinct_forest_kinds: int = 0
+		if beech > 0: distinct_forest_kinds += 1
+		if oak > 0: distinct_forest_kinds += 1
+		if birch > 0: distinct_forest_kinds += 1
+		if spruce > 0: distinct_forest_kinds += 1
+		if total_forest >= 8 and distinct_forest_kinds >= 2:
+			any_forest_typed_ok = true
+		if bush + grass >= 4:
+			any_understory_ok = true
+		if litter + stones + deadwood >= 3:
+			any_floor_dressing_ok = true
+		if int(veg.get(&"roadside_shrub", 0)) > 0 or int(veg.get(&"hedgerow", 0)) > 0 or int(veg.get(&"solitary_oak", 0)) > 0:
+			any_countryside_ok = true
+	# The fixed regression coords are deliberately rural/forest-heavy. If they
+	# do not include a field-only chunk, locate a real field parcel and assert
+	# its generated countryside dressing rather than accepting an unconditional pass.
+	if not any_countryside_ok:
+		var checked_countryside: Dictionary = {}
+		for parcel in wp.field_parcels():
+			var parcel_center: Vector2 = parcel.get("center", Vector2.ZERO) as Vector2
+			var candidate_coord := WorldSeed.chunk_coord(parcel_center.x, parcel_center.y)
+			if checked_countryside.has(candidate_coord):
+				continue
+			checked_countryside[candidate_coord] = true
+			var candidate_manifest: Dictionary = BiomeChunkBuilder.build_manifest(wp, candidate_coord)
+			var candidate_veg: Dictionary = candidate_manifest.get("vegetation_counts", {}) as Dictionary
+			if bool(candidate_manifest.get("has_field", false)) and not bool(candidate_manifest.get("has_forest", false)):
+				if int(candidate_veg.get(&"roadside_shrub", 0)) > 0 or int(candidate_veg.get(&"hedgerow", 0)) > 0 or int(candidate_veg.get(&"solitary_oak", 0)) > 0:
+					any_countryside_ok = true
+					break
+			if checked_countryside.size() >= 24:
+				break
+	_check("forest typed groups: at least 2 distinct tree silhouettes in dense chunk", any_forest_typed_ok, "beech/oak/birch/spruce distinct")
+	_check("forest understory: bushes+grass present in forest chunk", any_understory_ok, "bush+grass")
+	_check("forest floor dressing: leaf litter/stone/deadwood present", any_floor_dressing_ok, "leaf_litter/stone/dead_branch")
+	_check("countryside vegetation: roadside/hedgerow/solitary present", any_countryside_ok, "countryside at least hedgerow/roadside if any field/road")
 	# Materialize and check biome_mat_ms
 	var parent := Node3D.new()
 	add_child(parent)
@@ -631,23 +690,26 @@ func _run_all() -> void:
 	_check("save_state has records", save.has("records"), str(save.keys()))
 	cm.queue_free()
 	fake_player.queue_free()
-		# ---------- 3b. Field parcel determinism and per-cell counts ----------
+	# ---------- 3b. Field parcel determinism and per-cell counts ----------
 	var field_coords: Array[Vector2i] = []
-	# Dynamically find 5 landscape cells with at least 1 parcel for canonical seed (to ensure determinism and diff checks have data)
-	for cx in range(0, 12):
-		for cy in range(0, 12):
+	# Search a bounded canonical field window; scanning wp.field_parcels() over
+	# the entire world blocks the harness before it can run the assertions.
+	for cx in range(-58, -51):
+		for cy in range(-114, -107):
 			if field_coords.size() >= 5:
 				break
-			var cell_rect_tmp := Rect2(Vector2(float(cx)*WorldConstants.LANDSCAPE_CELL_M, float(cy)*WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
+			var cell_rect_tmp := Rect2(Vector2(float(cx) * WorldConstants.LANDSCAPE_CELL_M, float(cy) * WorldConstants.LANDSCAPE_CELL_M), Vector2(WorldConstants.LANDSCAPE_CELL_M, WorldConstants.LANDSCAPE_CELL_M))
 			var plist_tmp: Array[Dictionary] = wp.field_parcels_in(cell_rect_tmp)
-			if plist_tmp.size() > 0:
-				var parc_center: Vector2 = (plist_tmp[0] as Dictionary).get("center", Vector2.ZERO) as Vector2
-				var chunk_c := WorldSeed.chunk_coord(parc_center.x, parc_center.y)
+			if plist_tmp.is_empty():
+				continue
+			var parc_center: Vector2 = (plist_tmp[0] as Dictionary).get("center", Vector2.ZERO) as Vector2
+			var chunk_c: Vector2i = WorldSeed.chunk_coord(parc_center.x, parc_center.y)
+			if not field_coords.has(chunk_c):
 				field_coords.append(chunk_c)
 		if field_coords.size() >= 5:
 			break
 	if field_coords.is_empty():
-		field_coords = [Vector2i(4,8), Vector2i(6,8), Vector2i(8,10)]
+		field_coords = [Vector2i(-55,-111), Vector2i(-54,-111), Vector2i(-55,-110)]
 	var field_manifests_fwd: Dictionary = {}
 	var field_manifests_rev: Dictionary = {}
 	for c in field_coords:
@@ -732,9 +794,9 @@ func _run_all() -> void:
 				break
 		_check("field parcel manifest equality shuffled order", field_det_ok, field_det_detail)
 	var diff_parcel := 0
+	var alt_wp := WorldPlan.new(alt_a)
 	for c in field_coords:
 		var a_list: Array = field_manifests_fwd[c].get("field_parcel_manifests", [])
-		var alt_wp := WorldPlan.new(alt_a)
 		var m_alt: Dictionary = BiomeChunkBuilder.build_manifest(alt_wp, c)
 		var b_list: Array = m_alt.get("field_parcel_manifests", [])
 		if a_list.size() != b_list.size():
@@ -1465,9 +1527,9 @@ func _run_all() -> void:
 			budget_ok = false
 			budget_detail = "orchard_instances %d >12 at %s" % [orch_inst, c]
 			break
-		if total_inst > 48:
+		if total_inst > WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK:
 			budget_ok = false
-			budget_detail = "total instances %d >48 at %s" % [total_inst, c]
+			budget_detail = "total instances %d >%d at %s" % [total_inst, WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK, c]
 			break
 		if verts != 81:
 			budget_ok = false
@@ -1485,7 +1547,7 @@ func _run_all() -> void:
 			budget_ok = false
 			budget_detail = "field_triangles %d >64 at %s" % [field_tris, c]
 			break
-	_check("orchard budgets per chunk: field <=4 orchard <=3 fruit <=3 hedgerow 8/6 canopy <=12 total <=48 verts 81/96", budget_ok, budget_detail)
+	_check("orchard budgets per chunk: field <=4 orchard <=3 fruit <=3 hedgerow 8/6 canopy <=12 total <=96 verts 81/96", budget_ok, budget_detail)
 
 	_check("GENERATOR_VERSION stays 2", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
 	# WorldPlan pure check: after queries, second plan gives same height
@@ -1780,12 +1842,12 @@ func _run_all() -> void:
 			_check("industrial chunk %s with forest/quarry collider 1" % c, int(m["biome_colliders"]) == 1, str(m["biome_colliders"]))
 		else:
 			_check("industrial chunk %s without forest/quarry collider 0" % c, int(m["biome_colliders"]) == 0, str(m["biome_colliders"]))
-		_check("industrial chunk %s instances <=48" % c, int(m["instance_count"]) <= 48, str(m["instance_count"]))
+		_check("industrial chunk %s instances <=%d" % [c, WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK], int(m["instance_count"]) <= WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK, str(m["instance_count"]))
 		# industrial slag <=6 of 48
 		if bool(m["has_industrial"]):
 			var total_inst := int(m["instance_count"])
 			# estimate industrial instances <=6
-			_check("industrial chunk %s total instances <=48" % c, total_inst <= 48, str(total_inst))
+			_check("industrial chunk %s total instances <=%d" % [c, WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK], total_inst <= WorldConstants.MAX_BIOME_INSTANCES_PER_CHUNK, str(total_inst))
 	# Shared-edge for industrial: reuse existing agree checks already cover industrial (since they check >=7/9)
 	# At least 9 resident biome chunks around industrial+road transect with at least 3 industrial chunks
 	var cm_ind := ChunkManager.new()
@@ -1846,7 +1908,6 @@ func _run_all() -> void:
 		body_count = active_biome_coll
 	_check("unified 54 peak not 63 (industrial Area3D not counted) biome colliders <=9", active_biome_coll <= 9, str(active_biome_coll))
 	_check("biome body count == colliders (industrial 0 collider)", body_count == active_biome_coll or body_count <= 9, "%d vs %d" % [body_count, active_biome_coll])
-	_check("biome_instances <=48 per chunk (industrial slag <=6 of 48)", true, "")
 	cm_ind.queue_free()
 	fake2.queue_free()
 
