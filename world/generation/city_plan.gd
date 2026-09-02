@@ -473,23 +473,31 @@ func _make_spec(lot: Rect2, edge: int, cell: Vector2i, k: int,
 		floors = mini(floors + 1, 7)
 	var use := "residential" if cell.x % 2 == 0 else "retail"
 	var spec := {
-		"id": "b_%d_%d_%s%02d" % [cell.x, cell.y, char(78 + edge), k],  # b_x_y_N03
-		"rect": lot,
-		"floors": floors,
-		"floor_h": snappedf(rng.randf_range(2.9, 3.25), 0.05),
-		"door_edge": edge,
-		"district": district,
-		"plaza_adjacent": _is_plaza_adjacent(cell),
-		"use": use,
-		"style": {
-			"wall": rng.randi_range(0, WALL_PALETTES - 1),
-			"roof": rng.randi_range(0, ROOF_PALETTES - 1),
-			"balcony": rng.randf() < 0.45,
-			"attic": rng.randf() < 0.7,
-			"room_type": use,
-		},
-		"doors": [_door_manifest(spec_id(cell, edge, k), lot, edge)],
-	}
+			"id": "b_%d_%d_%s%02d" % [cell.x, cell.y, char(78 + edge), k],  # b_x_y_N03
+			"rect": lot,
+			"floors": floors,
+			"floor_h": snappedf(rng.randf_range(2.9, 3.25), 0.05),
+			"door_edge": edge,
+			"district": district,
+			"plaza_adjacent": _is_plaza_adjacent(cell),
+			"use": use,
+			# G10-P2A Universal Building Contract: the plan stamps WHAT this
+			# building is (program identity + quality + circulation intent);
+			# the UniversalBuildingAssembler constructs it.
+			"quality": WorldConstants.BUILDING_QUALITY_FULL_BUILDING,
+			"archetype": (&"shop_house" if use == "retail"
+					else (&"tenement" if floors >= 4 else &"house")),
+			"circulation": {"kind": &"stairs" if floors >= 2 else &"none"},
+			"ground_y": 0.0,
+			"style": {
+				"wall": rng.randi_range(0, WALL_PALETTES - 1),
+				"roof": rng.randi_range(0, ROOF_PALETTES - 1),
+				"balcony": rng.randf() < 0.45,
+				"attic": rng.randf() < 0.7,
+				"room_type": use,
+			},
+			"doors": [_door_manifest(spec_id(cell, edge, k), lot, edge)],
+		}
 	# DESIGN RULE: no unreachable storeys. Stair eligibility lives in ONE
 	# place - BuildingBuilder.has_stairs_for - which accounts for floor_h
 	# (zone length) and lot width. Lots that fail stay single-storey.

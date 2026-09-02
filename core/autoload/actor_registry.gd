@@ -35,24 +35,42 @@ static func is_actor_down(actor: Node) -> bool:
 
 
 ## Returns the closest registered actor whose node is in `group` and not dead.
+## Iteration guards against stale roster entries (freed actors): a previously
+## freed object must never be passed into a typed argument (`is_actor_down`)
+## — the arg-type check itself raises a script error — so validity is
+## confirmed here and stale keys are pruned in place.
 func find_nearest_in_group(from_position: Vector3, group: StringName, max_distance: float) -> Node3D:
 	var best: Node3D = null
 	var best_d2 := max_distance * max_distance
-	for actor in _actors.values():
+	var stale: Array[String] = []
+	for key: String in _actors:
+		var actor = _actors[key]  # untyped: a freed object must not hit a typed local/arg check
+		if not is_instance_valid(actor):
+			stale.append(key)
+			continue
 		if is_actor_down(actor) or not actor.is_in_group(group):
 			continue
 		var d2 := from_position.distance_squared_to(actor.global_position)
 		if d2 < best_d2:
 			best_d2 = d2
 			best = actor
+	for k in stale:
+		_actors.erase(k)
 	return best
 
 
 func count_alive_in_group(group: StringName) -> int:
 	var n := 0
-	for actor in _actors.values():
+	var stale: Array[String] = []
+	for key: String in _actors:
+		var actor = _actors[key]  # untyped: freed objects must not hit typed checks
+		if not is_instance_valid(actor):
+			stale.append(key)
+			continue
 		if not is_actor_down(actor) and actor.is_in_group(group):
 			n += 1
+	for k in stale:
+		_actors.erase(k)
 	return n
 
 

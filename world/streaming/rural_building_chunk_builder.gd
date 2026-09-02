@@ -181,6 +181,13 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var interior_walls: Array[Dictionary] = []
 	var furniture_anchors: Array[Dictionary] = []
 	var crate_manifests: Array[Dictionary] = []
+	# G10-P2A: contract houses carry their own interior (partitions with
+	# openings + furniture) inside the universal grammar — exclude their
+	# walls/furniture from the generic legacy appends.
+	var contract_ids: Dictionary = {}
+	for b in owned:
+		if RuralBuildingPlan.is_contract_house(b):
+			contract_ids[str(b.get("id", ""))] = true
 	for b in owned:
 		var bid: String = String(b["id"])
 		var interior: Dictionary = b.get("interior", {}) as Dictionary
@@ -189,10 +196,14 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var walls: Array = interior.get("walls", []) as Array
 		for w in walls:
 			var wd: Dictionary = w as Dictionary
+			if contract_ids.has(String(wd.get("building_id", ""))):
+				continue
 			interior_walls.append(wd)
 		var furn: Array = interior.get("furniture", []) as Array
 		for f in furn:
 			var fd: Dictionary = f as Dictionary
+			if contract_ids.has(String(fd.get("building_id", ""))):
+				continue
 			furniture_anchors.append(fd)
 		var crate: Dictionary = interior.get("crate", {}) as Dictionary
 		if not crate.is_empty():
@@ -589,6 +600,7 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	var collider_verts := PackedVector3Array()
 	var collider_indices := PackedInt32Array()
 	var collider_offset := 0
+	var contract_buildings: Array[Dictionary] = []
 	for b in owned:
 		var b_center: Vector2 = b["center"] as Vector2
 		var footprint: Vector2 = b["footprint"] as Vector2
@@ -597,13 +609,26 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		var wall_col: Color = b.get("color", COL_PLASTER) as Color
 		var roof_col: Color = b.get("roof_color", COL_ROOF_RED) as Color
 		var ground: float = world_plan.surface_height_at(b_center) + WorldConstants.RURAL_OVERLAY_LIFT_M
+		b["ground_y"] = ground
 		building_ground_by_id[String(b.get("id", ""))] = ground
 		var door_width: float = 1.2 if b.get("kind", &"") == &"barn" or b.get("kind", &"") == &"stable" else 1.0
 		var door_height: float = 2.2 if door_width > 1.0 else 2.1
 		var visual_before: int = verts.size()
 		var visual_tri_before: int = indices.size()
-		RuralArt.append_building(verts, normals, colors, indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height, b.get("kind", &"cottage") as StringName, wall_col, roof_col, COL_TIMBER, Color("415a60"), owned.size() <= 3)
-		RuralArt.append_building_collision(collider_verts, collider_indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height)
+		# G10-P2A Universal Building Contract: migrated house family goes
+		# through the universal assembler (aperture-composed walls, real
+		# windows, slabs, ladder, interior with openings). Everything else
+		# stays on the legacy rural art path, explicitly tracked as pending
+		# migration in docs/world/BUILDING-CONTRACT.md.
+		var evidence: Dictionary = {}
+		var assembled: bool = UniversalBuildingAssembler.build_rural_into(
+				verts, normals, colors, indices, collider_verts,
+				collider_indices, b, world_plan, evidence)
+		if not assembled:
+			RuralArt.append_building(verts, normals, colors, indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height, b.get("kind", &"cottage") as StringName, wall_col, roof_col, COL_TIMBER, Color("415a60"), owned.size() <= 3)
+			RuralArt.append_building_collision(collider_verts, collider_indices, b_center, footprint, yaw, ground, height, b.get("door_pos", b_center) as Vector2, door_width, door_height)
+		else:
+			contract_buildings.append(evidence)
 		vert_count += verts.size() - visual_before
 		tri_count += (indices.size() - visual_tri_before) / 3
 		aabbs.append(b["aabb"] as Rect2)
@@ -693,7 +718,11 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		forage_vertices +=24
 		forage_triangles +=12
 	# Enforce budget: if verts >480, drop furniture iteratively then forage then wells? Keep at least one well if possible
-	while verts.size() > WorldConstants.MAX_RURAL_VERTS_PER_CHUNK and furniture_anchors.size() >0:
+	var contract_present: bool = contract_buildings.size() > 0
+	# NOTE: blind tail-truncation would corrupt aperture-composed contract
+	# geometry; contract chunks stay within budget by construction and are
+	# measured by --buildingcontracttest / --ruraltest.
+	while verts.size() > WorldConstants.MAX_RURAL_VERTS_PER_CHUNK and furniture_anchors.size() >0 and not contract_present:
 		# remove last furniture
 		# For simplicity, we already added, so need to recalc: remove last furniture box (24 verts = 24*? each box 24 verts, 6 faces*4)
 		# Remove last 24 verts and 36 indices (12 tris *3)
@@ -735,6 +764,8 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"origin": origin,
 		"size": size,
 		"rural_buildings": owned,
+		"contract_buildings": contract_buildings,
+		"rural_contract_houses": contract_buildings.size(),
 		"door_manifests": door_manifests,
 		"interior_walls": interior_walls,
 		"furniture_anchors": furniture_anchors,
@@ -1104,6 +1135,7 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 		"granary_manifests": granary_count,
 		"rural_furniture": int(manifest.get("rural_furniture", 0)),
 		"rural_buildings": int((manifest.get("rural_buildings", []) as Array).size()),
+		"rural_contract_houses": int(manifest.get("rural_contract_houses", 0)),
 		"settlement_paths": int(manifest.get("settlement_path_count", 0)),
 		"settlement_yards": int(manifest.get("settlement_yard_count", 0)),
 		"settlement_fences": int(manifest.get("settlement_fence_count", 0)),

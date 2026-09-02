@@ -81,9 +81,24 @@ world/
     road_network_plan.gd Hierarchical MST+sparse-loop road graph constrained to hydrology crossing_candidates, smoothed polylines (pure, deterministic)
     rural_building_plan.gd Deterministic rural shelters clustered around settlement anchors, road/slope/flood/water/city-flat gated, cardinal yaw, door facing road/settlement (pure, deterministic)
     building_builder.gd  One building spec -> batched geometry ops (shell,
-                         floors, stairs, roof, balconies, windows)
-    chunk_builder.gd     Materializes ONE city chunk: ground, roads, blocks,
-                         buildings via BuildingBuilder, props; MeshBatcher out
+                             floors, stairs, roof, balconies, windows)
+        building_spec.gd     UNIVERSAL BUILDING CONTRACT spec factory + aperture
+                             math: quality/archetype normalisation, city/rural
+                             entrance manifests, polygon footprint area, window
+                             reference formula (see docs/world/BUILDING-CONTRACT.md)
+        building_archetype.gd Contract archetype registry: family, min quality,
+                             bulk single-hall flags, vocab mapping
+        building_contract_validator.gd Contract validator: spec rules, city
+                             build rules (apertures/walls/slabs/roof/stairs/
+                             grounding/registration), rural build rules (collider
+                             soup scan), unregistered-structural bypass scan
+        universal_building_assembler.gd THE ONLY normal path for enterable
+                             buildings: city via BuildingBuilder (registered
+                             contract ids), rural house family via the contract
+                             rural grammar (art/universal_building_art.gd)
+        chunk_builder.gd     Materializes ONE city chunk: ground, roads, blocks,
+                             buildings via UniversalBuildingAssembler, props;
+                             MeshBatcher out
 
   streaming/           P0.5 chunk lifecycle + P2 terrain + P2.2 water + P3.1 biome + P4.1 roads + P4.2 rural building fabric
     chunk_manager.gd     Tracks player chunk; budgeted load/unload queues;
@@ -112,6 +127,7 @@ debug/hydrology_test.gd              Hydrology determinism + water manifest budg
 debug/biome_test.gd                  Biome/geology determinism + dressing budgets (--biometest / --biomematerialtest)
 debug/road_test.gd                   Settlement + road determinism + road/bridge budgets + streaming (--roadtest / --settlementtest / --roadmaterialtest)
 debug/rural_test.gd                  Rural building determinism + shell budgets + streaming (--ruraltest / --settlementbuildingtest / --ruralfabrictest)
+debug/building_contract_test.gd      Universal building contract harness (--buildingcontracttest): malformed-spec rejection matrix, assembler-bypass detection, city + rural conformance, rural tamper matrix
 debug/fringe_test.gd                 Fringe determinism + streaming + road-oriented + water/slope/overlap + chunk seam + visible + archetype + landmark (--fringetest)
 debug/fringe_capture.gd              Fringe 5-view capture (city→inner→industrial→peri→macro) per seed (--fringe-capture + --seed)
 debug/city_runtime_test.gd           Streamed-city integration (physics rays, stairs, doors, destruction)

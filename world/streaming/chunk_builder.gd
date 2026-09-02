@@ -62,7 +62,11 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 			_:
 				_park(b, plan, block, rect, coord)
 	for spec in _owned_buildings(plan, rect, coord):
-		BuildingBuilder.build(b, spec)
+		# G10-P2A: the universal building contract - the ONLY normal path
+		# for enterable buildings. Delegates to the reference BuildingBuilder
+		# after contract-stamping + registration (byte-identical city
+		# geometry, now validated by BuildingContractValidator).
+		UniversalBuildingAssembler.build_into(b, spec)
 	_scatter_props(b, plan, rect, coord)
 
 

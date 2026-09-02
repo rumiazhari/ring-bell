@@ -194,7 +194,13 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			"door_yaw": door_yaw,
 		}
 		spec["doors"] = [dm]
-		BuildingBuilder.build(batcher, spec)
+		# G10-P2A: per-spec door sizes so the wall opening matches the leaf
+		# width/height (warehouse 1.8x2.4 etc.) - the universal assembler is the
+		# only path for enterable buildings.
+		spec["door_w"] = door_width
+		spec["door_h"] = door_height
+		spec["door_h"] = door_height
+		UniversalBuildingAssembler.build_into(batcher, spec)
 		building_aabbs.append(aabb)
 		building_colors.append(b.get("wall_color", Color("ddd0c0")) as Color)
 		door_manifests.append(dm)

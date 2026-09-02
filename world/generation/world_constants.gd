@@ -746,6 +746,53 @@ const BIOME_INSTANCE_CAP_FIELD := 12
 const BIOME_INSTANCE_CAP_QUARRY := 6
 const MAX_BIOME_INSTANCES_PER_CHUNK := 96 # raised from 48 to accommodate typed forest + understory + countryside without sacrificing density (verified 96 peak, still batched)
 
+# --- Universal Building Contract (G10-P2A) authoritative numerics ---
+const BUILDING_CONTRACT_VERSION := "1.0.0"
+const BUILDING_QUALITY_FULL_BUILDING := &"FULL_BUILDING"
+const BUILDING_QUALITY_DISTANT_LOD := &"DISTANT_LOD"
+const BUILDING_QUALITY_PROP_STRUCTURE := &"PROP_STRUCTURE"
+const BUILDING_QUALITIES: Array[StringName] = [
+	BUILDING_QUALITY_FULL_BUILDING, BUILDING_QUALITY_DISTANT_LOD,
+	BUILDING_QUALITY_PROP_STRUCTURE,
+]
+## Minimum footprint area (m^2) a FULL_BUILDING may claim.
+const CONTRACT_MIN_FOOTPRINT_AREA_M2 := 12.0
+## Minimum footprint side (m) either axis.
+const CONTRACT_MIN_FOOTPRINT_SIDE_M := 2.5
+const CONTRACT_FLOOR_H_MIN := 2.2
+const CONTRACT_FLOOR_H_MAX := 4.6
+const CONTRACT_MAX_FLOORS := 8
+## Door aperture human-scale band (m).
+const CONTRACT_DOOR_W_MIN := 0.8
+const CONTRACT_DOOR_W_MAX := 2.0
+const CONTRACT_DOOR_H_MIN := 1.9
+const CONTRACT_DOOR_H_MAX := 2.8
+## Window aperture human-scale band (m).
+const CONTRACT_WIN_W_MIN := 0.6
+const CONTRACT_WIN_W_MAX := 1.6
+const CONTRACT_WIN_H_MIN := 0.6
+const CONTRACT_WIN_H_MAX := 1.6
+## Grounding tolerance: lowest structural geometry may sit this far below
+## the world surface (slab burial), never higher above it.
+const CONTRACT_GROUND_BURY_TOL_M := 1.2
+const CONTRACT_GROUND_FLOAT_TOL_M := 0.35
+## Aperture clearance epsilon when scanning batcher colliders (m).
+const CONTRACT_APERTURE_CLEAR_M := 0.35
+## Rural contract house storey height (m) — matches legacy rural 4.2 slab.
+const RURAL_CONTRACT_FLOOR_H := 4.2
+const RURAL_CONTRACT_WALL_T := 0.18
+const RURAL_CONTRACT_SLAB_T := 0.22
+const RURAL_CONTRACT_DOOR_W := 1.0
+const RURAL_CONTRACT_DOOR_H := 2.1
+const RURAL_CONTRACT_WIN_W := 1.05
+const RURAL_CONTRACT_WIN_H := 0.82
+const RURAL_CONTRACT_WIN_SILL := 1.15
+const RURAL_CONTRACT_SECOND_WIN_W := 0.72
+const RURAL_CONTRACT_SECOND_WIN_H := 0.72
+## Pillar/wall module target (m) — vertical courses stay full storey, same
+## compromise as the city builder; keeps collider counts linear.
+const CONTRACT_WALL_CELL := 1.25
+
 static func is_inside_world(p: Vector2) -> bool:
 	return p.x >= WORLD_MIN_M and p.x < WORLD_MAX_M and p.y >= WORLD_MIN_M and p.y < WORLD_MAX_M
 

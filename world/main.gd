@@ -162,6 +162,18 @@ func _ready() -> void:
 		var tester6fr: Node = load("res://debug/fringe_test.gd").new()
 		tester6fr.name = "FringeTest"
 		add_child(tester6fr)
+	elif user_args.has("--contractdiag4"):
+		var diag4: Node = load("res://debug/contract_diag4.gd").new()
+		diag4.name = "ContractDiag4"
+		add_child(diag4)
+	elif user_args.has("--g10p2a-ruralprobe"):
+		var probe_g10: Node = load("res://debug/g10p2a_rural_probe.gd").new()
+		probe_g10.name = "G10P2ARuralProbe"
+		add_child(probe_g10)
+	elif user_args.has("--buildingcontracttest"):
+		var tester_bc: Node = load("res://debug/building_contract_test.gd").new()
+		tester_bc.name = "BuildingContractTest"
+		add_child(tester_bc)
 	elif user_args.has("--cavetest"):
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
@@ -229,7 +241,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--biometest", "--biomaterialtest",
 			"--roadtest", "--settlementtest", "--roadmaterialtest",
 			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
-			"--fringetest",
+			"--fringetest", "--buildingcontracttest", "--g10p2a-ruralprobe",
 			"--cavetest",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",

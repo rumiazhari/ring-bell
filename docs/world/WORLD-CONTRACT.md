@@ -628,3 +628,11 @@ Water surface Y is deterministic per world `z` via `WATER_LEVEL_MEAN + WATER_LEV
 **Queries:** `WorldPlan.fringe_buildings*`, `fringe_density_at`, `fringe_type_at`, `landmarks`, `fringe_walls/yards/trees_in`, `fringe_chunk_manifest`; `FringeChunkBuilder.build_manifest` center-owned, `materialize` via `BuildingBuilder`.
 
 **Acceptance:** 5 views per seed (city→fringe, inner street, industrial, peri, macro) with 2 seeds, no circular cutoff, continuous streets, industrial yards, 8 archetypes, city lighting, 54 peak not 63.
+
+## 30. Universal Building Contract — G10-P2A
+
+**Scope:** One mandatory building standard for ALL normal enterable buildings. CityPlan/FringePlan/SettlementPlan/RuralBuildingPlan produce **BuildingSpecs only**; `UniversalBuildingAssembler` is the ONLY path that constructs building shells (city: registered `BuildingBuilder` delegate; rural house family: `art/universal_building_art.gd` aperture grammar). Quality levels `FULL_BUILDING` / `DISTANT_LOD` / `PROP_STRUCTURE`; houses/inns/factories can never be PROPed to dodge interiors. Full contract: `docs/world/BUILDING-CONTRACT.md`.
+
+**Harness:** `--buildingcontracttest` — malformed-spec rejection matrix (missing entrance, off-edge doors, unreachable floors, stairs that don't fit, fake classifications, tiny footprints, grounding violations, disconnected/overlapping rooms, tampered evidence, bypass registration) + real-world conformance: CityPlan chunks (5×5) and migrated rural contract houses all validate with 0 violations, budgets hold.
+
+**Status (this slice):** city pipeline contract-stamped + validated with no geometry regression (`--citytest`); ALL rural house-family buildings (cottage/village_house/farmhouse, 1- and 2-storey with ladder circulation) assemble via the universal grammar with real door/window apertures, slabs, gabled roofs, interiors; barn/stable/shed stay on the legacy rural art path (tracked pending migration in BUILDING-CONTRACT.md).

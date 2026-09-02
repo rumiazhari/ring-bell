@@ -299,6 +299,10 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	var style: Dictionary = spec["style"]
 	var wall_c: Color = WALL_COLORS[style["wall"] % WALL_COLORS.size()]
 	var roof_c: Color = ROOF_COLORS[style["roof"] % ROOF_COLORS.size()]
+	# G10-P2A: per-spec door aperture sizes (absent -> city defaults). Lets
+	# wider industrial/utility leaves match their real openings.
+	var door_w: float = float(spec.get("door_w", DOOR_W))
+	var door_h: float = float(spec.get("door_h", DOOR_H))
 	var fh: float = spec["floor_h"]
 	var n: int = mini(int(spec["floors"]), 8)
 	var total_h := n * fh
@@ -349,7 +353,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		var col := PLINTH_COLOR if f == 0 else wall_c
 		_storey_walls(b, off, w, d, y0, fh, col, f,
 				door_edge if f == 0 else -1, tag,
-				str(spec.get("district", "")) == "historic")
+				str(spec.get("district", "")) == "historic",
+				door_w, door_h)
 		if f == 0:
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
 			if str(style.get("room_type", "residential")) == "retail":
@@ -529,12 +534,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 ## camera-facing wall per storey.
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
 		y0: float, fh: float, col: Color, floor_i: int, door_edge: int,
-		tag: String, is_historic: bool = false) -> void:
+		tag: String, is_historic: bool = false,
+		door_w := DOOR_W, door_h := DOOR_H) -> void:
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
 		b.push_layer("%s:f%d:%s" % [tag, floor_i, facades[side]])
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
-				door_edge == side, is_historic, tag)
+				door_edge == side, is_historic, tag, door_w, door_h)
 		b.pop_layer()
 
 
@@ -1737,7 +1743,8 @@ static func _facade_plinth(b: MeshBatcher, off: Vector3, w: float, d: float,
 ## ENTITY from the CityPlan manifest fills it at runtime.
 static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 		w: float, d: float, y0: float, fh: float, col: Color, floor_i: int,
-		is_entrance: bool, is_historic: bool = false, tag: String = "") -> void:
+		is_entrance: bool, is_historic: bool = false, tag: String = "",
+		door_w := DOOR_W, door_h := DOOR_H) -> void:
 	var horizontal := side == 0 or side == 2     # N/S walls run along X
 	var length := w if horizontal else d
 	var lo := -WALL_T * 0.5                      # extend past corners like the
@@ -1750,8 +1757,8 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 	# one) so the leaf never rubs the piers and no collider face lies
 	# exactly on the leaf's swing plane.
 	if is_entrance and floor_i == 0:
-		openings.append({"c": length * 0.5, "wd": DOOR_W + DOOR_FRAME,
-				"bot": 0.0, "h": DOOR_H, "glass": false})
+		openings.append({"c": length * 0.5, "wd": door_w + DOOR_FRAME,
+				"bot": 0.0, "h": door_h, "glass": false})
 	var count := int(floor((length - 1.6) / WIN_SPACING))
 	for i in count:
 		var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING

@@ -180,6 +180,29 @@ func _init(seed: int = WorldSeed.get_world_seed(), terrain_plan: TerrainPlan = n
 		gbs_copy[k] = (_granaries_by_settlement[k] as Array[Dictionary]).duplicate()
 	_cache[seed_used] = {"buildings": _buildings.duplicate(), "by_settlement": bs_copy, "by_id": _by_id.duplicate(), "wells": _wells.duplicate(), "wells_by_settlement": wbs_copy, "wells_by_id": _wells_by_id.duplicate(), "forage": _forage.duplicate(), "forage_by_id": _forage_by_id.duplicate(), "workbenches": _workbenches.duplicate(), "workbenches_by_settlement": wbs_copy2, "workbenches_by_id": _workbenches_by_id.duplicate(), "workbench_by_building": _workbench_by_building.duplicate(), "granaries": _granaries.duplicate(), "granaries_by_settlement": gbs_copy, "granaries_by_id": _granaries_by_id.duplicate(), "granary_by_building": _granary_by_building.duplicate(), "settlement_paths": _settlement_paths.duplicate(), "settlement_yards": _settlement_yards.duplicate(), "settlement_fences": _settlement_fences.duplicate(), "settlement_clutter": _settlement_clutter.duplicate(), "settlement_trees": _settlement_trees.duplicate()}
 
+## G10-P2A Universal Building Contract: the plan stamps WHAT each rural
+## building is — program identity (archetype), quality, storey intent and
+## circulation. The UniversalBuildingAssembler owns construction.
+func _stamp_contract_fields(building_dict: Dictionary) -> void:
+	var kind_b: StringName = building_dict["kind"] as StringName
+	building_dict["quality"] = WorldConstants.BUILDING_QUALITY_FULL_BUILDING
+	building_dict["archetype"] = BuildingArchetype.archetype_for(kind_b)
+	building_dict["floor_h"] = WorldConstants.RURAL_CONTRACT_FLOOR_H
+	building_dict["roof_family"] = &"gabled"
+	var b_floors: int = int(building_dict.get("floors", 1))
+	building_dict["circulation"] = {
+		"kind": &"ladder" if b_floors >= 2 else &"none",
+	}
+
+
+## G10-P2A: true when this rural building is constructed by the universal
+## building assembler (migrated house family) instead of the legacy art.
+static func is_contract_house(b: Dictionary) -> bool:
+	return String(b.get("quality", "")) == String(WorldConstants.BUILDING_QUALITY_FULL_BUILDING) \
+			and (String(b.get("archetype", "")) == "house" \
+					or String(b.get("archetype", "")) == "cottage")
+
+
 func _hash_id(s: String) -> int:
 	return WorldSeed.str_hash(s)
 
@@ -1685,6 +1708,7 @@ func _generate() -> void:
 					"allow_gate_barn": allow_gate_barn,
 					"gate_id": "" if not allow_gate_barn else _nearest_gate_id(cand_center, gates),
 				}
+				_stamp_contract_fields(building_dict)
 				success = true
 				if allow_gate_barn:
 					var gid: String = building_dict["gate_id"] as String
@@ -1767,6 +1791,7 @@ func _generate() -> void:
 					"allow_gate_barn": false,
 					"gate_id": "",
 				}
+				_stamp_contract_fields(_fb_dict)
 				var _fb_hash: int = _hash_id(_fb_id)
 				var _fb_walls: Array[Dictionary] = _generate_partition_wall(_fb_dict, _fb_hash)
 				for w in _fb_walls:
@@ -1845,6 +1870,7 @@ func _generate() -> void:
 					"allow_gate_barn": false,
 					"gate_id": "",
 				}
+				_stamp_contract_fields(bdict2)
 				var idh2:int=_hash_id(bid2)
 				var walls2:Array[Dictionary]=_generate_partition_wall(bdict2, idh2)
 				for wall2 in walls2:

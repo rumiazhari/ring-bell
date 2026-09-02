@@ -293,6 +293,30 @@ func manifest() -> Dictionary:
 			"asset_instances": _asset_instances.duplicate(true)}
 
 
+# --- Universal Building Contract (G10-P2A): registration -------------------
+# The UniversalBuildingAssembler registers every FULL_BUILDING id it
+# assembles here. BuildingContractValidator.unregistered_structural() and
+# the test harness use this to prove no subsystem bypassed the assembler.
+
+var _contract_buildings: Dictionary = {}   # id -> spec snapshot
+
+
+func register_contract_building(id: String, spec: Dictionary) -> void:
+	_contract_buildings[id] = spec
+
+
+func contract_building_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for k in _contract_buildings.keys():
+		ids.append(str(k))
+	ids.sort()
+	return ids
+
+
+func contract_building(id: String) -> Dictionary:
+	return _contract_buildings.get(id, {})
+
+
 func _group_keys() -> Array:
 	return _specs.map(func(s: Dictionary) -> String:
 			return (s["color"] as Color).to_html())
