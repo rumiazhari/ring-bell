@@ -40,7 +40,10 @@ const DEBRIS_COLORS := [
 ]
 
 const DASH_STEP := 7.0
-const LAMP_STEP := 22.0
+const LAMP_STEP := 32.0
+const LAMP_MIN_SEP := 14.0
+const LAMP_JUNCTION_EXCLUDE_M := 13.0
+const LAMP_PLAZA_EXCLUDE_M := 12.0
 
 
 ## Emits everything for `coord` into `b`. Deterministic and side-effect free.
@@ -463,6 +466,7 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 
 static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		world_plan: WorldPlan = null) -> void:
+	_emit_halo_lamps(b, plan, rect, world_plan)
 	for edge: Dictionary in plan.city_road_segments_in(rect.grow(8.0)):
 		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
 		var hierarchy: StringName = edge.get("hierarchy", &"local") as StringName
@@ -519,21 +523,184 @@ static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 					color = Color("5e5a52")
 				b.add_box_rotated(Vector3(mid.x, road_center_y, mid.y),
 					Vector3(width, 0.11, piece_length + 0.12), basis, color, false)
-			# Lamps are only placed on the arterial hierarchy; local lanes stay
-			# narrow and dark like a historic neighborhood.
-			if hierarchy == &"primary":
-				var step_count := maxi(1, int(floor(length / LAMP_STEP)))
-				for lamp_i in step_count:
-					var t := (float(lamp_i) + 0.5) / float(step_count)
-					var lp := a.lerp(z, t)
-					var side := 1.0 if (lamp_i + i) % 2 == 0 else -1.0
-					var normal := Vector2(-delta.y, delta.x).normalized()
-					var lamp_ground_y := 0.0
-					if world_plan != null:
-						lamp_ground_y = world_plan.surface_height_at(lp)
-						if bool(edge.get("is_bridge", false)) and world_plan.water_body_at(lp) != &"":
-							lamp_ground_y = world_plan.water_level_at(lp) + WorldConstants.BRIDGE_DECK_LIFT_M
-					_lamp_post(b, lp + normal * (width * 0.5 + 0.85), lamp_ground_y)
+
+
+## P2B-FIX lamp driver, called ONCE per _roads (function level, never per
+## piece/edge). Halo query (grow 24) + ghost claims keep spacing across
+## chunk borders; `accepted` spans every halo edge of this chunk.
+static func _emit_halo_lamps(b: MeshBatcher, plan: CityPlan, rect: Rect2,
+		world_plan: WorldPlan = null) -> void:
+	var lamp_discs := _lamp_exclusion_discs(plan, rect)
+	var lamp_accepted: Array = []  # plain Array[Vector2]: shared by reference
+	for lamp_edge in plan.city_road_segments_in(rect.grow(24.0)):
+		_lamps_for_edge(b, plan, lamp_edge, rect, lamp_discs, lamp_accepted,
+			world_plan)
+
+
+## Junction/plaza exclusion discs for lamp placement: Array of
+## Vector3(x, z, radius). Deterministic per (plan, rect); chunk-independent
+## content so neighbors agree on exclusions.
+static func _lamp_exclusion_discs(plan: CityPlan, rect: Rect2) -> Array:
+	var discs: Array = []
+	var grown := rect.grow(40.0)
+	for node in plan.city_nodes():
+		var nid := String(node.get("id", ""))
+		var deg := int(node.get("degree", 0))
+		# P2B-FIX: only named convergence hearts + true monster junctions
+		# clear lamps. Ordinary pocket crossings keep spaced lamps; blanketing
+		# every degree-4 node sterilized the whole core.
+		if nid == "market_square" or nid == "civic_square" \
+				or nid == "rail_station" or nid == "castle_hill" \
+				or deg >= 7:
+			var c: Vector2 = node.get("center", Vector2.ZERO) as Vector2
+			if grown.has_point(c):
+				discs.append(Vector3(c.x, c.y, LAMP_JUNCTION_EXCLUDE_M))
+	for block in plan.city_blocks_in(grown):
+		if (block.get("kind", &"") as StringName) == &"plaza":
+			var bc: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+			var bb: Rect2 = block.get("bounds", block.get("rect", Rect2())) as Rect2
+			discs.append(Vector3(bc.x, bc.y,
+				maxf(LAMP_PLAZA_EXCLUDE_M, minf(bb.size.x, bb.size.y) * 0.35)))
+	return discs
+
+
+## P2B-FIX lamp pass. Lamps live only on primary arterials; locals stay dark.
+## Positions anchor to the FULL edge polyline at LAMP_STEP spacing (chunk
+## independent), each emitted only by its owning chunk. Junction discs
+## (incl. plaza hearts) and LAMP_MIN_SEP against same-call accepts keep
+## 1900s density sane at convergences; plaza RIMS stay lit so avenue chunks
+## keep their night pools. `accepted` is a plain Array (shared by
+## reference) of Vector2 lamp positions for cross-edge spacing.
+static func _lamps_for_edge(b: MeshBatcher, plan: CityPlan, edge: Dictionary,
+		rect: Rect2, discs: Array, accepted: Array,
+		world_plan: WorldPlan = null) -> void:
+	if (edge.get("hierarchy", &"local") as StringName) != &"primary":
+		return
+	var full: PackedVector2Array = edge.get("polyline",
+		PackedVector2Array()) as PackedVector2Array
+	if full.size() < 2:
+		return
+	var total := 0.0
+	for si in range(full.size() - 1):
+		total += full[si].distance_to(full[si + 1])
+	if total < 8.0:
+		return
+	var width := float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+	var edge_seed := WorldSeed.str_hash(str(edge.get("id", "edge")))
+	var step_count := maxi(1, int(floor(total / LAMP_STEP)))
+	for lamp_i in step_count:
+		var dist := total * (float(lamp_i) + 0.5) / float(step_count)
+		var lp := full[0]
+		var tangent := Vector2.RIGHT
+		var acc := 0.0
+		var found := false
+		for si in range(full.size() - 1):
+			var seg := full[si].distance_to(full[si + 1])
+			if acc + seg >= dist:
+				var t := (dist - acc) / maxf(seg, 0.001)
+				lp = full[si].lerp(full[si + 1], t)
+				tangent = (full[si + 1] - full[si]).normalized()
+				found = true
+				break
+			acc += seg
+		if not found:
+			continue
+		var side := 1.0 if (edge_seed + lamp_i) % 2 == 0 else -1.0
+		var normal := Vector2(-tangent.y, tangent.x)
+		var lamp_p := lp + normal * (width * 0.5 + 0.85)
+		if not rect.has_point(lp):
+			# Ghost claim: a neighbor owns this geometric candidate. Claimed
+			# unconditionally — the bias favors exclusion zones, which is the
+			# desired direction near junctions and plazas.
+			if rect.grow(16.0).has_point(lp):
+				accepted.append(lamp_p)
+			continue  # owned by the containing chunk
+		var rejected := false
+		for disc in discs:
+			var d := disc as Vector3
+			if lamp_p.distance_to(Vector2(d.x, d.y)) < d.z:
+				rejected = true
+				break
+		if not rejected:
+			for q in accepted:
+				if lamp_p.distance_to(q as Vector2) < LAMP_MIN_SEP:
+					rejected = true
+					break
+		if rejected:
+			continue
+		accepted.append(lamp_p)
+		var lamp_ground_y := 0.0
+		if world_plan != null:
+			lamp_ground_y = world_plan.surface_height_at(lp)
+			if bool(edge.get("is_bridge", false)) \
+					and world_plan.water_body_at(lp) != &"":
+				lamp_ground_y = world_plan.water_level_at(lp) \
+					+ WorldConstants.BRIDGE_DECK_LIFT_M
+		_lamp_post(b, lamp_p, lamp_ground_y)
+	# Fallback: a primary arterial crossing this chunk in a long run keeps one
+	# warm pool here even when no global anchor lands inside (avenue-chunk
+	# contract). Midpoint-gated, disc- and spacing-checked like anchors.
+	_emit_fallback_lamp(b, plan, edge, full, width, edge_seed, rect, discs,
+		accepted, world_plan)
+
+
+## Fallback warm pool: longest contiguous in-rect run of a primary arterial
+## (2 m arc samples) of at least 25 m keeps one lamp at its midpoint when no
+## accepted lamp is nearby. Same discs/side-offset/ground rules as anchors.
+static func _emit_fallback_lamp(b: MeshBatcher, _plan: CityPlan,
+		edge: Dictionary, full: PackedVector2Array, width: float,
+		edge_seed: int, rect: Rect2, discs: Array, accepted: Array,
+		world_plan: WorldPlan = null) -> void:
+	var best_run: Array[Vector2] = []
+	var best_tan := Vector2.RIGHT
+	var run: Array[Vector2] = []
+	var run_tan := Vector2.RIGHT
+	for si in range(full.size() - 1):
+		var a := full[si]
+		var c := full[si + 1]
+		var seg := a.distance_to(c)
+		if seg < 0.001:
+			continue
+		var tangent := (c - a) / seg
+		var steps := maxi(1, int(ceil(seg / 2.0)))
+		for k in steps:
+			var p := a.lerp(c, float(k) / float(steps))
+			if rect.has_point(p):
+				run.append(p)
+				run_tan = tangent
+			else:
+				if run.size() > best_run.size():
+					best_run = run.duplicate()
+					best_tan = run_tan
+				run.clear()
+	if run.size() > best_run.size():
+		best_run = run
+	if best_run.size() * 2.0 < 25.0:
+		return
+	var mid: Vector2 = best_run[best_run.size() / 2]
+	# Gate: never double an anchor pool (20 m > LAMP_MIN_SEP on purpose).
+	for q in accepted:
+		if mid.distance_to(q as Vector2) < 20.0:
+			return
+	var side := 1.0 if edge_seed % 2 == 0 else -1.0
+	var lamp_p := mid + Vector2(-best_tan.y, best_tan.x) \
+		* (width * 0.5 + 0.85)
+	for disc in discs:
+		var d := disc as Vector3
+		if lamp_p.distance_to(Vector2(d.x, d.y)) < d.z:
+			return
+	for q in accepted:
+		if lamp_p.distance_to(q as Vector2) < LAMP_MIN_SEP:
+			return
+	accepted.append(lamp_p)
+	var gy := 0.0
+	if world_plan != null:
+		gy = world_plan.surface_height_at(mid)
+		if bool(edge.get("is_bridge", false)) \
+				and world_plan.water_body_at(mid) != &"":
+			gy = world_plan.water_level_at(mid) \
+				+ WorldConstants.BRIDGE_DECK_LIFT_M
+	_lamp_post(b, lamp_p, gy)
 
 
 ## Center-line dashes are intentionally omitted: early-1900s city streets are

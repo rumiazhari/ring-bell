@@ -277,20 +277,36 @@ func _generate_city_roads() -> void:
 	_city_edges.clear()
 	_city_edge_ids.clear()
 	var hub := "market_square"
-	# Civic, station and castle routes are the historic primary/arterial spine.
-	for landmark_id in ["civic_square", "rail_station", "castle_hill"]:
+	# Historic pocket ring FIRST: pockets anchor distributed entry so radials
+	# never need to terminate at the exact central node (P2B-FIX starburst).
+	_add_historic_core_fabric(hub)
+	# Only the civic square keeps a direct primary to the market. Castle and
+	# station merge into the pocket ring via connector secondaries.
+	if _city_node_by_id.has("civic_square"):
+		_add_route_between(hub, "civic_square", &"primary",
+			"city_primary_civic_square")
+	for landmark_id in ["rail_station", "castle_hill"]:
 		if _city_node_by_id.has(landmark_id):
-			_add_route_between(hub, landmark_id, &"primary",
-				"city_primary_%s" % landmark_id)
-	# Every gate gets a radial arterial.  Curvature is bounded, but each route
-	# has its own signed bend so it cannot become a repeated Cartesian pattern.
+			var pocket := _nearest_node_of_kind(
+				_node_position(landmark_id), &"historic_pocket")
+			if pocket != "":
+				_add_route_between(pocket, landmark_id, &"secondary",
+					"city_connector_%s" % landmark_id)
+			else:
+				_add_route_between(hub, landmark_id, &"primary",
+					"city_primary_%s" % landmark_id)
+	# Gate arterials terminate at the nearest inner landmark (civic / station
+	# / castle), never directly at the market. Curvature stays per-edge.
 	var gate_ids: Array[String] = []
 	for lm: Dictionary in _landmarks:
 		if lm.get("kind", &"") == &"city_gate":
 			gate_ids.append(String(lm["id"]))
 	gate_ids.sort()
 	for gate_id: String in gate_ids:
-		_add_route_between(hub, gate_id, &"primary",
+		var anchor := _nearest_inner_connector(_node_position(gate_id))
+		if anchor == "":
+			anchor = hub
+		_add_route_between(anchor, gate_id, &"primary",
 			"city_primary_%s" % gate_id)
 
 	# Routes to actual river crossing nodes are primary bridge approaches.  A
@@ -302,18 +318,20 @@ func _generate_city_roads() -> void:
 			crossing_ids.append(String(lm2["id"]))
 	crossing_ids.sort()
 	for crossing_id: String in crossing_ids:
-		_add_route_between(hub, crossing_id, &"primary",
-			"city_bridge_approach_%s" % crossing_id, true)
+		var approach := _nearest_inner_connector(_node_position(crossing_id))
+		if approach == "":
+			approach = _nearest_node_of_kind(
+				_node_position(crossing_id), &"historic_pocket")
+		if approach != "" and approach != crossing_id:
+			_add_route_between(approach, crossing_id, &"primary",
+				"city_bridge_approach_%s" % crossing_id, true)
 		var nearest_gate := _nearest_node_of_kind(_node_position(crossing_id), &"city_gate")
 		if nearest_gate != "":
 			_add_route_between(crossing_id, nearest_gate, &"primary",
 				"city_bridge_gate_%s" % crossing_id, true)
 
-	# A compact irregular alley fabric is anchored to the market square rather
-	# than inferred from the outer Voronoi sites.  The jittered pocket ring makes
-	# the historic core visibly finer than the inner districts while every edge
-	# still uses the normal river/slope-aware route admission path.
-	_add_historic_core_fabric(hub)
+	# Historic pocket ring already built above; neighborhood connectors below
+	# attach radials to the primary spine through inner nodes, not the hub.
 
 	# Add irregular neighborhood nodes and secondary connectors.  Their angles
 	# are sampled from independent domains rather than indexed X/Z lines.
@@ -375,6 +393,49 @@ func _generate_city_roads() -> void:
 			_add_route_between(parent_id, end_id, hierarchy,
 				"city_%s_%s" % [hierarchy, end_id])
 
+	# P2B-FIX middle-ring connectors: distributed secondary meters in the
+	# dense band. They replace the road length lost when hub radials were
+	# shortened to inner connectors — splitting blocks and fronting lots
+	# without touching the hub. Deterministic, capped, admission-checked.
+	var midring_ids: Array[String] = []
+	for nid in neighborhood_ids:
+		if _node_position(nid).length() <= 720.0:
+			midring_ids.append(nid)
+	midring_ids.sort()
+	var midring_added := 0
+	for i in midring_ids.size():
+		if midring_added >= 14:
+			break
+		if _u("city_midring_link", [i]) > 0.55:
+			continue
+		var a_id: String = midring_ids[i]
+		var best_id := ""
+		var best_d := 500.0
+		var candidates: Array[String] = []
+		for n in _city_nodes:
+			var cand := String(n["id"])
+			var kind := String(n.get("kind", ""))
+			if kind == "historic_pocket" or cand == "civic_square" \
+					or cand == "rail_station" or cand == "castle_hill":
+				candidates.append(cand)
+		for j in range(i + 1, midring_ids.size()):
+			candidates.append(midring_ids[j])
+		for cand in candidates:
+			if cand == a_id or _have_direct_edge(a_id, cand):
+				continue
+			var d := _node_position(a_id).distance_to(_node_position(cand))
+			if d < best_d or (is_equal_approx(d, best_d) and cand < best_id):
+				best_d = d
+				best_id = cand
+		if best_id != "":
+			_add_route_between(a_id, best_id, &"secondary",
+				"city_midring_%s_%s" % [a_id, best_id])
+			midring_added += 1
+
+	# P2B-FIX void infill: dense-band ground far from every road gets a short
+	# secondary stub so it becomes street-bounded blocks, never a mega-face.
+	_add_void_infill()
+
 	# Recovery is deterministic and only engages for a component that could not
 	# reach the primary spine because of a river/slope rejection. It preserves
 	# the normal candidate-based route first, then uses a marked bridge edge.
@@ -412,11 +473,17 @@ func _add_historic_core_fabric(hub_id: String) -> void:
 		return
 	for i in pocket_ids.size():
 		var pocket_id: String = pocket_ids[i]
-		var spoke_hierarchy: StringName = &"local"
-		if i < 6 or _u("city_core_spoke_hierarchy", [i]) < 0.28:
-			spoke_hierarchy = &"alley"
-		_add_route_between(hub_id, pocket_id, spoke_hierarchy,
-			"city_historic_spoke_%02d" % i)
+		# P2B-FIX: only every fourth pocket touches the market directly; the
+		# rest join through the ring. Caps hub degree, keeps the core meshed.
+		if i % 4 == 0:
+			_add_route_between(hub_id, pocket_id, &"local",
+				"city_historic_spoke_%02d" % i)
+		else:
+			# Skip-one alley chord: dense winding lanes in the outer core band
+			# (stays ~0.87r from center, never crosses the market square).
+			var chord_id: String = pocket_ids[(i + 2) % pocket_ids.size()]
+			_add_route_between(pocket_id, chord_id, &"alley",
+				"city_historic_chord_%02d" % i)
 		var next_id: String = pocket_ids[(i + 1) % pocket_ids.size()]
 		var ring_hierarchy: StringName = &"local"
 		if i % 3 == 0:
@@ -488,6 +555,93 @@ func _nearest_node_of_kind(p: Vector2, kind: StringName) -> String:
 			best_d = d
 			best = String(node["id"])
 	return best
+
+
+## Nearest of the three inner-connector landmarks (civic / station /
+## castle), deterministic with id tie-break. Returns "" when none exists.
+## P2B-FIX: gate arterials and bridge approaches terminate here, not at hub.
+func _nearest_inner_connector(p: Vector2) -> String:
+	var best := ""
+	var best_d := INF
+	for candidate in ["civic_square", "castle_hill", "rail_station"]:
+		if not _city_node_by_id.has(candidate):
+			continue
+		var d := p.distance_to(_node_position(candidate))
+		if d < best_d or (is_equal_approx(d, best_d) and candidate < best):
+			best_d = d
+			best = candidate
+	return best
+
+
+## True when a direct edge already joins the pair (either direction).
+func _have_direct_edge(a_id: String, b_id: String) -> bool:
+	for edge: Dictionary in _city_edges:
+		var ea := String(edge.get("a", ""))
+		var eb := String(edge.get("b", ""))
+		if (ea == a_id and eb == b_id) or (ea == b_id and eb == a_id):
+			return true
+	return false
+
+
+## P2B-FIX void infill. Grid-sampled dense-band points far from every road
+## mark unserved ground; cluster centroids become stub nodes joined to the
+## nearest existing node. Capped, deterministic, admission-checked like all
+## routes (recovery backstops rejections).
+func _add_void_infill() -> void:
+	var pts: Array[Vector2] = []
+	var gx := -560.0
+	while gx <= 560.0:
+		var gz := -560.0
+		while gz <= 560.0:
+			var p := Vector2(gx, gz)
+			if p.length() < 560.0 and _is_valid_city_land(p) \
+					and _distance_to_city_road_raw(p) > 55.0:
+				pts.append(p)
+			gz += 64.0
+		gx += 64.0
+	# Deepest voids first: the unserved heart of a mega-face claims its own
+	# cluster instead of being shadowed by a far edge point. Distances are
+	# precomputed once (the comparator runs O(n log n) times).
+	var scored: Array = []
+	for p in pts:
+		scored.append([_distance_to_city_road_raw(p), p.x, p.y])
+	scored.sort_custom(func(a: Array, b: Array) -> bool:
+		return a[0] > b[0] if not is_equal_approx(a[0], b[0]) \
+			else (a[1] < b[1] if not is_equal_approx(a[1], b[1]) \
+				else a[2] < b[2]))
+	var clusters: Array[Vector2] = []
+	for entry in scored:
+		var p := Vector2(entry[1], entry[2])
+		var covered := false
+		for c in clusters:
+			if p.distance_to(c) < 120.0:
+				covered = true
+				break
+		if not covered:
+			clusters.append(p)
+		if clusters.size() >= 12:
+			break
+	for i in clusters.size():
+		var id := "infill_%02d" % i
+		var snapped := _nearest_valid_city_point(clusters[i], 3)
+		if snapped == Vector2.INF:
+			continue
+		_add_city_node(id, snapped, &"local_pocket")
+		var best_id := ""
+		var best_d := INF
+		for n in _city_nodes:
+			var nid := String(n["id"])
+			# P2B-FIX: never hang infill stubs on the market — hub degree is
+			# capped and recovery remains the only last-resort path to it.
+			if nid == id or nid == "market_square":
+				continue
+			var d := snapped.distance_to(_node_position(nid))
+			if d < best_d or (is_equal_approx(d, best_d) and nid < best_id):
+				best_d = d
+				best_id = nid
+		if best_id != "":
+			_add_route_between(best_id, id, &"secondary",
+				"city_infill_%s" % id)
 
 
 func _nearest_primary_node(p: Vector2) -> String:
@@ -774,6 +928,41 @@ func _generate_city_blocks() -> void:
 		_block_by_cell[block["cell"]] = block
 	_append_global_road_frontage_fill()
 	_all_buildings.sort_custom(_dict_id_cmp)
+	_convert_void_blocks_to_park()
+
+
+## P2B-FIX: dense-district macro faces that stayed EMPTY (usually invalid
+## land — river banks, floodplain, quarry rims, steep ground) become greens
+## instead of giant paved polygons. Rule-based, no RNG: converted only when
+## the block center itself is unbuildable, so valid land keeps its buildings.
+func _convert_void_blocks_to_park() -> void:
+	for block in _blocks:
+		if (block.get("kind", &"built") as StringName) != &"built":
+			continue
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= 600.0:
+			continue
+		if absf(_polygon_area(block.get("polygon",
+				PackedVector2Array()) as PackedVector2Array)) < 4000.0:
+			continue
+		if not (block.get("buildings", []) as Array).is_empty():
+			continue
+		if _is_valid_city_land(center):
+			continue
+		block["kind"] = &"park"
+		_block_by_cell[block["cell"]] = block
+
+
+## P2B-FIX: historic fragments must be big enough to host real street walls.
+## Slivers below this render as shredded pavement teeth.
+func _min_split_area_for(piece: PackedVector2Array) -> float:
+	if _polygon_centroid(piece).length() < WorldConstants.CITY_HISTORIC_RADIUS_M:
+		return 150.0
+	return _CITY_MIN_SPLIT_BLOCK_AREA
+
+
+func _is_dense_block_source(source: Dictionary) -> bool:
+	return (source.get("district", DISTRICT_OUTER) as StringName) != DISTRICT_OUTER
 
 
 func _split_city_blocks_by_roads(source_blocks: Array[Dictionary]) -> Array[Dictionary]:
@@ -794,7 +983,7 @@ func _split_city_blocks_by_roads(source_blocks: Array[Dictionary]) -> Array[Dict
 		var kept := 0
 		for piece_index in pieces.size():
 			var piece: PackedVector2Array = pieces[piece_index]
-			if _polygon_area(piece) < _CITY_MIN_SPLIT_BLOCK_AREA:
+			if _polygon_area(piece) < _min_split_area_for(piece):
 				continue
 			var child := _make_split_block(source, source_index, piece_index, piece)
 			if child.is_empty():
@@ -802,7 +991,18 @@ func _split_city_blocks_by_roads(source_blocks: Array[Dictionary]) -> Array[Dict
 			out.append(child)
 			kept += 1
 		if kept == 0:
-			out.append(source)
+			var source_area := absf(_polygon_area(source.get("polygon",
+				PackedVector2Array()) as PackedVector2Array))
+			var source_center: Vector2 = source.get("center",
+				Vector2.ZERO) as Vector2
+			if not _is_dense_block_source(source):
+				out.append(source)
+			elif source_area >= 1200.0 and _is_valid_city_land(source_center):
+				# P2B-FIX refined: big VALID crossed faces keep their
+				# individually-validated lots (_lot_clear_of_city_roads rejects
+				# overlaps per parcel). Only shredded small faces stay dropped.
+				out.append(source)
+			# Else: shredded dense face stays dropped — no pavement teeth.
 	return out
 
 
@@ -830,7 +1030,7 @@ func _road_subtracted_pieces(source: Dictionary) -> Array[PackedVector2Array]:
 				var clipped: Array = Geometry2D.clip_polygons(subject, strip)
 				for variant in clipped:
 					var result: PackedVector2Array = variant as PackedVector2Array
-					if _polygon_area(result) >= _CITY_MIN_SPLIT_BLOCK_AREA:
+					if _polygon_area(result) >= _min_split_area_for(result):
 						next.append(result)
 			pieces = next
 			if pieces.is_empty():
@@ -844,9 +1044,12 @@ func _make_split_block(source: Dictionary, source_index: int,
 		return {}
 	var bounds := _polygon_bounds(poly)
 	var rect := _safe_block_rect(poly, bounds)
-	if rect.size.x < 4.0 or rect.size.y < 4.0:
-		return {}
 	var center := _polygon_centroid(poly)
+	# P2B-FIX: historic slivers that cannot host a 5.4 m frontage lot are
+	# rejected here, not rendered as pavement teeth.
+	var min_side := 6.0 if center.length() < WorldConstants.CITY_HISTORIC_RADIUS_M else 4.0
+	if rect.size.x < min_side or rect.size.y < min_side:
+		return {}
 	var radius := center.length()
 	var district: StringName = DISTRICT_HISTORIC
 	if radius >= WorldConstants.CITY_HISTORIC_RADIUS_M:
@@ -904,7 +1107,7 @@ func _append_global_road_frontage_fill() -> void:
 	# A bounded second frontage pass closes the gaps left when an axis-aligned
 	# contract rectangle cannot fit a diagonal Voronoi edge. It is still
 	# road-driven, block-owned, deterministic, and uses the normal city builder.
-	var caps: Array[int] = [170, 260, 45]
+	var caps: Array[int] = [170, 340, 45]
 	var added: Array[int] = [0, 0, 0]
 	for edge_i in _city_edges.size():
 		var edge: Dictionary = _city_edges[edge_i]

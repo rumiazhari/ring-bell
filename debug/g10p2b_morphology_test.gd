@@ -20,6 +20,12 @@ func _ready() -> void:
 	_check_foundation_access(plan_b, "B")
 	_check_same_seed(plan_a, plan_a_repeat)
 	_check_different_seed(plan_a, plan_b)
+	_check_triangulation(plan_a, "A")
+	_check_triangulation(plan_b, "B")
+	_check_hub_distribution(plan_a, "A")
+	_check_hub_distribution(plan_b, "B")
+	_check_lamp_spacing(plan_a, "A")
+	_check_lamp_spacing(plan_b, "B")
 	if _failures.is_empty():
 		print("[G10P2BMorphology] PASS all focused checks")
 	else:
@@ -348,6 +354,7 @@ func _check_frontage_density(plan: CityPlan, label: String) -> void:
 			" inner=", inner_ratio, " road_frontage core=", core_road_ratio,
 			" inner=", inner_road_ratio, " block_median_area core=", core_median_area,
 			" inner=", inner_median_area)
+	_print_block_coherence(plan, label)
 	_expect(core_ratio >= 0.20, label + " historic frontage coverage >= 20%")
 	_expect(inner_ratio >= 0.12, label + " inner frontage coverage >= 12%")
 	_expect(core_road_ratio >= 0.55, label + " historic road frontage >= 55%")
@@ -355,6 +362,32 @@ func _check_frontage_density(plan: CityPlan, label: String) -> void:
 	_expect(core_block_areas.size() >= 40, label + " historic block count >= 40")
 	_expect(core_median_area <= 8000.0, label + " historic median block area <= 8000 m2")
 	_expect(inner_median_area <= 10000.0, label + " inner median block area <= 10000 m2")
+
+
+func _print_block_coherence(plan: CityPlan, label: String) -> void:
+	# P2B-FIX diagnostic (print-only this round): per-block building counts
+	# and mega-face census drive next round's hard thresholds.
+	var hist := [0, 0, 0, 0]  # historic built blocks with 0/1/2/3+ buildings
+	var megaface := 0
+	var megaface_ids: Array[String] = []
+	for block: Dictionary in plan.city_blocks():
+		if (block.get("kind", &"") as StringName) != &"built":
+			continue
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= 600.0:
+			continue
+		var area := absf(_polygon_area(
+			block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+		var nb: int = (block.get("buildings", []) as Array).size()
+		if center.length() < WorldConstants.CITY_HISTORIC_RADIUS_M:
+			hist[mini(nb, 3)] += 1
+		if area > 6000.0 and nb < 4:
+			megaface += 1
+			if megaface_ids.size() < 4:
+				megaface_ids.append("%s:%.0f/%d" % [
+					str(block.get("id", "")), area, nb])
+	print("[G10P2BMorphology] ", label, " historic_block_hist_0/1/2/3+=",
+		hist, " megaface_6k=", megaface, " ", megaface_ids)
 
 
 func _check_block_ownership(plan: CityPlan, label: String) -> void:
@@ -439,6 +472,201 @@ func _check_same_seed(a: CityPlan, b: CityPlan) -> void:
 func _check_different_seed(a: CityPlan, b: CityPlan) -> void:
 	_expect(JSON.stringify(a.road_graph()) != JSON.stringify(b.road_graph()), "different seed graph variation")
 	_expect(JSON.stringify(a.city_buildings()) != JSON.stringify(b.city_buildings()), "different seed building variation")
+
+
+func _check_triangulation(plan: CityPlan, label: String) -> void:
+	# P2B-FIX: concave polygons must triangulate strictly inside.
+	# L-shape is concave at (4,4); fan from vertex 0 escapes the notch.
+	var l_shape := PackedVector2Array([
+		Vector2(0, 0), Vector2(8, 0), Vector2(8, 4),
+		Vector2(4, 4), Vector2(4, 8), Vector2(0, 8),
+	])
+	_check_polygon_inside(l_shape, label + " L-shape triangulation inside")
+	var arrow := PackedVector2Array([
+		Vector2(0, 0), Vector2(6, 0), Vector2(6, 2), Vector2(10, -2),
+		Vector2(6, -6), Vector2(6, -4), Vector2(0, -4),
+	])
+	_check_polygon_inside(arrow, label + " arrow-notch triangulation inside")
+	# One real road-derived historic block with >= 6 verts, if present.
+	for block: Dictionary in plan.city_blocks():
+		var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 6:
+			continue
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= WorldConstants.CITY_HISTORIC_RADIUS_M:
+			continue
+		if not bool(block.get("road_derived", false)):
+			continue
+		_check_polygon_inside(poly, label + " historic road-derived block inside " + str(block.get("id", "")))
+		break
+
+
+func _check_polygon_inside(poly: PackedVector2Array, message: String) -> void:
+	if poly.size() < 3:
+		_expect(false, message + " (degenerate)")
+		return
+	# Wiring check: the REAL MeshBatcher path must stay inside too, not just
+	# a local Geometry2D call (guards silent fan regressions).
+	var batcher := MeshBatcher.new()
+	batcher.add_visual_polygon(poly, 0.0, Color.WHITE)
+	var groups: Dictionary = batcher._build_layers()
+	var buf: Dictionary = groups.get("", {})
+	var verts: PackedVector3Array = buf.get("verts", PackedVector3Array())
+	var idx: PackedInt32Array = buf.get("idx", PackedInt32Array())
+	_expect(not idx.is_empty(), message + " (batcher emits indices)")
+	if idx.is_empty():
+		return
+	_expect(idx.size() % 3 == 0, message + " (batcher index multiple of 3)")
+	for ti in range(0, idx.size(), 3):
+		var a := Vector2(verts[idx[ti]].x, verts[idx[ti]].z)
+		var b := Vector2(verts[idx[ti + 1]].x, verts[idx[ti + 1]].z)
+		var c := Vector2(verts[idx[ti + 2]].x, verts[idx[ti + 2]].z)
+		var centroid := (a + b + c) / 3.0
+		if not Geometry2D.is_point_in_polygon(centroid, poly):
+			_failures.append(message + " batcher centroid outside")
+			return
+	var tris := Geometry2D.triangulate_polygon(poly)
+	_expect(not tris.is_empty(), message + " (triangulates)")
+	if tris.is_empty():
+		return
+	_expect(tris.size() % 3 == 0, message + " (index multiple of 3)")
+	var area := absf(_polygon_area(poly))
+	var tri_area := 0.0
+	var max_dim := 0.0
+	for i in poly.size():
+		for j in range(i + 1, poly.size()):
+			max_dim = maxf(max_dim, poly[i].distance_to(poly[j]))
+	for ti in range(0, tris.size(), 3):
+		var a: Vector2 = poly[tris[ti]]
+		var b: Vector2 = poly[tris[ti + 1]]
+		var c: Vector2 = poly[tris[ti + 2]]
+		tri_area += absf((b - a).cross(c - a)) * 0.5
+		var centroid := (a + b + c) / 3.0
+		if not Geometry2D.is_point_in_polygon(centroid, poly):
+			_failures.append(message + " centroid outside")
+			return
+		for e in [a.distance_to(b), b.distance_to(c), c.distance_to(a)]:
+			if e > max_dim + 0.01:
+				_failures.append(message + " shard edge %.1f > max_dim %.1f" % [e, max_dim])
+				return
+	_expect(absf(tri_area - area) / maxf(area, 1.0) <= 0.01, message + " area match")
+
+
+func _check_hub_distribution(plan: CityPlan, label: String) -> void:
+	# P2B-FIX: no central starburst. market_square must not terminate every
+	# gate/bridge/landmark route. Radials enter via inner connectors and a
+	# historic pocket ring instead.
+	var graph: Dictionary = plan.road_graph()
+	var nodes: Array = graph.get("nodes", []) as Array
+	var edges: Array = graph.get("edges", []) as Array
+	var kind_by_id := {}
+	for n: Dictionary in nodes:
+		kind_by_id[str(n.get("id", ""))] = str(n.get("kind", ""))
+	var hub_degree := 0
+	var hub_primaries := 0
+	var direct_gate_hub := 0
+	var direct_crossing_hub := 0
+	var ring_edges := 0
+	for e: Dictionary in edges:
+		var a := str(e.get("a", ""))
+		var b := str(e.get("b", ""))
+		var touches_hub := a == "market_square" or b == "market_square"
+		if touches_hub:
+			hub_degree += 1
+			if str(e.get("hierarchy", "")) == "primary":
+				hub_primaries += 1
+		var other := b if a == "market_square" else (a if b == "market_square" else "")
+		if other != "":
+			if kind_by_id.get(other, "") == "city_gate":
+				direct_gate_hub += 1
+			if kind_by_id.get(other, "") == "river_crossing":
+				direct_crossing_hub += 1
+		if a.begins_with("historic_pocket_") and b.begins_with("historic_pocket_"):
+			ring_edges += 1
+	print("[G10P2BMorphology] ", label, " hub_degree=", hub_degree,
+		" hub_primaries=", hub_primaries, " direct_gate_hub=", direct_gate_hub,
+		" direct_crossing_hub=", direct_crossing_hub, " ring_edges=", ring_edges)
+	_expect(hub_degree <= 6, label + " bounded central-node degree (got %d)" % hub_degree)
+	_expect(hub_primaries <= 2, label + " hub primaries <= 2 (got %d)" % hub_primaries)
+	_expect(direct_gate_hub == 0, label + " no gate routes directly to hub")
+	_expect(direct_crossing_hub == 0, label + " no bridge approaches directly to hub")
+	_expect(ring_edges >= 8, label + " historic pocket ring intact (got %d)" % ring_edges)
+
+
+func _check_lamp_spacing(plan: CityPlan, label: String) -> void:
+	# P2B-FIX lamp test: global-anchor spacing, no junction/plaza stacking.
+	# World-free on purpose: only x/z positions are asserted.
+	# Plaza HEARTS and junction zones stay dark; rims and ring arterials carry
+	# spaced lamps. Spacing is asserted per-chunk in the 130-380 m ring band
+	# where primary arterials run through buildable fabric.
+	var all: Array[Vector2] = []
+	var chunks_sampled := 0
+	for cx in range(-5, 6):
+		for cz in range(-5, 6):
+			var coord := Vector2i(cx, cz)
+			var r := WorldSeed.chunk_rect(coord).get_center().length()
+			if r < 130.0 or r > 380.0:
+				continue
+			chunks_sampled += 1
+			var batch := MeshBatcher.new()
+			ChunkBuilder._roads(batch, plan, WorldSeed.chunk_rect(coord), null)
+			var group: Array[Vector2] = []
+			for v in batch.street_lights():
+				var p := Vector2((v as Vector3).x, (v as Vector3).z)
+				group.append(p)
+				all.append(p)
+			for i in group.size():
+				for j in range(i + 1, group.size()):
+					if group[i].distance_to(group[j]) < 10.0:
+						_failures.append(label + " lamp pair <10m in chunk "
+							+ str(coord))
+						break
+	var core_count := 0
+	for cx in range(-1, 2):
+		for cz in range(-1, 2):
+			var batch := MeshBatcher.new()
+			ChunkBuilder._roads(batch, plan,
+				WorldSeed.chunk_rect(Vector2i(cx, cz)), null)
+			core_count += batch.street_lights().size()
+	print("[G10P2BMorphology] ", label, " lamp_ring_3x3=",
+		chunks_sampled, " ring_lamps=", all.size(),
+		" core_lamps=", core_count)
+	_expect(all.size() > 10, label + " ring arterials carry lamps")
+	var global_min := INF
+	for i in all.size():
+		for j in range(i + 1, all.size()):
+			global_min = minf(global_min, all[i].distance_to(all[j]))
+	if all.size() >= 2:
+		_expect(global_min >= 6.0,
+			label + " no lamp stacking (global min %.1f)" % global_min)
+		print("[G10P2BMorphology] ", label, " lamp_global_min=", global_min)
+	var junctions: Array[Vector2] = []
+	for node in plan.city_nodes():
+		var nid := String(node.get("id", ""))
+		var deg := int(node.get("degree", 0))
+		if nid == "market_square" or nid == "civic_square" \
+				or nid == "rail_station" or nid == "castle_hill" \
+				or deg >= 7:
+			var c: Vector2 = node.get("center", Vector2.ZERO) as Vector2
+			if Rect2(Vector2(-96, -96), Vector2(256, 256)).has_point(c):
+				junctions.append(c)
+	for lamp in all:
+		for j in junctions:
+			if lamp.distance_to(j) < 10.0:
+				_failures.append(label + " lamp inside junction zone")
+				break
+		for block in plan.city_blocks():
+			if (block.get("kind", &"") as StringName) != &"plaza":
+				continue
+			# Mirror of the implementation's plaza-heart disc: rims stay lit.
+			var bc: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+			var bb: Rect2 = block.get("bounds",
+				block.get("rect", Rect2())) as Rect2
+			var prad := maxf(12.0, minf(bb.size.x, bb.size.y) * 0.35)
+			if lamp.distance_to(bc) < prad - 0.05:
+				_failures.append(label + " lamp inside plaza heart "
+					+ str(block.get("id", "")))
+				break
 
 
 func _expect(value: bool, message: String) -> void:

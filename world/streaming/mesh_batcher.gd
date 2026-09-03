@@ -679,17 +679,29 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 	var points: PackedVector2Array = polygon.get("points", PackedVector2Array()) as PackedVector2Array
 	if points.size() < 3:
 		return
-	var base := (buf["verts"] as PackedVector3Array).size()
+	var verts: PackedVector3Array = buf["verts"]
+	var normals: PackedVector3Array = buf["normals"]
+	var colors: PackedColorArray = buf["colors"]
+	var base := verts.size()
 	var y: float = float(polygon.get("y", 0.0))
 	var col: Color = polygon.get("color", Color.WHITE) as Color
 	for p: Vector2 in points:
-		(buf["verts"] as PackedVector3Array).append(Vector3(p.x, y, p.y))
-		(buf["normals"] as PackedVector3Array).append(Vector3.UP)
-		(buf["colors"] as PackedColorArray).append(col)
-	for i in range(1, points.size() - 1):
+		verts.append(Vector3(p.x, y, p.y))
+		normals.append(Vector3.UP)
+		colors.append(col)
+	# NOTE: never `(buf["verts"] as PackedVector3Array).append(...)` — the
+	# `as` cast copies the packed array, so appends are silently lost and the
+	# polygon renders nothing. Typed locals above share the stored array.
+	var tris := Geometry2D.triangulate_polygon(points)
+	if tris.is_empty():
+		return
+	for ti in range(0, tris.size(), 3):
+		var ta: int = tris[ti]
+		var tb: int = tris[ti + 1]
+		var tc: int = tris[ti + 2]
 		# XZ points are CCW in plan space; reverse indices for +Y front faces.
-		(buf["idx"] as PackedInt32Array).append_array(PackedInt32Array([
-			base, base + i + 1, base + i,
+		buf["idx"].append_array(PackedInt32Array([
+			base + ta, base + tc, base + tb,
 		]))
 
 
