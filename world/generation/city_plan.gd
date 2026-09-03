@@ -95,6 +95,18 @@ static func _dict_id_cmp(a: Dictionary, b: Dictionary) -> bool:
 	return str(a.get("id", "")) < str(b.get("id", ""))
 
 
+static func _surface_region_cmp(a: Dictionary, b: Dictionary) -> bool:
+	var aa := float(a.get("area_m2", 0.0))
+	var ba := float(b.get("area_m2", 0.0))
+	if not is_equal_approx(aa, ba):
+		return aa > ba
+	var ap: Vector2 = a.get("center", Vector2.ZERO) as Vector2
+	var bp: Vector2 = b.get("center", Vector2.ZERO) as Vector2
+	if not is_equal_approx(ap.x, bp.x):
+		return ap.x < bp.x
+	return ap.y < bp.y
+
+
 static func _crossing_cmp(a: Dictionary, b: Dictionary) -> bool:
 	var ap: Vector2 = a.get("center", Vector2.ZERO) as Vector2
 	var bp: Vector2 = b.get("center", Vector2.ZERO) as Vector2
@@ -928,29 +940,102 @@ func _generate_city_blocks() -> void:
 		_block_by_cell[block["cell"]] = block
 	_append_global_road_frontage_fill()
 	_all_buildings.sort_custom(_dict_id_cmp)
-	_convert_void_blocks_to_park()
+	_finalize_block_fabric()
 
 
-## P2B-FIX: dense-district macro faces that stayed EMPTY (usually invalid
-## land — river banks, floodplain, quarry rims, steep ground) become greens
-## instead of giant paved polygons. Rule-based, no RNG: converted only when
-## the block center itself is unbuildable, so valid land keeps its buildings.
-func _convert_void_blocks_to_park() -> void:
+## G10-P2B-FIX2: finalize the parcel surface contract after every frontage
+## candidate has been considered. A built block owns only its road-side lots
+## plus residual courtyard/garden regions; a dense empty face is explicitly a
+## park rather than a falsely paved block. No scene mutation or RNG occurs here.
+func _finalize_block_fabric() -> void:
 	for block in _blocks:
 		if (block.get("kind", &"built") as StringName) != &"built":
 			continue
 		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
-		if center.length() >= 600.0:
+		var buildings: Array = block.get("buildings", []) as Array
+		var block_area := absf(_polygon_area(block.get("polygon",
+			PackedVector2Array()) as PackedVector2Array))
+		var occupied := 0.0
+		var frontage_count := 0
+		var corner_count := 0
+		for spec_variant in buildings:
+			var spec: Dictionary = spec_variant as Dictionary
+			var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+			occupied += lot.size.x * lot.size.y
+			if str(spec.get("frontage_role", "street")) == "corner":
+				corner_count += 1
+			else:
+				frontage_count += 1
+		block["occupied_area_m2"] = occupied
+		block["frontage_buildings"] = frontage_count
+		block["corner_buildings"] = corner_count
+		block["courtyard_regions"] = []
+		block["courtyard_area_m2"] = 0.0
+		if buildings.is_empty():
+			# Do not relabel every valid dense face as a park. Large/invalid
+			# faces are intentional open space; smaller valid faces receive a
+			# bounded garden region owned by this block instead of exposing the
+			# terrain fallback as an unexplained gray plate.
+			var invalid := not _is_valid_city_land(center)
+			var intentional_park := block_area >= WorldConstants.CITY_EMPTY_DENSE_BLOCK_MAX_AREA_M2 \
+					or (invalid and block_area >= 4000.0)
+			if intentional_park:
+				block["kind"] = &"park"
+				block["void_reason"] = &"oversized_or_invalid_open_face"
+				_block_by_cell[block["cell"]] = block
+				continue
+			var empty_regions: Array[Dictionary] = _courtyard_regions_for_block(block)
+			if empty_regions.is_empty():
+				block["kind"] = &"park"
+				block["void_reason"] = &"small_open_face"
+			else:
+				block["courtyard_regions"] = empty_regions
+				block["void_reason"] = &"bounded_block_garden"
+				for region: Dictionary in empty_regions:
+					block["courtyard_area_m2"] += float(region.get("area_m2", 0.0))
+			_block_by_cell[block["cell"]] = block
 			continue
-		if absf(_polygon_area(block.get("polygon",
-				PackedVector2Array()) as PackedVector2Array)) < 4000.0:
-			continue
-		if not (block.get("buildings", []) as Array).is_empty():
-			continue
-		if _is_valid_city_land(center):
-			continue
-		block["kind"] = &"park"
+		var regions: Array[Dictionary] = _courtyard_regions_for_block(block)
+		block["courtyard_regions"] = regions
+		for region: Dictionary in regions:
+			block["courtyard_area_m2"] += float(region.get("area_m2", 0.0))
 		_block_by_cell[block["cell"]] = block
+
+
+## Derive one shared rear-court/garden surface from the owning block face.
+## Tiny residual fragments are rejected so they cannot become detached-looking
+## procedural shards.
+func _courtyard_regions_for_block(block: Dictionary) -> Array[Dictionary]:
+	var source: PackedVector2Array = block.get("polygon",
+		PackedVector2Array()) as PackedVector2Array
+	var source_area := absf(_polygon_area(source))
+	if source.size() < 3 or source_area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+		return []
+	# The building footprints already own the structural area. A single inset
+	# of the same road-derived face is the cheap, stable representation of its
+	# shared rear court; subtracting every rotated footprint with Geometry2D here
+	# made plan generation quadratic and stalled the full contract suite.
+	var inset_scale := 0.72 if source_area > WorldConstants.CITY_COURTYARD_MAX_SURFACE_AREA_M2 else 0.88
+	var display_piece := _inset_polygon(source, inset_scale)
+	var area := absf(_polygon_area(display_piece))
+	if area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+		return []
+	var buildings: Array = block.get("buildings", []) as Array
+	var region_kind: StringName = &"courtyard" if buildings.size() >= 2 else &"garden"
+	return [{
+		"kind": region_kind,
+		"polygon": display_piece,
+		"area_m2": area,
+		"center": _polygon_centroid(display_piece),
+	}]
+
+
+static func _inset_polygon(poly: PackedVector2Array, scale: float) -> PackedVector2Array:
+	var center := _polygon_centroid(poly)
+	var out := PackedVector2Array()
+	for p: Vector2 in poly:
+		out.append(center.lerp(p, clampf(scale, 0.55, 1.0)))
+	return out
 
 
 ## P2B-FIX: historic fragments must be big enough to host real street walls.
@@ -1125,7 +1210,7 @@ func _append_global_road_frontage_fill() -> void:
 				continue
 			var tangent := delta / segment_len
 			var normal := Vector2(-tangent.y, tangent.x)
-			var pieces := clampi(int(floor(segment_len / 8.0)), 1, 3)
+			var pieces := clampi(int(ceil(segment_len / 7.0)), 1, 6)
 			for piece in pieces:
 				var road_mid := a.lerp(b, (float(piece) + 0.5) / float(pieces))
 				var radius := road_mid.length()
@@ -1133,8 +1218,8 @@ func _append_global_road_frontage_fill() -> void:
 				if radius >= WorldConstants.CITY_BLOCK_RADIUS_M - 12.0 or added[band] >= caps[band]:
 					continue
 				var frontage := 6.4 if band == 0 else (7.4 if band == 1 else 8.0)
-				var depth_min := 11.5 if band == 0 else (12.5 if band == 1 else 10.0)
-				var depth_max := 18.5 if band == 0 else (19.5 if band == 1 else 15.5)
+				var depth_min := 14.0 if band == 0 else (15.0 if band == 1 else 10.0)
+				var depth_max := 22.0 if band == 0 else (23.0 if band == 1 else 15.5)
 				var depth := lerpf(depth_min, depth_max,
 						_u("city_global_frontage_depth", [edge_i, segment_i, piece]))
 				var width_low := 0.90 if band == 0 else (0.87 if band == 1 else 0.72)
@@ -1142,7 +1227,8 @@ func _append_global_road_frontage_fill() -> void:
 				var frontage_width := segment_len / float(pieces) * lerpf(
 						width_low, width_high,
 						_u("city_global_frontage_width", [edge_i, segment_i, piece]))
-				frontage_width = clampf(frontage_width, 5.4, 11.0)
+				var min_frontage := 4.8 if band == 0 else 5.4
+				frontage_width = clampf(frontage_width, min_frontage, 11.0)
 				var footprint := Vector2(frontage_width, depth)
 				var yaw := atan2(tangent.y, tangent.x)
 				for side_i in 2:
@@ -1176,6 +1262,9 @@ func _append_global_road_frontage_fill() -> void:
 					var spec := _make_city_spec(block, lot, door_edge,
 							4000 + edge_i * 64 + segment_i * 2 + side_i,
 							block_buildings.size(), radius, yaw)
+					spec["frontage_role"] = &"corner" if _is_corner_frontage(road_mid) else &"street"
+					spec["frontage_edge_id"] = str(edge.get("id", ""))
+					spec["frontage_center"] = road_mid
 					block_buildings.append(spec)
 					block["buildings"] = block_buildings
 					_all_buildings.append(spec)
@@ -1192,13 +1281,21 @@ func _block_containing_point(p: Vector2) -> Dictionary:
 
 func _fit_frontage_lot(center: Vector2, footprint: Vector2, yaw: float,
 		poly: PackedVector2Array) -> Rect2:
-	var trial := footprint
-	for _i in 6:
+	# Preserve the road-facing width first. The old uniform shrink reduced the
+	# facade whenever a deep lot met an oblique block edge, creating avoidable
+	# gaps along otherwise usable frontages. Depth yields before frontage width.
+	var frontage_trial := footprint.x
+	var depth_trial := footprint.y
+	for _i in 10:
+		var trial := Vector2(frontage_trial, depth_trial)
 		var lot := Rect2(center - trial * 0.5, trial)
 		if _lot_inside_polygon(lot, yaw, poly):
 			return lot
-		trial *= 0.88
-		if trial.x < 4.8 or trial.y < 5.5:
+		if depth_trial > 8.0:
+			depth_trial *= 0.84
+		else:
+			frontage_trial *= 0.92
+		if frontage_trial < 4.8 or depth_trial < 5.5:
 			break
 	return Rect2()
 
@@ -1216,6 +1313,19 @@ func _city_lot_overlaps_existing(lot: Rect2, yaw := 0.0) -> bool:
 	for spec: Dictionary in _all_buildings:
 		if _lots_overlap(lot, yaw, spec["rect"] as Rect2,
 				float(spec.get("yaw", 0.0)), 0.22):
+			return true
+	return false
+
+
+## A frontage segment is a corner candidate when it is close to a real
+## multi-way road node. The lot remains subject to the ordinary polygon and
+## road-clearance checks; this only labels/weights the building role.
+func _is_corner_frontage(p: Vector2) -> bool:
+	for node: Dictionary in _city_nodes:
+		if int(node.get("degree", 0)) < 3:
+			continue
+		var center: Vector2 = node.get("center", Vector2.ZERO) as Vector2
+		if p.distance_to(center) <= 16.0:
 			return true
 	return false
 
@@ -1323,15 +1433,17 @@ func _buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 	var max_buildings := 7
 	if district == DISTRICT_HISTORIC:
 		frontage = 6.4
-		max_buildings = 16
+		max_buildings = 18
 	elif district == DISTRICT_INNER:
 		frontage = 7.4
-		max_buildings = 14
+		max_buildings = 16
 	if block["kind"] == &"plaza":
 		frontage = 5.6
 		max_buildings = 16
-	# Road-frontage lots are the only parcel source for built blocks. A
-	# road-derived block may remain empty when no compatible rectangular lot fits.
+	# Boundary walk is the primary pass for irregular road-derived faces: it
+	# follows the actual owning polygon and cannot jump into a block centre.
+	if block["kind"] == &"built" and radius < WorldConstants.CITY_DENSE_RADIUS_M:
+		_append_boundary_frontage_lots(result, block, poly, radius, max_buildings)
 	if block["kind"] == &"built" and result.size() < max_buildings:
 		_append_road_frontage_lots(result, block, poly, radius, frontage, max_buildings)
 	# Every accepted parcel in this function is produced against an actual
@@ -1350,11 +1462,11 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 	var depth_min := 10.0
 	var depth_max := 15.5
 	if district == DISTRICT_HISTORIC:
-		depth_min = 11.5
-		depth_max = 18.5
+		depth_min = 13.5
+		depth_max = 22.0
 	elif district == DISTRICT_INNER:
-		depth_min = 12.8
-		depth_max = 20.0
+		depth_min = 14.0
+		depth_max = 22.0
 	if block.get("kind", &"built") == &"plaza":
 		depth_min = 8.0
 		depth_max = 13.0
@@ -1386,12 +1498,18 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 				var t := (float(piece) + 0.5) / float(pieces)
 				var road_mid := a.lerp(b, t)
 				var width_roll := _u("city_road_frontage_width", [edge_i, segment_i, piece])
+				var width_low := 0.90 if district == DISTRICT_HISTORIC else (0.87 if district == DISTRICT_INNER else 0.72)
+				var width_high := 0.995 if district == DISTRICT_HISTORIC else (0.985 if district == DISTRICT_INNER else 0.90)
 				var frontage_width := segment_len / float(pieces) * lerpf(
-						0.84 if dense_frontage else 0.72,
-						0.97 if dense_frontage else 0.90, width_roll)
+						width_low, width_high, width_roll)
 				frontage_width = clampf(frontage_width,
 						4.8 if block.get("kind", &"") == &"plaza" else 5.4,
 						11.0 if dense_frontage else 12.0)
+				if dense_frontage:
+					frontage_width = minf(frontage_width,
+							segment_len / float(pieces) - WorldConstants.CITY_FRONTAGE_GAP_MAX_M)
+				if frontage_width < 5.4:
+					continue
 				var depth := lerpf(depth_min, depth_max,
 						_u("city_road_frontage_depth", [edge_i, segment_i, piece]))
 				var footprint := Vector2(frontage_width, depth)
@@ -1421,11 +1539,101 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 						continue
 					var door_edge := _door_edge_for_front(center, normal * side, lot, yaw)
 					var token := 1000 + edge_i * 16 + segment_i * 2 + side_i
-					result.append(_make_city_spec(block, lot, door_edge, token, result.size(), radius, yaw))
-					if bool(block.get("road_derived", false)) and dense_frontage:
-						_append_rear_frontage_lot(result, block, poly, passage, radius,
-								edge_i, segment_i, piece, side_i, road_width, normal,
-								side, road_mid, frontage_width, depth, yaw, max_buildings)
+					var spec := _make_city_spec(block, lot, door_edge, token,
+							result.size(), radius, yaw)
+					spec["frontage_role"] = &"corner" if _is_corner_frontage(road_mid) else &"street"
+					spec["frontage_edge_id"] = str(edge.get("id", ""))
+					spec["frontage_center"] = road_mid
+					result.append(spec)
+
+
+func _append_boundary_frontage_lots(result: Array[Dictionary], block: Dictionary,
+		poly: PackedVector2Array, radius: float, max_buildings: int) -> void:
+	# A road ribbon can split a concave cell into a face whose centroid no
+	# longer provides a valid rectangle center. Walk the actual face boundary
+	# instead: only edges close to a generated road may seed a parcel, and the
+	# inward normal is proved against the owning polygon before placement.
+	if poly.size() < 3:
+		return
+	var district: StringName = block.get("district", DISTRICT_INNER) as StringName
+	var min_width := 4.8 if district == DISTRICT_HISTORIC else 5.4
+	var max_width := 8.8 if district == DISTRICT_HISTORIC else 10.0
+	var depth_min := 14.0 if district == DISTRICT_HISTORIC else 15.0
+	var depth_max := 22.0 if district == DISTRICT_HISTORIC else 23.0
+	var passage: Dictionary = block.get("passage", {}) as Dictionary
+	for boundary_i in poly.size():
+		if result.size() >= max_buildings:
+			return
+		var a: Vector2 = poly[boundary_i]
+		var z: Vector2 = poly[(boundary_i + 1) % poly.size()]
+		var boundary_delta := z - a
+		var boundary_len := boundary_delta.length()
+		if boundary_len < 5.0:
+			continue
+		var pieces := clampi(int(floor(boundary_len / maxf(min_width + 1.0, 5.5))), 1, 4)
+		for piece in pieces:
+			if result.size() >= max_buildings:
+				return
+			var t := (float(piece) + 0.5) / float(pieces)
+			var edge_mid := a.lerp(z, t)
+			var nearest_edge_i := -1
+			var nearest_distance := INF
+			var nearest_width := WorldConstants.CITY_ROAD_WIDTH_LOCAL
+			for road_i in _city_edges.size():
+				var road_edge: Dictionary = _city_edges[road_i]
+				var road_poly: PackedVector2Array = road_edge.get("polyline",
+						PackedVector2Array()) as PackedVector2Array
+				var distance := _distance_to_polyline(edge_mid, road_poly)
+				if distance < nearest_distance:
+					nearest_distance = distance
+					nearest_edge_i = road_i
+					nearest_width = float(road_edge.get("width",
+							WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+			if nearest_edge_i < 0 or nearest_distance > nearest_width * 0.5 \
+					+ _CITY_ROAD_BLOCK_CLEARANCE + 0.8:
+				continue
+			var tangent := boundary_delta.normalized()
+			var inward := Vector2(-tangent.y, tangent.x)
+			if not _polygon_contains(poly, edge_mid + inward * 1.0):
+				inward = -inward
+			if not _polygon_contains(poly, edge_mid + inward * 1.0):
+				continue
+			var frontage_width := clampf(boundary_len / float(pieces) * 0.90,
+					min_width, max_width)
+			var depth := lerpf(depth_min, depth_max,
+					_u("city_boundary_frontage_depth", [nearest_edge_i, boundary_i, piece]))
+			var yaw := atan2(tangent.y, tangent.x)
+			var lot := Rect2()
+			for inset in [0.18, 0.55, 0.92]:
+				var center := edge_mid + inward * (float(inset) + depth * 0.5)
+				lot = _fit_frontage_lot(center, Vector2(frontage_width, depth), yaw, poly)
+				if lot.size.x > 0.0 and lot.size.y > 0.0:
+					break
+			if lot.size.x <= 0.0 or lot.size.y <= 0.0:
+				continue
+			if not _city_lot_has_valid_land(lot, yaw) or _near_rural_settlement(lot.get_center()):
+				continue
+			if not passage.is_empty() and _lots_overlap(lot, yaw,
+					passage["rect"] as Rect2, 0.0, 0.25):
+				continue
+			if not _lot_clear_of_city_roads(lot, yaw):
+				continue
+			var duplicate := false
+			for existing: Dictionary in result:
+				if _lots_overlap(lot, yaw, existing["rect"] as Rect2,
+						float(existing.get("yaw", 0.0)), 0.22):
+					duplicate = true
+					break
+			if duplicate or _city_lot_overlaps_existing(lot, yaw):
+				continue
+			var door_edge := _door_edge_for_front(lot.get_center(), inward, lot, yaw)
+			var spec := _make_city_spec(block, lot, door_edge,
+					5000 + nearest_edge_i * 8 + boundary_i,
+					result.size(), radius, yaw)
+			spec["frontage_role"] = &"corner" if _is_corner_frontage(edge_mid) else &"street"
+			spec["frontage_edge_id"] = str(_city_edges[nearest_edge_i].get("id", ""))
+			spec["frontage_center"] = edge_mid
+			result.append(spec)
 
 
 func _append_rear_frontage_lot(result: Array[Dictionary], block: Dictionary,
@@ -1699,7 +1907,7 @@ func _polygon_contains(poly: PackedVector2Array, p: Vector2) -> bool:
 	return inside
 
 
-func _polygon_signed_area(poly: PackedVector2Array) -> float:
+static func _polygon_signed_area(poly: PackedVector2Array) -> float:
 	var area := 0.0
 	for i in poly.size():
 		var j := (i + 1) % poly.size()
@@ -1707,7 +1915,7 @@ func _polygon_signed_area(poly: PackedVector2Array) -> float:
 	return area * 0.5
 
 
-func _polygon_centroid(poly: PackedVector2Array) -> Vector2:
+static func _polygon_centroid(poly: PackedVector2Array) -> Vector2:
 	var signed := _polygon_signed_area(poly)
 	if absf(signed) < 1e-5:
 		var avg := Vector2.ZERO

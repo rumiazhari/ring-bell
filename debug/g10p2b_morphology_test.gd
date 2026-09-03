@@ -122,6 +122,7 @@ func _check_plan(plan: CityPlan, label: String) -> void:
 			" blocks=", blocks.size(), " buildings=", buildings.size(), " extent=", extent)
 	_expect(float(extent.get("dense_radius_m", 0.0)) >= 600.0, label + " dense radius target")
 	_expect(float(extent.get("influence_radius_m", 0.0)) >= 1300.0, label + " influence radius target")
+	_check_fabric_metrics(plan, label)
 	_expect(plan.validate_area(Rect2(-950.0, -950.0, 1900.0, 1900.0)).is_empty(), label + " no block/building overlaps")
 
 
@@ -370,10 +371,18 @@ func _print_block_coherence(plan: CityPlan, label: String) -> void:
 	var hist := [0, 0, 0, 0]  # historic built blocks with 0/1/2/3+ buildings
 	var megaface := 0
 	var megaface_ids: Array[String] = []
+	var dense_kind_counts: Dictionary = {}
+	var dense_kind_areas: Dictionary = {}
 	for block: Dictionary in plan.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() < 600.0:
+			var kind_name := str(block.get("kind", &"built"))
+			var dense_area := absf(_polygon_area(
+				block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+			dense_kind_counts[kind_name] = int(dense_kind_counts.get(kind_name, 0)) + 1
+			dense_kind_areas[kind_name] = float(dense_kind_areas.get(kind_name, 0.0)) + dense_area
 		if (block.get("kind", &"") as StringName) != &"built":
 			continue
-		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
 		if center.length() >= 600.0:
 			continue
 		var area := absf(_polygon_area(
@@ -387,7 +396,9 @@ func _print_block_coherence(plan: CityPlan, label: String) -> void:
 				megaface_ids.append("%s:%.0f/%d" % [
 					str(block.get("id", "")), area, nb])
 	print("[G10P2BMorphology] ", label, " historic_block_hist_0/1/2/3+=",
-		hist, " megaface_6k=", megaface, " ", megaface_ids)
+		hist, " megaface_6k=", megaface, " ", megaface_ids,
+		" dense_kind_counts=", dense_kind_counts,
+		" dense_kind_areas=", dense_kind_areas)
 
 
 func _check_block_ownership(plan: CityPlan, label: String) -> void:
@@ -425,6 +436,168 @@ func _check_block_ownership(plan: CityPlan, label: String) -> void:
 			" source_counts=", source_counts, " district_counts=", district_counts)
 	_expect(outside == 0, label + " every building inside owning block")
 	_expect(missing_owner == 0, label + " every building has owning block")
+
+
+## G10-P2B-FIX2 acceptance telemetry. This is deliberately separate from the
+## older footprint-area ratio: it measures whether normal road samples have a
+## nearby parcel chain, and whether dense open area is classified as a park,
+## plaza, courtyard, or garden instead of an unexplained empty face.
+func _check_fabric_metrics(plan: CityPlan, label: String) -> void:
+	var frontage_by_edge: Dictionary = {}
+	var corner_lots := 0
+	for spec: Dictionary in plan.city_buildings():
+		var edge_id := str(spec.get("frontage_edge_id", ""))
+		if edge_id != "":
+			var centers: Array = frontage_by_edge.get(edge_id, []) as Array
+			var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+			centers.append(spec.get("frontage_center", rect.get_center()) as Vector2)
+			frontage_by_edge[edge_id] = centers
+		if str(spec.get("frontage_role", "street")) == "corner":
+			corner_lots += 1
+
+	var junctions: Array[Vector2] = []
+	for node: Dictionary in plan.city_nodes():
+		if int(node.get("degree", 0)) < 3:
+			continue
+		var node_center: Vector2 = node.get("center", Vector2.ZERO) as Vector2
+		if node_center.length() < 620.0:
+			junctions.append(node_center)
+	var samples := 0
+	var covered := 0
+	var considered_edges := 0
+	var covered_edges := 0
+	var uncovered_edge_ids: Array[String] = []
+	for edge: Dictionary in plan.road_graph().get("edges", []) as Array:
+		var hierarchy: StringName = edge.get("hierarchy", &"") as StringName
+		if hierarchy == &"alley" or bool(edge.get("is_bridge", false)):
+			continue
+		var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 2:
+			continue
+		var edge_samples := 0
+		var edge_hits := 0
+		var edge_id := str(edge.get("id", ""))
+		var centers: Array = frontage_by_edge.get(edge_id, []) as Array
+		for i in range(poly.size() - 1):
+			var a: Vector2 = poly[i]
+			var b: Vector2 = poly[i + 1]
+			var length := a.distance_to(b)
+			if length < 2.0:
+				continue
+			var step_count := maxi(1, int(ceil(length / 8.0)))
+			for step in step_count:
+				var p := a.lerp(b, (float(step) + 0.5) / float(step_count))
+				if p.length() >= 600.0 or _near_junction(p, junctions, 13.0):
+					continue
+				samples += 1
+				edge_samples += 1
+				var hit := false
+				for frontage_center_variant in centers:
+					if p.distance_to(frontage_center_variant as Vector2) <= 8.5:
+						hit = true
+						break
+				if hit:
+					covered += 1
+					edge_hits += 1
+		if edge_samples >= 2:
+			considered_edges += 1
+			if edge_hits > 0:
+				covered_edges += 1
+			else:
+				uncovered_edge_ids.append(edge_id + ":" + _edge_context(plan, edge))
+	var sample_ratio := float(covered) / maxf(float(samples), 1.0)
+	var edge_ratio := float(covered_edges) / maxf(float(considered_edges), 1.0)
+
+	var dense_area := 0.0
+	var unclassified_empty_area := 0.0
+	var empty_dense_blocks := 0
+	var dense_blocks := 0
+	var purposeful_open_area := 0.0
+	for block: Dictionary in plan.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= 600.0:
+			continue
+		var area := absf(_polygon_area(block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+		if area < 1.0:
+			continue
+		dense_area += area
+		dense_blocks += 1
+		var kind: StringName = block.get("kind", &"built") as StringName
+		var buildings: Array = block.get("buildings", []) as Array
+		if kind == &"park" or kind == &"plaza":
+			purposeful_open_area += area
+			continue
+		if buildings.is_empty():
+			var empty_courtyard := float(block.get("courtyard_area_m2", 0.0))
+			if empty_courtyard >= WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+				purposeful_open_area += minf(empty_courtyard, area)
+			else:
+				empty_dense_blocks += 1
+				unclassified_empty_area += area
+			continue
+		var occupied := 0.0
+		for spec_variant in buildings:
+			var spec: Dictionary = spec_variant as Dictionary
+			var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+			occupied += lot.size.x * lot.size.y
+		var courtyard := float(block.get("courtyard_area_m2", 0.0))
+		purposeful_open_area += minf(maxf(area - occupied, 0.0), courtyard)
+		# Any large residual without a semantic courtyard/garden region is
+		# exactly the blank-block failure this task is meant to prevent.
+		if area - occupied > 0.55 * area and courtyard < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+			unclassified_empty_area += area - occupied
+	var empty_ratio := float(empty_dense_blocks) / maxf(float(dense_blocks), 1.0)
+	var unclassified_ratio := unclassified_empty_area / maxf(dense_area, 1.0)
+	print("[G10P2BMorphology] ", label, " frontage_samples=", samples,
+		" covered=", covered, " sample_ratio=", sample_ratio,
+		" edge_ratio=", edge_ratio, " edges=", covered_edges, "/", considered_edges,
+		" corner_lots=", corner_lots, " empty_dense_block_ratio=", empty_ratio,
+		" unclassified_void_ratio=", unclassified_ratio,
+		" uncovered_edges=", uncovered_edge_ids,
+		" purposeful_open_area=", purposeful_open_area)
+	# A majority of ordinary street samples must have a frontage candidate.
+	# Junction mouths and alleys are excluded above; edge_ratio separately
+	# catches a whole road edge that lost all of its parcels.
+	_expect(sample_ratio >= 0.55, label + " frontage sample continuity >= 55%")
+	_expect(edge_ratio >= 0.60, label + " normal road-edge continuity >= 60%")
+	_expect(corner_lots >= 4, label + " intentional corner frontage lots")
+	_expect(empty_ratio <= 0.08, label + " empty dense-block ratio <= 8%")
+	_expect(unclassified_ratio <= 0.10, label + " unclassified dense void ratio <= 10%")
+
+
+func _edge_context(plan: CityPlan, edge: Dictionary) -> String:
+	var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
+	if poly.size() < 2:
+		return "degenerate"
+	var a: Vector2 = poly[0]
+	var z: Vector2 = poly[1]
+	var tangent := (z - a).normalized()
+	var normal := Vector2(-tangent.y, tangent.x)
+	var width := float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+	var contexts: Array[String] = []
+	var mid := (a + z) * 0.5
+	for side in [-1.0, 1.0]:
+		var sample: Vector2 = mid + normal * side * (width * 0.5 + 4.0)
+		var context := "none"
+		for block: Dictionary in plan.city_blocks():
+			var block_poly: PackedVector2Array = block.get("polygon",
+					PackedVector2Array()) as PackedVector2Array
+			if not Geometry2D.is_point_in_polygon(sample, block_poly):
+				continue
+			var buildings: Array = block.get("buildings", []) as Array
+			var area := absf(_polygon_area(block_poly))
+			context = "%s/%d/%.0f" % [str(block.get("kind", &"built")),
+				buildings.size(), area]
+			break
+		contexts.append(context)
+	return "|".join(contexts)
+
+
+func _near_junction(p: Vector2, junctions: Array[Vector2], radius: float) -> bool:
+	for junction: Vector2 in junctions:
+		if p.distance_to(junction) < radius:
+			return true
+	return false
 
 
 func _polygon_area(poly: PackedVector2Array) -> float:

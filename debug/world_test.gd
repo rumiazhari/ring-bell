@@ -5530,6 +5530,27 @@ func _test_asset_pipeline() -> bool:
 	if b_neg_a.manifest().get("asset_instances", []).size() != b_neg_b.manifest().get("asset_instances", []).size():
 		print("[CityTest] asset: negative coord chunk asset not deterministic")
 		return false
+	var transform_probe := MeshBatcher.new()
+	var probe_origin := Vector3(10.0, 0.0, 10.0)
+	var probe_pos := probe_origin + Vector3(2.0, 1.0, 0.0)
+	transform_probe.push_building_transform(probe_origin, PI * 0.5)
+	transform_probe.push_layer("asset_probe:f0")
+	transform_probe.queue_asset_wall(probe_pos, Vector3(2.0, 2.05, 0.18),
+			WorldConstants.COL_ASSET_FALLBACK, str(info_a.get("res_path", "")),
+			1.0, false, PI * 0.5)
+	transform_probe.pop_layer()
+	transform_probe.pop_building_transform()
+	var transformed_asset: Dictionary = transform_probe.asset_instances()[0]
+	var transformed_pos: Vector3 = transformed_asset["pos"] as Vector3
+	var transformed_yaw := wrapf(float(transformed_asset["yaw"]), -PI, PI)
+	if transformed_pos.distance_to(probe_pos) < 0.1 or absf(transformed_yaw) > deg_to_rad(2.0):
+		print("[CityTest] asset: rotated transform not applied pos=%s yaw=%.3f" % [str(transformed_pos), transformed_yaw])
+		return false
+	if str(transformed_asset.get("building_id", "")) != "asset_probe" \
+			or int(transformed_asset.get("floor_i", -1)) != 0:
+		print("[CityTest] asset: ownership metadata missing %s" % str(transformed_asset))
+		return false
+	print("[CityTest] PASS  wall_2m rotated transform and layer ownership")
 	print("[CityTest] asset: wall_2m probe OK exists %s fallback %s, %d chunks with probe, caps %d" % [str(exists_a), str(not exists_a), asset_chunks, WorldConstants.MAX_ASSET_RESOLVES_PER_CHUNK])
 	return true
 

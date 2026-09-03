@@ -23,6 +23,8 @@ const SIDEWALK_INNER := Color("98948a")
 const PLAZA_PAVE := Color("b3ab97")
 const ALLEY_FLOOR := Color("6f6759")
 const GRASS := Color("55693f")
+const COURTYARD_GREEN := Color("647054")
+const COURTYARD_SERVICE := Color("776b59")
 const TRUNK_COLOR := Color("4a3826")
 const CANOPY_COLOR := Color("3f5c30")
 const FOUNTAIN_RIM := Color("8d8577")
@@ -58,7 +60,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 			continue
 		match block["kind"]:
 			&"built":
-				_pavement(b, block, rect, SIDEWALK_HISTORIC \
+				_pavement(b, plan, block, rect, SIDEWALK_HISTORIC \
 						if block["district"] == CityPlan.DISTRICT_HISTORIC \
 						else SIDEWALK_INNER, world_plan)
 				_alley(b, block, rect, world_plan)
@@ -709,8 +711,11 @@ static func _emit_fallback_lamp(b: MeshBatcher, _plan: CityPlan,
 
 # --- Blocks ------------------------------------------------------------------
 
-static func _pavement(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
+static func _pavement(b: MeshBatcher, plan: CityPlan, block: Dictionary, chunk_rect: Rect2,
 		color: Color, world_plan: WorldPlan = null) -> void:
+	if (block.get("kind", &"built") as StringName) == &"built":
+		_built_block_surfaces(b, plan, block, chunk_rect, world_plan)
+		return
 	var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
 	var clipped := _clip_polygon_to_rect(poly, chunk_rect)
 	if clipped.size() < 3:
@@ -719,6 +724,100 @@ static func _pavement(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
 	if world_plan != null:
 		ground_y = world_plan.surface_height_at(block.get("center", Vector2.ZERO) as Vector2)
 	b.add_visual_polygon(clipped, ground_y + 0.025, color)
+
+
+## G10-P2B-FIX2: a built block is not one sidewalk polygon. The road ribbon
+## owns the road; this pass owns only the narrow block-side sidewalk band and
+## the parcel-derived residual courtyard/garden surfaces. Both are derived
+## from the real road/block/building geometry, so no procedural macro face is
+## painted over a whole block.
+static func _built_block_surfaces(b: MeshBatcher, plan: CityPlan, block: Dictionary,
+		chunk_rect: Rect2, world_plan: WorldPlan = null) -> void:
+	var block_poly: PackedVector2Array = block.get("polygon",
+		PackedVector2Array()) as PackedVector2Array
+	if block_poly.size() < 3:
+		return
+	var bounds: Rect2 = block.get("bounds", Rect2()) as Rect2
+	var district: StringName = block.get("district", CityPlan.DISTRICT_INNER) as StringName
+	var sidewalk_color := SIDEWALK_HISTORIC if district == CityPlan.DISTRICT_HISTORIC else SIDEWALK_INNER
+	var road_query := bounds.grow(WorldConstants.CITY_SIDEWALK_DEPTH_M + 8.0)
+	for edge: Dictionary in plan.city_road_segments_in(road_query):
+		_emit_block_sidewalks(b, block_poly, edge, chunk_rect, sidewalk_color,
+			world_plan)
+	for region_variant in block.get("courtyard_regions", []) as Array:
+		var region: Dictionary = region_variant as Dictionary
+		var region_poly: PackedVector2Array = region.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+		var clipped_region := _clip_polygon_to_rect(region_poly, chunk_rect)
+		if clipped_region.size() < 3 or _polygon_area(clipped_region) < \
+				WorldConstants.CITY_COURTYARD_MIN_AREA_M2 * 0.35:
+			continue
+		var region_center: Vector2 = region.get("center",
+			block.get("center", Vector2.ZERO)) as Vector2
+		var region_y := world_plan.surface_height_at(region_center) if world_plan != null else 0.0
+		var region_kind: StringName = region.get("kind", &"courtyard") as StringName
+		var region_color := COURTYARD_SERVICE if region_kind == &"garden" else COURTYARD_GREEN
+		b.add_visual_polygon(clipped_region, region_y + 0.032, region_color)
+
+
+static func _emit_block_sidewalks(b: MeshBatcher,
+		block_poly: PackedVector2Array, edge: Dictionary, chunk_rect: Rect2,
+		color: Color, world_plan: WorldPlan = null) -> void:
+	var poly: PackedVector2Array = edge.get("polyline_clipped",
+		PackedVector2Array()) as PackedVector2Array
+	if poly.size() < 2:
+		return
+	var width := float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+	for i in range(poly.size() - 1):
+		var a: Vector2 = poly[i]
+		var z: Vector2 = poly[i + 1]
+		if a.distance_to(z) < 0.05:
+			continue
+		var strip := _road_band_polygon(a, z,
+			width * 0.5 + WorldConstants.CITY_SIDEWALK_DEPTH_M)
+		var intersections: Array = Geometry2D.intersect_polygons(block_poly, strip)
+		for variant in intersections:
+			var sidewalk: PackedVector2Array = variant as PackedVector2Array
+			var clipped := _clip_polygon_to_rect(sidewalk, chunk_rect)
+			if clipped.size() < 3 or _polygon_area(clipped) < 2.0:
+				continue
+			var center := chunk_rect.get_center()
+			if world_plan != null:
+				center = _polygon_center(clipped)
+			var y := world_plan.surface_height_at(center) if world_plan != null else 0.0
+			b.add_visual_polygon(clipped, y + 0.028, color)
+
+
+static func _road_band_polygon(a: Vector2, z: Vector2,
+		half_width: float) -> PackedVector2Array:
+	var tangent := (z - a).normalized()
+	var normal := Vector2(-tangent.y, tangent.x) * half_width
+	var extension := tangent * 1.0
+	return PackedVector2Array([
+		a - extension - normal,
+		z + extension - normal,
+		z + extension + normal,
+		a - extension + normal,
+	])
+
+
+static func _polygon_center(poly: PackedVector2Array) -> Vector2:
+	if poly.is_empty():
+		return Vector2.ZERO
+	var center := Vector2.ZERO
+	for p: Vector2 in poly:
+		center += p
+	return center / float(poly.size())
+
+
+static func _polygon_area(poly: PackedVector2Array) -> float:
+	if poly.size() < 3:
+		return 0.0
+	var area := 0.0
+	for i in poly.size():
+		var j := (i + 1) % poly.size()
+		area += poly[i].x * poly[j].y - poly[j].x * poly[i].y
+	return absf(area) * 0.5
 
 
 ## Paved floor of an intra-block passage (see CityPlan._passage_for_block),
@@ -837,7 +936,7 @@ static func _market_stall(b: MeshBatcher, p: Vector2,
 
 static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 		chunk_rect: Rect2, coord: Vector2i, world_plan: WorldPlan = null) -> void:
-	_pavement(b, block, chunk_rect, GRASS, world_plan)
+	_pavement(b, plan, block, chunk_rect, GRASS, world_plan)
 	var rng := WorldSeed.rng_for("park_trees",
 			[int(WorldSeed.combine([str(block["id"]).hash()]))])
 	var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array

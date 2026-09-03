@@ -2,7 +2,7 @@ extends Node
 ## Authentic Forward+ visual acceptance capture for G10-P2B.
 ## The images are saved from the live game's viewport, never synthesized.
 
-const OUT_DIR := "C:/Vibe Code project/Godot Project/ring-bell/captures/g10p2b_final_20260903_v19"
+const OUT_DIR := "C:/Vibe Code project/Godot Project/ring-bell/captures/g10p2b_fix2_iter3_20260904"
 const CAPTURE_WAIT := 3.0
 
 var _main: Node3D
@@ -14,6 +14,10 @@ var _debug_overlay: CanvasLayer
 
 
 func _ready() -> void:
+	if DisplayServer.get_name() != "headless" and not OS.has_feature("headless"):
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_size(Vector2i(1200, 720))
+		await get_tree().process_frame
 	_main = get_parent() as Node3D
 	_bind_main_objects()
 	await _wait_for_main_world(12.0)
@@ -88,40 +92,30 @@ func _run() -> void:
 	var graph: Dictionary = _city.road_graph()
 	var hub := _city.find_spawn_point()
 	var core := _pick_core_point(hub)
-	var diagonal := _pick_primary_point(graph, 0.28, hub)
 	var junction := _pick_junction(graph, hub)
-	var dense := _pick_dense_point(hub)
-	var outer := _pick_outer_point(graph, dense)
-	var crossing := _pick_river_crossing(hub)
-	print("[G10P2BCapture] targets hub=", hub, " core=", core, " diagonal=", diagonal,
-			" junction=", junction, " dense=", dense, " outer=", outer,
-			" crossing=", crossing)
+	var courtyard := _pick_courtyard_block(hub)
+	var alley_entrance := _pick_courtyard_entrance(courtyard, hub)
+	print("[G10P2BCapture] targets hub=", hub, " core=", core,
+			" junction=", junction, " alley=", alley_entrance,
+			" courtyard=", courtyard)
 
 	await _move_player(core)
-	await _capture_tilted("01_irregular_historic_core.png", core, 18.0, 4.0, 78.0,
+	await _capture_tilted("01_dense_historic_street.png", core, 18.0, 4.0, 78.0,
 			_road_azimuth(core, &""))
-	# Broad aerial evidence must be captured from the same loaded area it
-	# depicts; keep the broad city view centered on the hub. The river crossing
-	# is captured separately from its own streamed chunk below.
-	await _move_player(hub)
-	await _capture_top("06_broad_aerial_city.png", hub, 220.0, 76.0)
-
-	await _move_player(diagonal)
-	await _capture_top("02_radial_diagonal_route.png", diagonal, 120.0, 75.0)
 
 	await _move_player(junction)
-	await _capture_tilted("03_non90_intersection.png", junction, 72.0, 42.0, 80.0,
+	await _capture_tilted("02_corner_intersection.png", junction, 56.0, 34.0, 78.0,
 			_road_azimuth(junction, &"secondary"))
 
-	await _move_player(dense)
-	await _capture_tilted("04_dense_inner_neighborhood.png", dense, 38.0, 22.0, 76.0,
-			_road_azimuth(dense, &"local"))
+	await _move_player(alley_entrance)
+	await _capture_tilted("03_narrow_alley_courtyard_entrance.png", alley_entrance,
+			28.0, 18.0, 74.0, _road_azimuth(alley_entrance, &""))
 
-	await _move_player(outer)
-	await _capture_tilted("05_city_outer_transition.png", outer, 100.0, 42.0, 70.0)
+	await _move_player(courtyard)
+	await _capture_top("04_interior_courtyard_block.png", courtyard, 46.0, 78.0)
 
-	await _move_player(crossing)
-	await _capture_top("07_river_bridge_influence.png", crossing, 82.0, 72.0)
+	await _move_player(hub)
+	await _capture_top("05_wider_inner_city.png", hub, 150.0, 76.0)
 
 	print("[G10P2BCapture] all captures done")
 	get_tree().quit(0)
@@ -215,6 +209,51 @@ func _pick_dense_point(fallback: Vector2) -> Vector2:
 				best_count = count
 				best = p
 	return best if best != Vector2.INF else fallback
+
+
+func _pick_courtyard_block(fallback: Vector2) -> Vector2:
+	var best := fallback
+	var best_score := -1.0
+	for block: Dictionary in _city.city_blocks():
+		if block.get("kind", &"") != &"built":
+			continue
+		var center: Vector2 = block.get("center", fallback) as Vector2
+		if center.length() > 290.0:
+			continue
+		var regions: Array = block.get("courtyard_regions", []) as Array
+		var buildings: Array = block.get("buildings", []) as Array
+		if regions.is_empty() or buildings.size() < 2:
+			continue
+		var area := float(regions[0].get("area_m2", 0.0)) if regions[0] is Dictionary else 0.0
+		var passage: Dictionary = block.get("passage", {}) as Dictionary
+		var score := float(buildings.size()) * 1000.0 + area
+		if not passage.is_empty():
+			score += 50000.0
+		if score > best_score:
+			best_score = score
+			best = center
+	return best
+
+
+func _pick_courtyard_entrance(courtyard: Vector2, fallback: Vector2) -> Vector2:
+	var best := fallback
+	var best_d := INF
+	for block: Dictionary in _city.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.distance_to(courtyard) > 0.5:
+			continue
+		var passage: Dictionary = block.get("passage", {}) as Dictionary
+		if passage.is_empty():
+			continue
+		var passage_center: Vector2 = (passage.get("rect", Rect2()) as Rect2).get_center()
+		var road_point := _city.nearest_city_road_point(passage_center)
+		if road_point == Vector2.INF:
+			road_point = passage_center
+		var d := road_point.distance_to(courtyard)
+		if d < best_d:
+			best_d = d
+			best = road_point
+	return best
 
 
 func _pick_outer_point(graph: Dictionary, fallback: Vector2) -> Vector2:

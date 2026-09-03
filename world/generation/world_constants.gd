@@ -104,6 +104,15 @@ const CITY_ROAD_WIDTH_SECONDARY := 5.8
 const CITY_ROAD_WIDTH_LOCAL := 3.6
 const CITY_ROAD_WIDTH_ALLEY := 1.9
 const CITY_ALLEY_WIDTH := 2.1
+# G10-P2B-FIX2: parcel/surface realization policy. These values describe
+# semantic urban space, not texture variation: road-side sidewalks, intentional
+# courtyard/garden residuals, and the threshold for rejecting empty dense faces.
+const CITY_SIDEWALK_DEPTH_M := 2.4
+const CITY_COURTYARD_MIN_AREA_M2 := 36.0
+const CITY_COURTYARD_MAX_SURFACE_AREA_M2 := 2400.0
+const CITY_COURTYARD_MAX_REGIONS_PER_BLOCK := 4
+const CITY_EMPTY_DENSE_BLOCK_MAX_AREA_M2 := 15000.0
+const CITY_FRONTAGE_GAP_MAX_M := 1.2
 const SURFACE_SAMPLE_EPSILON_M := 0.5
 const RIVER_BED_DEPTH_M := 2.5
 const RIVER_BANK_FREEBOARD_M := 0.65

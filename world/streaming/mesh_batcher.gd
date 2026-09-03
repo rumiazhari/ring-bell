@@ -24,8 +24,9 @@ extends RefCounted
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
 var _polygon_specs: Array[Dictionary] = [] # visual ground polygons: {points,y,color,layer}
-var _asset_instances: Array[Dictionary] = [] # G9 M2: {pos,size,color,res_path,scale,has_collision,yaw} — visual wall_2m probe, ACTIVE-only, 0 collider
-var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
+var _asset_instances: Array[Dictionary] = [] # {pos,size,color,res_path,scale,has_collision,yaw,layer,building_id,floor_i}
+var _asset_nodes: Array[Node3D] = []     # materialized asset nodes, keyed by layer metadata
+var _street_lights: Array[Vector3] = []  # Phase S: streamed-city streetlamp OmniLight positions
 var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
 
 # Phase W: flicker/dead-lamp variant — deterministic subset sputters or stays dark.
@@ -196,9 +197,31 @@ func pop_layer() -> void:
 		_layers.pop_back()
 
 # --- G9 M2 Asset Pipeline: queue modular wall instances (visual only, 0 collider) ---
+# Asset positions/yaws enter in the builder's pre-transform frame. Apply the
+# active full-building transform here so GLB and fallback instances cannot
+# detach from rotated BuildingSpecs. Preserve layer ownership for reveal gates.
 func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: String, scale: float, has_collision: bool, yaw: float = 0.0) -> void:
+	var asset_pos := pos
+	var asset_yaw := yaw
+	var layer_key: String = _layers.back()
+	var building_id := ""
+	var floor_i := -1
+	var separator := layer_key.find(":")
+	if separator >= 0:
+		building_id = layer_key.substr(0, separator)
+		var suffix := layer_key.substr(separator + 1)
+		if suffix.begins_with("f"):
+			floor_i = int(suffix.substr(1).split(":")[0])
+	if not _building_transform_stack.is_empty():
+		var transform: Dictionary = _building_transform_stack.back()
+		var origin: Vector3 = transform["origin"] as Vector3
+		var rotation: Basis = transform["basis"] as Basis
+		asset_pos = origin + rotation * (pos - origin)
+		asset_yaw = (rotation * Basis(Vector3.UP, yaw)).get_euler().y
 	_asset_instances.append({
-		"pos": pos, "size": size, "color": color, "res_path": res_path, "scale": scale, "has_collision": has_collision, "yaw": yaw,
+		"pos": asset_pos, "size": size, "color": color, "res_path": res_path,
+		"scale": scale, "has_collision": has_collision, "yaw": asset_yaw,
+		"layer": layer_key, "building_id": building_id, "floor_i": floor_i,
 	})
 
 func asset_instance_count() -> int:
@@ -206,6 +229,9 @@ func asset_instance_count() -> int:
 
 func asset_instances() -> Array[Dictionary]:
 	return _asset_instances.duplicate(true)
+
+func asset_nodes() -> Array[Node3D]:
+	return _asset_nodes.duplicate()
 
 func clear_asset_instances() -> void:
 	_asset_instances.clear()
@@ -371,6 +397,7 @@ func _group_keys() -> Array:
 func flush_into(parent: Node3D, body_layer := 1,
 		include_collision := true) -> Dictionary:
 	_parent = parent
+	_asset_nodes.clear()
 	var stats := {"mesh_nodes": 0, "colliders": _colliders.size()}
 
 	var groups := _build_layers()
@@ -410,9 +437,13 @@ func flush_into(parent: Node3D, body_layer := 1,
 				node3d.scale = Vector3.ONE * a_scale
 				if not is_zero_approx(a_yaw):
 					node3d.rotation.y = a_yaw
-				# Tag for test/debugging and ACTIVE handling
+				# Tag for test/debugging, reveal gating, and ownership audits.
 				node3d.set_meta("asset_wall_2m", true)
+				node3d.set_meta("asset_layer_key", str(a.get("layer", "")))
+				node3d.set_meta("asset_building_id", str(a.get("building_id", "")))
+				node3d.set_meta("asset_floor_i", int(a.get("floor_i", -1)))
 				node3d.add_to_group("asset_wall")
+				_asset_nodes.append(node3d)
 				parent.add_child(node3d)
 				asset_count += 1
 				continue
@@ -435,7 +466,11 @@ func flush_into(parent: Node3D, body_layer := 1,
 		mi_fb.material_override = mat
 		mi_fb.set_meta("asset_wall_2m", true)
 		mi_fb.set_meta("asset_fallback", true)
+		mi_fb.set_meta("asset_layer_key", str(a.get("layer", "")))
+		mi_fb.set_meta("asset_building_id", str(a.get("building_id", "")))
+		mi_fb.set_meta("asset_floor_i", int(a.get("floor_i", -1)))
 		mi_fb.add_to_group("asset_wall")
+		_asset_nodes.append(mi_fb)
 		parent.add_child(mi_fb)
 		asset_count += 1
 	stats["asset_instances"] = asset_count

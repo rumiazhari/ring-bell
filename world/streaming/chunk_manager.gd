@@ -1146,6 +1146,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"city_interior_buildings": city_interior_buildings,
 		"city_interior_active": city_interior_stations if include_collision else 0,
 		"layers": batcher.layer_nodes,
+		"asset_nodes": batcher.asset_nodes(),
 		"batcher": batcher,
 		"static": get_node_or_null(
 				NodePath("Chunk_%d_%d/Static" % [coord.x, coord.y])),
@@ -1572,6 +1573,18 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 			var node: Node = rec["layers"][layer_key]
 			if node != null and is_instance_valid(node):
 				(node as MeshInstance3D).visible = not hide
+	for asset_variant in rec.get("asset_nodes", []) as Array:
+		var asset: Node = asset_variant as Node
+		if asset == null or not is_instance_valid(asset) or asset.is_queued_for_deletion():
+			continue
+		var asset_building_id := str(asset.get_meta("asset_building_id", ""))
+		var asset_floor_i := int(asset.get_meta("asset_floor_i", -1))
+		var asset_hide := max_floor >= 0 and tag != "" \
+				and asset_building_id == tag and asset_floor_i > max_floor
+		var asset_visible := not asset_hide
+		if asset.visible != asset_visible:
+			asset.visible = asset_visible
+			changed = true
 	if changed or not rec.has("layer_hidden"):
 		rec["layer_hidden"] = applied
 

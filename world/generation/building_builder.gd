@@ -3393,7 +3393,9 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 					var local_c: Vector2 = ws_center2 - (spec["rect"] as Rect2).position
 					var asset_pos: Vector3 = off + Vector3(local_c.x, float(fi) * fh + fh*0.5 + WorldConstants.ASSET_LIFT_M, local_c.y)
 					var is_vert_probe := pr.size.x < pr.size.y + 0.01
-					var yaw_probe: float = 0.0 if is_vert_probe else PI * 0.5
+					# wall_2m.glb is long on local X: vertical partition
+					# needs a quarter-turn, horizontal stays at zero.
+					var yaw_probe: float = PI * 0.5 if is_vert_probe else 0.0
 					var asset_size: Vector3 = Vector3(2.0, WorldConstants.CITY_INTERIOR_OPEN_H, WorldConstants.CITY_INTERIOR_WALL_T)
 					b.queue_asset_wall(asset_pos, asset_size, WorldConstants.COL_ASSET_FALLBACK, String(resolve_info.get("res_path", "")), float(resolve_info.get("scale", 1.0)), bool(resolve_info.get("has_collision", false)), yaw_probe)
 					asset_handled = true
