@@ -141,7 +141,8 @@ func _materialize(manager: ChunkManager, center: Vector2i, ring: bool) -> void:
 		manager._materialize(coord, batcher, terrain_manifest, 0.0, center,
 			float(terrain_manifest.get("terrain_gen_ms", 0.0)), water_manifest, float(water_manifest.get("water_gen_ms", 0.0)),
 			biome_manifest, float(biome_manifest.get("biome_gen_ms", 0.0)), road_manifest, float(road_manifest.get("road_gen_ms", 0.0)),
-			rural_manifest, float(rural_manifest.get("rural_gen_ms", 0.0)), composition)
+			rural_manifest, float(rural_manifest.get("rural_gen_ms", 0.0)),
+			{}, 0.0, composition)
 	await get_tree().process_frame
 	await get_tree().physics_frame
 	await get_tree().physics_frame

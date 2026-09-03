@@ -79,6 +79,21 @@ func _ready() -> void:
 
 	# Focused regression harnesses own their fixtures and intentionally bypass
 	# normal city startup so their materialization contracts stay isolated.
+	if args.has("--g10p2b-streamprobe"):
+		var stream_probe: Node = load("res://debug/g10p2b_stream_probe.gd").new()
+		stream_probe.name = "G10P2BStreamProbe"
+		add_child(stream_probe)
+		return
+	if args.has("--g10p2b-spawnprobe"):
+		var spawn_probe: Node = load("res://debug/g10p2b_spawn_probe.gd").new()
+		spawn_probe.name = "G10P2BSpawnProbe"
+		add_child(spawn_probe)
+		return
+	if args.has("--g10p2b-morphologytest"):
+		var morphology_tester: Node = load("res://debug/g10p2b_morphology_test.gd").new()
+		morphology_tester.name = "G10P2BMorphologyTest"
+		add_child(morphology_tester)
+		return
 	if args.has("--streamingregressiontest"):
 		var streaming_tester: Node = load("res://debug/streaming_regression_test.gd").new()
 		streaming_tester.name = "StreamingRegressionTest"
@@ -126,6 +141,10 @@ func _ready() -> void:
 		var tester3: Node = load("res://debug/city_runtime_test.gd").new()
 		tester3.name = "CityRuntimeTest"
 		add_child(tester3)
+	elif user_args.has("--g10p2b-capture"):
+		var tester_p2b: Node = load("res://debug/g10p2b_capture.gd").new()
+		tester_p2b.name = "G10P2BCapture"
+		add_child(tester_p2b)
 	elif user_args.has("--walkthrough"):
 		var tester4: Node = load("res://debug/walkthrough_probe.gd").new()
 		tester4.name = "WalkthroughProbe"
@@ -162,10 +181,6 @@ func _ready() -> void:
 		var tester6fr: Node = load("res://debug/fringe_test.gd").new()
 		tester6fr.name = "FringeTest"
 		add_child(tester6fr)
-	elif user_args.has("--contractdiag4"):
-		var diag4: Node = load("res://debug/contract_diag4.gd").new()
-		diag4.name = "ContractDiag4"
-		add_child(diag4)
 	elif user_args.has("--g10p2a-ruralprobe"):
 		var probe_g10: Node = load("res://debug/g10p2a_rural_probe.gd").new()
 		probe_g10.name = "G10P2ARuralProbe"
@@ -235,7 +250,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 	# Any test flag bypasses menu
 	var test_flags: Array[String] = [
 			"--smoke", "--soak", "--legacy-block",
-			"--citytest", "--cityruntime", "--walkthrough", "--havoctest",
+			"--citytest", "--cityruntime", "--g10p2b-morphologytest", "--walkthrough", "--havoctest",
 			"--terraintest", "--terrainmaterialtest",
 			"--hydrotest", "--hydromaterialtest",
 			"--biometest", "--biomaterialtest",
@@ -246,7 +261,8 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
 			"--animationtest", "--streamingregressiontest",
-			"--import", "--shot", "--doortest", "--g10p1-capture"
+			"--import", "--shot", "--doortest", "--g10p1-capture",
+			"--g10p2b-capture"
 	]
 	for f in test_flags:
 		if args.has(f):
@@ -470,7 +486,7 @@ func _build_streamed_city() -> void:
 	add_child(chunk_manager)
 	chunk_manager.setup_world(city_plan, wplan)
 	if OS.get_cmdline_user_args().has("--g10p1-capture"):
-		# The real windowed evidence runner still uses the production builders and
+		# The real windowed evidence runner uses the production builders and
 		# Forward+ renderer, but avoids worker/cache races while it jumps between
 		# six far deterministic locations.
 		chunk_manager.synchronous = true

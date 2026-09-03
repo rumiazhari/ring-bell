@@ -27,6 +27,17 @@ const EXIT_EPS := 0.30        # allowed overhang before EXITING
 static func evaluate(xz: Vector2, y: float, spec: Dictionary,
 		was_inside: bool) -> Dictionary:
 	var fp: Rect2 = spec["rect"]
+	var local_xz := xz
+	var yaw := float(spec.get("yaw", 0.0))
+	if not is_zero_approx(yaw):
+		# City rectangles are emitted through a rigid frame. Evaluate the
+		# player's world point against the same unrotated local footprint.
+		var rel := xz - fp.get_center()
+		var c := cos(-yaw)
+		var s := sin(-yaw)
+		local_xz = fp.get_center() + Vector2(
+				rel.x * c - rel.y * s,
+				rel.x * s + rel.y * c)
 	var fh := float(spec["floor_h"])
 	var n := mini(int(spec["floors"]), 8)
 
@@ -37,7 +48,7 @@ static func evaluate(xz: Vector2, y: float, spec: Dictionary,
 	var shrink := WALL_T + (ENTER_EPS if not was_inside else -EXIT_EPS)
 	shrink = maxf(shrink, 0.0)
 	var inner := fp.grow(-shrink)
-	if not inner.has_point(xz):
+	if not inner.has_point(local_xz):
 		return {"inside": false, "floor": -1}
 
 	# Valid storey under the feet: slab top of level i sits at i*fh.

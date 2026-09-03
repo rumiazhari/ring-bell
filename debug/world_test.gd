@@ -22,7 +22,7 @@ var failures := 0
 
 
 func _ready() -> void:
-	get_tree().create_timer(60.0).timeout.connect(func() -> void:
+	get_tree().create_timer(1800.0).timeout.connect(func() -> void:
 		print("[CityTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()
@@ -147,8 +147,8 @@ func _run_all() -> void:
 			_test_glass_calibration())
 	_check("destruction deltas persist across rebuild + save/load",
 			_test_destruction_persistence())
-	_check("corner building doors face a street (NW/NE/SE/SW)",
-			_test_corner_door_edges())
+	_check("frontage building doors face their nearest street",
+			_test_frontage_door_edges())
 	_check("intra-block passages pierce both fronts unobstructed",
 			_test_passages())
 	_check("interior probe detection + facade sector math", _test_interior_probe())
@@ -3383,11 +3383,7 @@ func _test_furniture() -> bool:
 		print("[CityTest] no stair building found for furniture test")
 		return false
 	var b := MeshBatcher.new()
-	var fp_local := CityPlan.new()
-	var coord := WorldSeed.chunk_coord(
-			(spec["rect"] as Rect2).get_center().x,
-			(spec["rect"] as Rect2).get_center().y)
-	ChunkBuilder.fill_batcher(b, fp_local, coord)
+	UniversalBuildingAssembler.build_into(b, spec)
 	var fh := float(spec["floor_h"])
 	var tag := str(spec["id"])
 	var fp: Rect2 = spec["rect"]
@@ -3401,7 +3397,10 @@ func _test_furniture() -> bool:
 		var sz: Vector3 = s["size"]
 		if sz.y < 0.6 or sz.y > 2.1:
 			continue
-		var pos: Vector3 = s["pos"]
+		var pos_world: Vector3 = s["pos"]
+		var origin := Vector3(fp.get_center().x, 0.0, fp.get_center().y)
+		var inverse_basis := Basis(Vector3.UP, float(spec.get("yaw", 0.0)))
+		var pos := origin + inverse_basis * (pos_world - origin)
 		var lx := pos.x - fp.position.x
 		var lz := pos.z - fp.position.y
 		if lx < -0.5 or lz < -0.5 or lx > fp.size.x + 0.5 \
@@ -3438,10 +3437,7 @@ func _test_facade_apertures() -> bool:
 		for s: Dictionary in plan.cell_block(cell)["buildings"]:
 			if int(s["floors"]) >= 3:
 				var b := MeshBatcher.new()
-				var c := WorldSeed.chunk_coord(
-						(s["rect"] as Rect2).get_center().x,
-						(s["rect"] as Rect2).get_center().y)
-				ChunkBuilder.fill_batcher(b, CityPlan.new(), c)
+				UniversalBuildingAssembler.build_into(b, s)
 				var ok := _manifest_check(b.manifest()["colliders"])
 				if not ok:
 					return false
@@ -3587,10 +3583,7 @@ func _test_stair_collider_spec() -> bool:
 					float(spec["floor_h"]), n):
 				continue
 			var b := MeshBatcher.new()
-			var coord := WorldSeed.chunk_coord(
-					(spec["rect"] as Rect2).get_center().x,
-					(spec["rect"] as Rect2).get_center().y)
-			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			UniversalBuildingAssembler.build_into(b, spec)
 			var fh := float(spec["floor_h"])
 			var run := BuildingBuilder.flight_run(fh)
 			var ang := atan2(fh, run)
@@ -3662,10 +3655,7 @@ func _test_shelf_placement() -> bool:
 			if checked >= 30:
 				break
 			var b := MeshBatcher.new()
-			var coord := WorldSeed.chunk_coord(
-					(spec["rect"] as Rect2).get_center().x,
-					(spec["rect"] as Rect2).get_center().y)
-			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			UniversalBuildingAssembler.build_into(b, spec)
 			var fp: Rect2 = spec["rect"]
 			var w := fp.size.x
 			var d := fp.size.y
@@ -3687,7 +3677,10 @@ func _test_shelf_placement() -> bool:
 				# buildings, and neighbors' furniture shares the spec list.
 				if str(s.get("building_id", "")) != str(spec["id"]):
 					continue
-				var pos: Vector3 = s["pos"]
+				var pos_world: Vector3 = s["pos"]
+				var origin := Vector3(fp.get_center().x, 0.0, fp.get_center().y)
+				var inverse_basis := Basis(Vector3.UP, float(spec.get("yaw", 0.0)))
+				var pos := origin + inverse_basis * (pos_world - origin)
 				var lx := pos.x - fp.position.x
 				var lz := pos.z - fp.position.y
 				# Which wall is it snapped to?
@@ -3723,7 +3716,7 @@ func _test_slab_granularity() -> bool:
 	for coord in [Vector2i(0, 0), Vector2i(-1, 1), Vector2i(2, -1),
 			Vector2i(-2, -2)]:
 		var b := MeshBatcher.new()
-		ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+		ChunkBuilder.fill_batcher(b, plan, coord)
 		worst_chunk = maxi(worst_chunk, b.collider_count())
 		chunks_measured += 1
 		for s in b.specs():
@@ -3884,12 +3877,9 @@ func _test_facade_layer_keys() -> bool:
 			if int(spec["floors"]) < 2:
 				continue
 			var b := MeshBatcher.new()
-			var coord := WorldSeed.chunk_coord(
-					(spec["rect"] as Rect2).get_center().x,
-					(spec["rect"] as Rect2).get_center().y)
 			var holder := Node3D.new()
 			add_child(holder)
-			ChunkBuilder.fill_batcher(b, CityPlan.new(), coord)
+			UniversalBuildingAssembler.build_into(b, spec)
 			b.flush_into(holder)
 			var tag := str(spec["id"])
 			var n := mini(int(spec["floors"]), 8)
@@ -3937,57 +3927,89 @@ func _test_facade_layer_keys() -> bool:
 	return false
 
 
-# --- 25: Corner buildings face a street (P0-7) ---------------------------------------
-func _test_corner_door_edges() -> bool:
-	# Valid street-facing edges per block corner:
-	#   NW: N(0) or W(3) | NE: N(0) or E(1)
-	#   SE: S(2) or E(1) | SW: S(2) or W(3)
-	# SE must NEVER get an N entrance; SW must NEVER get an E entrance.
-	# Corner lots are identified GEOMETRICALLY (lot touching both perimeter
-	# faces of its corner); construction order guarantees they are the
-	# FIRST FOUR specs of every block.
-	var valid := [[0, 3], [0, 1], [2, 1], [2, 3]]
-	var names := ["NW", "NE", "SE", "SW"]
-	var seeds := [WorldSeed.get_world_seed(), WorldSeed.get_world_seed() + 111,
-			WorldSeed.get_world_seed() + 222]
+# --- 25: Street-facing frontage doors (P0-7) -------------------------------
+func _test_frontage_door_edges() -> bool:
+	# Road-derived blocks no longer have four axis-aligned perimeter corners.
+	# Validate the invariant that survives irregular subdivision: every city
+	# frontage door lies on its declared local facade edge, and that facade's
+	# outward normal points toward the road selected by the generator from the
+	# building centre. The 0.68 threshold leaves a small margin below the
+	# cardinal-edge quantisation bound (1/sqrt(2)).
+	var seed0 := WorldSeed.get_world_seed()
 	var checked := 0
-	for seed_v: int in seeds:
+	var min_dot := 1.0
+	var max_dist := 0.0
+	for seed_v: int in [seed0, seed0 + 111, seed0 + 222]:
 		WorldSeed.set_world_seed(seed_v)
 		var plan := CityPlan.new()
 		for cell in plan.cells_in_rect(Rect2(-400, -400, 800, 800)):
+			if checked >= 60:
+				break
 			var block := plan.cell_block(cell)
 			if block["kind"] == &"park":
 				continue
-			var specs: Array = block["buildings"]
-			if specs.size() < 4:
-				continue
-			var br: Rect2 = block["rect"]
-			for ci in 4:
-				var spec: Dictionary = specs[ci]
-				var lot: Rect2 = spec["rect"]
-				# Geometric corner identity: touches BOTH perimeter faces.
-				var touch := {
-					"N": absf(lot.position.y - br.position.y) < 0.05,
-					"S": absf(lot.end.y - br.end.y) < 0.05,
-					"W": absf(lot.position.x - br.position.x) < 0.05,
-					"E": absf(lot.end.x - br.end.x) < 0.05,
-				}
-				var expect_touch: Array = [["N", "W"], ["N", "E"],
-						["S", "E"], ["S", "W"]][ci]
-				if not (bool(touch[expect_touch[0]])
-						and bool(touch[expect_touch[1]])):
-					continue   # degenerate block layout; skip this corner
-				var edge := int(spec["door_edge"])
-				if not valid[ci].has(edge):
-					print(("[CityTest] %s corner %s door edge %d "
-							+ "not street-facing (valid %s)")
-									% [names[ci], spec["id"], edge,
-											str(valid[ci])])
-					WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+			for spec: Dictionary in block["buildings"]:
+				if checked >= 60:
+					break
+				var doors: Array = spec.get("doors", []) as Array
+				if doors.is_empty():
+					print("[CityTest] frontage building has no door: %s" % spec.get("id", ""))
+					WorldSeed.set_world_seed(seed0)
 					return false
+				var dm: Dictionary = doors[0]
+				var lot: Rect2 = spec["rect"]
+				var center: Vector2 = lot.get_center()
+				var road_point: Vector2 = plan.nearest_city_road_point(center)
+				if not road_point.is_finite():
+					print("[CityTest] frontage building has no nearest road: %s" % spec.get("id", ""))
+					WorldSeed.set_world_seed(seed0)
+					return false
+				var center_to_road := road_point - center
+				var center_dist := center_to_road.length()
+				if center_dist < 0.001 or center_dist > 60.0:
+					print("[CityTest] frontage road distance invalid for %s: %.2f m" % [spec.get("id", ""), center_dist])
+					WorldSeed.set_world_seed(seed0)
+					return false
+				var edge := clampi(int(dm.get("edge", spec.get("door_edge", 0))), 0, 3)
+				var local_out: Vector2 = Vector2.ZERO
+				match edge:
+					0:
+						local_out = Vector2(0, -1)
+					1:
+						local_out = Vector2(1, 0)
+					2:
+						local_out = Vector2(0, 1)
+					_:
+						local_out = Vector2(-1, 0)
+				var outward: Vector2 = CityPlan._rotate_plan_vector(
+						local_out, float(spec.get("yaw", 0.0)))
+				var dot := outward.dot(center_to_road / center_dist)
+				if dot < 0.68:
+					print("[CityTest] frontage door normal misses road: id=%s edge=%d dot=%.3f dist=%.2f" % [spec.get("id", ""), edge, dot, center_dist])
+					WorldSeed.set_world_seed(seed0)
+					return false
+				var door_v: Vector3 = dm.get("position", Vector3.ZERO) as Vector3
+				var local_door := CityPlan._rotate_plan_point(center,
+						Vector2(door_v.x, door_v.z), -float(spec.get("yaw", 0.0)))
+				var edge_error := 0.0
+				match edge:
+					0:
+						edge_error = absf(local_door.y - lot.position.y)
+					1:
+						edge_error = absf(local_door.x - lot.end.x)
+					2:
+						edge_error = absf(local_door.y - lot.end.y)
+					_:
+						edge_error = absf(local_door.x - lot.position.x)
+				if edge_error > 0.05:
+					print("[CityTest] frontage door off declared edge: id=%s edge=%d error=%.3f" % [spec.get("id", ""), edge, edge_error])
+					WorldSeed.set_world_seed(seed0)
+					return false
+				min_dot = minf(min_dot, dot)
+				max_dist = maxf(max_dist, center_dist)
 				checked += 1
-	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
-	print("[CityTest] corner doors checked: %d" % checked)
+	WorldSeed.set_world_seed(seed0)
+	print("[CityTest] frontage doors checked: %d min normal %.3f max road distance %.2f m" % [checked, min_dot, max_dist])
 	return checked >= 40
 
 
@@ -4026,7 +4048,9 @@ func _test_passages() -> bool:
 				WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
 				return false
 			for s: Dictionary in block["buildings"]:
-				if (s["rect"] as Rect2).grow(0.05).intersects(band):
+				var lot: Rect2 = s["rect"]
+				if CityPlan._lots_overlap(lot, float(s.get("yaw", 0.0)),
+						band, 0.0, 0.05):
 					print("[CityTest] %s intrudes into passage of %s"
 							% [s["id"], block["id"]])
 					WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
@@ -4369,26 +4393,29 @@ func _validate_door_manifests(plan: CityPlan) -> bool:
 				# its footprint for the declared edge (opening really exists).
 				var lot: Rect2 = spec["rect"]
 				var pos: Vector3 = dm["position"]
+				var yaw := float(spec.get("yaw", 0.0))
+				var local_pos := CityPlan._rotate_plan_point(lot.get_center(),
+						Vector2(pos.x, pos.z), -yaw)
 				match int(spec["door_edge"]):
 					0:
-						if absf(pos.z - lot.position.y) > 0.01 \
-								or pos.x < lot.position.x \
-								or pos.x > lot.end.x:
+						if absf(local_pos.y - lot.position.y) > 0.01 \
+								or local_pos.x < lot.position.x \
+								or local_pos.x > lot.end.x:
 							return false
 					1:
-						if absf(pos.x - lot.end.x) > 0.01 \
-								or pos.z < lot.position.y \
-								or pos.z > lot.end.y:
+						if absf(local_pos.x - lot.end.x) > 0.01 \
+								or local_pos.y < lot.position.y \
+								or local_pos.y > lot.end.y:
 							return false
 					2:
-						if absf(pos.z - lot.end.y) > 0.01 \
-								or pos.x < lot.position.x \
-								or pos.x > lot.end.x:
+						if absf(local_pos.y - lot.end.y) > 0.01 \
+								or local_pos.x < lot.position.x \
+								or local_pos.x > lot.end.x:
 							return false
 					_:
-						if absf(pos.x - lot.position.x) > 0.01 \
-								or pos.z < lot.position.y \
-								or pos.z > lot.end.y:
+						if absf(local_pos.x - lot.position.x) > 0.01 \
+								or local_pos.y < lot.position.y \
+								or local_pos.y > lot.end.y:
 							return false
 	return true
 

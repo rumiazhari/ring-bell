@@ -161,6 +161,8 @@ static func _check_city_entrances(spec: Dictionary, ents: Array[Dictionary]) -> 
 	var errs: Array[String] = []
 	var r: Rect2 = spec["rect"] as Rect2
 	var door_edge: int = int(spec.get("door_edge", 0))
+	var yaw := float(spec.get("yaw", 0.0))
+	var center := r.get_center()
 	for e in ents:
 		var w: float = float(e.get("width", 0.0))
 		var h: float = float(e.get("height", 0.0))
@@ -168,8 +170,9 @@ static func _check_city_entrances(spec: Dictionary, ents: Array[Dictionary]) -> 
 			errs.append("entrance width %.2f outside human scale" % w)
 		if h < WorldConstants.CONTRACT_DOOR_H_MIN or h > WorldConstants.CONTRACT_DOOR_H_MAX:
 			errs.append("entrance height %.2f outside human scale" % h)
-		var p: Vector2 = e.get("pos", Vector2.ZERO) as Vector2
-		# Door must sit ON the declared facade (edge centre plane).
+		var p_world: Vector2 = e.get("pos", Vector2.ZERO) as Vector2
+		var p := _rotate_plan_point(center, p_world, -yaw)
+		# Door manifests are world-space; validate the declared local facade.
 		var on_edge := false
 		match door_edge:
 			0: on_edge = absf(p.y - r.position.y) < 0.8
@@ -299,7 +302,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	var floors: int = int(spec.get("floors", 1))
 	var fh: float = float(spec.get("floor_h", 3.0))
 	var total_h := floors * fh
-	var ground: float = float(spec.get("ground_y", 0.0))
+	var ground: float = float(spec.get("building_ground_y", spec.get("ground_y", 0.0)))
 	var inner_w := maxf(w - 2.0 * 0.35, 0.0)
 	var inner_d := maxf(d - 2.0 * 0.35, 0.0)
 	# --- apertures: no solid geometry behind doors/windows -----------------
@@ -310,8 +313,8 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	# the band or covers less than 80% of the opening, so it never trips.
 	var ents: Array[Dictionary] = BuildingSpec.city_entrances(spec)
 	for e in ents:
-		var region := _aabb_of_entrance(e)
-		for s in _building_specs(b, id):
+		var region := _aabb_of_entrance(e, spec)
+		for s in _building_specs_local(b, id, spec):
 			if not bool(s.get("collide", false)):
 				continue
 			if s.get("material", &"") == &"glass":
@@ -331,15 +334,17 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 				var oc: float = float(o["c"])
 				var wp := BuildingBuilder._side_point(side, w, d, oc)
 				var y0 := f * fh
-				# _side_point returns BUILDING-LOCAL coords; batcher boxes
-				# are WORLD. Bring the region into world space so the
-				# overlap scan compares like with like for buildings away
-				# from the origin.
-				var region_center := Vector3(r.position.x + wp.x,
+				# _side_point returns BUILDING-LOCAL coords. Keep that point
+				# in the local frame used by _building_specs_local(); unlike a
+				# door manifest, it has not been rotated into world space.
+				var local_region_plan := Vector2(r.position.x + wp.x, r.position.y + wp.y)
+				var region_center := Vector3(local_region_plan.x,
 						y0 + float(o["bot"]) + float(o["h"]) * 0.5,
-						r.position.y + wp.y)
+						local_region_plan.y)
 				var region_size := Vector3(float(o["wd"]) + 0.1, float(o["h"]) - EPS, 0.75)
-				for s in _building_specs(b, id):
+				if side == 1 or side == 3:
+					region_size = Vector3(0.75, float(o["h"]) - EPS, float(o["wd"]) + 0.1)
+				for s in _building_specs_local(b, id, spec):
 					if not bool(s.get("collide", false)):
 						continue
 					if s.get("material", &"") == &"glass":
@@ -351,7 +356,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	for f in floors:
 		var wall_count := 0
 		var seen_sides := {}
-		for s in _building_specs(b, id):
+		for s in _building_specs_local(b, id, spec):
 			if not bool(s.get("collide", false)):
 				continue
 			if not _on_storey_layer(b, s, id, f):
@@ -380,7 +385,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 			errs.append("storey %d missing structural walls (%d segments, sides %s)" % [f, wall_count, seen_sides.keys()])
 	# --- floor slabs --------------------------------------------------------
 	var ground_cover := 0.0
-	for s in _building_specs(b, id):
+	for s in _building_specs_local(b, id, spec):
 		if not bool(s.get("collide", false)):
 			continue
 		var sz: Vector3 = s.get("size", Vector3.ZERO) as Vector3
@@ -393,8 +398,8 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 		errs.append("ground slab missing/insufficient (%.0f%% covered)" % [100.0 * ground_cover / maxf(inner_w * inner_d, 0.01)])
 	for lvl in range(1, floors + 1):
 		var cover := 0.0
-		var cy := lvl * fh
-		for s in _building_specs(b, id):
+		var cy := ground + lvl * fh
+		for s in _building_specs_local(b, id, spec):
 			if not bool(s.get("collide", false)):
 				continue
 			var sz: Vector3 = s.get("size", Vector3.ZERO) as Vector3
@@ -423,7 +428,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	# --- stairs materialised -------------------------------------------------
 	if floors >= 2:
 		var ramps := 0
-		for s in _building_specs(b, id):
+		for s in _building_specs_local(b, id, spec):
 			if not bool(s.get("collide", false)):
 				continue
 			if s.get("material", &"") != &"concrete":
@@ -440,7 +445,10 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	# --- grounding -----------------------------------------------------------
 	var bottom_min := INF
 	var top_slab := false
-	for s in _building_specs(b, id):
+	for s in _building_specs_local(b, id, spec):
+		var layer := str(s.get("layer", ""))
+		if layer.begins_with(id + ":foundation") or layer.begins_with(id + ":access"):
+			continue
 		if not bool(s.get("collide", false)):
 			continue
 		var pos: Vector3 = s.get("pos", Vector3.ZERO) as Vector3
@@ -465,6 +473,37 @@ static func _on_storey_layer(b: MeshBatcher, s: Dictionary, id: String, f: int) 
 	return layer.begins_with(match_key + ":")
 
 
+static func _rotate_plan_vector(v: Vector2, yaw: float) -> Vector2:
+	var c := cos(yaw)
+	var s := sin(yaw)
+	return Vector2(v.x * c - v.y * s, v.x * s + v.y * c)
+
+
+static func _rotate_plan_point(center: Vector2, p: Vector2, yaw: float) -> Vector2:
+	return center + _rotate_plan_vector(p - center, yaw)
+
+
+static func _building_specs_local(b: MeshBatcher, id: String,
+		building_spec: Dictionary) -> Array:
+	var raw: Array = _building_specs(b, id)
+	var yaw := float(building_spec.get("yaw", 0.0))
+	if is_zero_approx(yaw):
+		return raw
+	var rect: Rect2 = building_spec.get("rect", Rect2()) as Rect2
+	var center := rect.get_center()
+	var origin := Vector3(center.x, 0.0, center.y)
+	var inverse_basis := Basis(Vector3.UP, yaw)
+	var out: Array = []
+	for value in raw:
+		var copy: Dictionary = (value as Dictionary).duplicate(true)
+		var pos: Vector3 = copy.get("pos", Vector3.ZERO) as Vector3
+		copy["pos"] = origin + inverse_basis * (pos - origin)
+		var basis: Basis = copy.get("basis", Basis.IDENTITY) as Basis
+		copy["basis"] = inverse_basis * basis
+		out.append(copy)
+	return out
+
+
 static func _building_specs(b: MeshBatcher, id: String) -> Array:
 	var out: Array = []
 	for s in b.specs():
@@ -474,7 +513,7 @@ static func _building_specs(b: MeshBatcher, id: String) -> Array:
 	return out
 
 
-static func _aabb_of_entrance(e: Dictionary) -> Dictionary:
+static func _aabb_of_entrance(e: Dictionary, building_spec: Dictionary = {}) -> Dictionary:
 	var pos: Vector2 = e.get("pos", Vector2.ZERO) as Vector2
 	var w: float = float(e.get("width", 1.5))
 	var h: float = float(e.get("height", 2.1))
@@ -485,6 +524,12 @@ static func _aabb_of_entrance(e: Dictionary) -> Dictionary:
 	var along := Vector3(w + 0.25 * clear, maxf(h - 0.1, 1.0), 0.75)
 	if edge == 1 or edge == 3:
 		along = Vector3(0.75, maxf(h - 0.1, 1.0), w + 0.25 * clear)
+	# Emitted building boxes are normalized into the spec's local frame before
+	# aperture scanning. Normalize the manifest point into that same frame.
+	if not building_spec.is_empty():
+		var r: Rect2 = building_spec.get("rect", Rect2()) as Rect2
+		var yaw := float(building_spec.get("yaw", 0.0))
+		pos = _rotate_plan_point(r.get_center(), pos, -yaw)
 	return {
 		"center": Vector3(pos.x, ground + (h - 0.1) * 0.5 + 0.05, pos.y),
 		"size": along,

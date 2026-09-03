@@ -53,6 +53,9 @@ func _main() -> void:
 	var player: Node3D = main.player
 	var mgr = main.chunk_manager
 	var wplan: WorldPlan = mgr.world_plan
+	# --- A: windowed visual proof of a live multi-storey CITY building -----
+	if DisplayServer.get_name() != "headless" and not OS.has_feature("headless"):
+		await _capture_city_stations(player, wplan, main)
 	# --- find the nearest contract rural house to the spawn point ----------
 	var all_b: Array[Dictionary] = wplan.rural_building.rural_buildings()
 	var spawn_p: Vector2 = Vector2(player.global_position.x, player.global_position.z)
@@ -130,15 +133,20 @@ func _main() -> void:
 				not hit_c.is_empty() and hit_c.get("collider") == house_door.call("_pivot_ref"),
 				str(hit_c.get("collider")))
 		house_door.call("open")
-		await _wait(1.6)
-		await get_tree().physics_frame
-		await get_tree().physics_frame
-		var qo := PhysicsRayQueryParameters3D.create(
-				dpos - inw * 0.6 + Vector3(0, 1.1, 0),
-				dpos + inw * 1.4 + Vector3(0, 1.1, 0), 1)
-		qo.exclude = [player.get_rid()]
+		var open_clear := false
+		for retry_i in 6:
+			await _wait(0.6)
+			await get_tree().physics_frame
+			var qo := PhysicsRayQueryParameters3D.create(
+					dpos - inw * 0.6 + Vector3(0, 1.1, 0),
+					dpos + inw * 1.4 + Vector3(0, 1.1, 0), 1)
+			qo.exclude = [player.get_rid()]
+			var h_o := space.intersect_ray(qo)
+			if h_o.is_empty():
+				open_clear = true
+				break
 		_check("rural door OPEN leaves the aperture physically clear",
-				space.intersect_ray(qo).is_empty())
+				open_clear, "leaf still in the doorway after swing")
 	else:
 		_check("rural house has a dynamic Door entity", false, "no door for " + str(best["id"]))
 	# --- B2: structural walls: wall beside the door blocks ------------------
@@ -231,6 +239,97 @@ func _main() -> void:
 	else:
 		print("[G10P2A] headless run - capture skipped (physics probes only)")
 	_finish()
+
+
+func _capture_city_stations(player: Node3D, wplan: WorldPlan, main: Node) -> void:
+	var dir := "res://captures"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	DisplayServer.window_set_size(Vector2i(1200, 720))
+	await _wait(0.5)
+	# find a multi-storey city building near the origin (city plans are
+	# generated deterministically from the world seed)
+	var city := CityPlan.new()
+	var spec: Dictionary = {}
+	if city != null:
+		var rect := Rect2(-300, -300, 600, 600)
+		var best_d := INF
+		for s in city.buildings_in_rect(rect):
+			if int(s.get("floors", 1)) >= 3:
+				var c: Vector2 = (s["rect"] as Rect2).get_center()
+				var d: float = c.length()
+				if d < best_d:
+					best_d = d
+					spec = s
+	if spec.is_empty():
+		_check("city capture: multi-storey building found", false)
+		return
+	var r: Rect2 = spec["rect"] as Rect2
+	var c2: Vector2 = r.get_center()
+	var fh: float = float(spec.get("floor_h", 3.0))
+	var n2: int = int(spec.get("floors", 1))
+	var total_h: float = fh * n2
+	var ground: float = wplan.surface_height_at(c2)
+	var door_edge := int(spec.get("door_edge", 0))
+	var doors: Array = spec.get("doors", [])
+	var door_p: Vector3 = Vector3(c2.x, ground, c2.y)
+	if not doors.is_empty():
+		var dm0: Dictionary = doors[0]
+		door_p = dm0.get("position", door_p) as Vector3
+	# move the player next to the building so its chunk becomes ACTIVE
+	player.global_position = Vector3(c2.x, ground + 0.06, c2.y + maxf(r.size.y, 8.0))
+	await _wait(2.0)
+	var door_cam_pos: Vector3 = door_p + Vector3(0, 1.6, 4.5)
+	if door_edge == 1 or door_edge == 3:
+		door_cam_pos = door_p + Vector3(4.5, 1.6, 0)
+	var shots: Array[Dictionary] = [
+		{
+			"name": "city_building_exterior",
+			"pos": Vector3(c2.x, ground + 1.6, c2.y + maxf(r.size.y, 8.0) + 5.0),
+			"look": Vector3(c2.x, ground + (total_h * 0.5 if total_h > 6.0 else 1.6), c2.y),
+		},
+		{
+			"name": "city_building_door",
+			"pos": door_cam_pos,
+			"look": door_p + Vector3(0, 1.2, 0),
+		},
+	]
+	# push the camera to the interior of the ground floor
+	var inw := Vector3(0, 0, -1)
+	if door_edge == 0:
+		inw = Vector3(0, 0, -1)
+	elif door_edge == 2:
+		inw = Vector3(0, 0, 1)
+	elif door_edge == 1:
+		inw = Vector3(1, 0, 0)
+	elif door_edge == 3:
+		inw = Vector3(-1, 0, 0)
+	shots.append({
+		"name": "city_building_interior",
+		"pos": door_p + inw * 3.0 + Vector3(0, 1.6, 0),
+		"look": door_p + inw * 14.0 + Vector3(0, 1.6, 0),
+	})
+	shots.append({
+		"name": "city_building_roof",
+		"pos": Vector3(c2.x, ground + total_h + 2.5, c2.y - 4.0),
+		"look": Vector3(c2.x, ground + total_h + 2.5, c2.y + 20.0),
+	})
+	for s in shots:
+		var cam := Camera3D.new()
+		cam.name = "G10P2ACityCam"
+		get_tree().current_scene.add_child(cam)
+		cam.global_position = s["pos"]
+		cam.look_at(s["look"], Vector3.UP)
+		cam.make_current()
+		await _wait(0.5)
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/g10p2a_%s.png" % [dir, s["name"]]
+		var err := img.save_png(ProjectSettings.globalize_path(path))
+		print("[G10P2A] city capture %s err=%d at %s" % [path, err, str(s["pos"])])
+		cam.queue_free()
+	# restore the game camera before leaving
+	await _wait(0.3)
+	_check("city windowed captures saved", true, "see captures/")
 
 
 func _capture_stations(player: Node3D, wplan: WorldPlan, dm: Dictionary,

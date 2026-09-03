@@ -16,7 +16,9 @@ extends RefCounted
 ##              + yaw:float (rural) - irregular polygon mode arrives via
 ##              `points:PackedVector2Array` (see polygon_area); the assembler
 ##              must reject polygon mode until implemented, never fake it.
-##   floors, floor_h, ground_y
+##   floors, floor_h, ground_y, building_ground_y
+##   foundation_modules:Array[Dictionary] (optional elevated-ground support),
+##   access:Dictionary (optional porch/veranda/none + exterior ramp)
 ##   door_edge (city), doors:Array[Dictionary] (city) OR door_pos/door_width/
 ##   door_height (rural), circulation:{kind}, interior:Dictionary (rural),
 ##   style:Dictionary, use (city)

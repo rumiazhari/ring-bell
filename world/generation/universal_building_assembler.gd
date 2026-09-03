@@ -35,14 +35,18 @@ static func build_into(b: MeshBatcher, spec: Dictionary) -> Dictionary:
 	if (spec.get("quality", WorldConstants.BUILDING_QUALITY_FULL_BUILDING) as StringName) \
 			== WorldConstants.BUILDING_QUALITY_FULL_BUILDING:
 		b.register_contract_building(id, spec)
-	match spec.get("archetype", &"house") as StringName:
-		&"house", &"tenement", &"shop_house", &"cottage":
-			BuildingBuilder.build(b, spec)
-		_:
-			# Unknown/unmigrated archetypes still get the reference city
-			# quality path — the city reference builder IS the universal
-			# city grammar. (No new shell builders are ever invented.)
-			BuildingBuilder.build(b, spec)
+	var transformed := false
+	var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+	var yaw := float(spec.get("yaw", 0.0))
+	if not is_zero_approx(yaw) and rect.size.x > 0.0 and rect.size.y > 0.0:
+		b.push_building_transform(Vector3(rect.get_center().x, 0.0,
+				rect.get_center().y), yaw)
+		transformed = true
+	# Unknown/unmigrated archetypes still get the reference city quality path —
+	# the city reference builder IS the universal city grammar.
+	BuildingBuilder.build(b, spec)
+	if transformed:
+		b.pop_building_transform()
 	return spec
 
 

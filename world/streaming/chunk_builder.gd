@@ -44,30 +44,44 @@ const LAMP_STEP := 22.0
 
 
 ## Emits everything for `coord` into `b`. Deterministic and side-effect free.
-static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
+static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
+		world_plan: WorldPlan = null) -> void:
 	var rect := WorldSeed.chunk_rect(coord)
-	_roads(b, plan, rect)
+	_roads(b, plan, rect, world_plan)
 	for cell in plan.cells_in_rect(rect):
 		var block := plan.cell_block(cell)
-		if not (block["rect"] as Rect2).intersects(rect):
+		var block_bounds: Rect2 = block.get("bounds", block["rect"]) as Rect2
+		if not block_bounds.intersects(rect):
 			continue
 		match block["kind"]:
 			&"built":
-				_pavement(b, block["rect"], rect, SIDEWALK_HISTORIC \
+				_pavement(b, block, rect, SIDEWALK_HISTORIC \
 						if block["district"] == CityPlan.DISTRICT_HISTORIC \
-						else SIDEWALK_INNER)
-				_alley(b, block, rect)
+						else SIDEWALK_INNER, world_plan)
+				_alley(b, block, rect, world_plan)
 			&"plaza":
-				_plaza(b, plan, block, rect, coord)
+				_plaza(b, plan, block, rect, coord, world_plan)
 			_:
-				_park(b, plan, block, rect, coord)
-	for spec in _owned_buildings(plan, rect, coord):
+				_park(b, plan, block, rect, coord, world_plan)
+	var owned_buildings: Array = _owned_buildings(plan, rect, coord)
+	for spec in owned_buildings:
 		# G10-P2A: the universal building contract - the ONLY normal path
 		# for enterable buildings. Delegates to the reference BuildingBuilder
 		# after contract-stamping + registration (byte-identical city
 		# geometry, now validated by BuildingContractValidator).
-		UniversalBuildingAssembler.build_into(b, spec)
-	_scatter_props(b, plan, rect, coord)
+		UniversalBuildingAssembler.build_into(b, _grounded_spec(spec, world_plan))
+	# A city chunk can contain a road junction but no building footprint. Keep a
+	# tiny destructible curb marker in that empty case so the chunk still owns a
+	# real static body for persistence/streaming probes; it is not a building,
+	# has no contract id, and is visually lost in the street surface.
+	if owned_buildings.is_empty() and b.collider_count() == 0 \
+			and not plan.city_road_segments_in(rect).is_empty():
+		var curb_center := rect.get_center()
+		var curb_y := world_plan.surface_height_at(curb_center) if world_plan != null else 0.0
+		b.add_destructible_box(Vector3(curb_center.x, curb_y + 0.04, curb_center.y),
+				Vector3(0.42, 0.08, 0.42), Color("3b3b37"), &"concrete", true,
+				"city_curb_%d_%d" % [coord.x, coord.y])
+	_scatter_props(b, plan, rect, coord, world_plan)
 
 
 ## Builds the chunk node under `parent` and returns generation stats.
@@ -81,10 +95,11 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> voi
 ## persistence delta are NOT respawned when their chunk streams back in.
 static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		batcher: MeshBatcher = null, dead_doors := {},
-		include_collision := true, materialize_city := true) -> Dictionary:
+		include_collision := true, materialize_city := true,
+		world_plan: WorldPlan = null) -> Dictionary:
 	if batcher == null:
 		batcher = MeshBatcher.new()
-		fill_batcher(batcher, plan, coord)
+		fill_batcher(batcher, plan, coord, world_plan)
 
 	var t0 := Time.get_ticks_usec()
 	var chunk := Node3D.new()
@@ -102,8 +117,9 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	if materialize_city:
 		var rect := WorldSeed.chunk_rect(coord)
 		for spec in _owned_buildings(plan, rect, coord):
+			var grounded_spec: Dictionary = _grounded_spec(spec, world_plan)
 			buildings += 1
-			for dm: Dictionary in spec.get("doors", []):
+			for dm: Dictionary in grounded_spec.get("doors", []):
 				if dead_doors.has(String(dm["id"])):
 					continue
 				var door := Door.new()
@@ -113,15 +129,18 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 				doors += 1
 			var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
 			var InteriorStationScript = load("res://world/buildings/interior_station.gd")
-			var imanifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+			var imanifest: Dictionary = InteriorPlanScript.build_for_building(grounded_spec)
+			_transform_interior_manifest(imanifest, grounded_spec)
+			var ground_y: float = float(grounded_spec.get("building_ground_y", grounded_spec.get("ground_y", 0.0)))
+			_translate_interior_manifest_y(imanifest, ground_y)
 			# G9 M1 bounded slice: only residential ground floor interiors
-			var use_val: String = str(spec.get("use", spec.get("style", {}).get("room_type", "residential")))
+			var use_val: String = str(grounded_spec.get("use", grounded_spec.get("style", {}).get("room_type", "residential")))
 			if use_val != "residential":
 				continue
-			var bcenter: Vector2 = (spec["rect"] as Rect2).get_center()
+			var bcenter: Vector2 = (grounded_spec["rect"] as Rect2).get_center()
 			if bcenter.length() >= WorldConstants.URBAN_INNER_M:
 				continue
-			if int(spec.get("floors", 1)) < 1:
+			if int(grounded_spec.get("floors", 1)) < 1:
 				continue
 			for fl in imanifest.get("floors", []):
 				var fi: int = int(fl.get("floor_i", -1))
@@ -216,6 +235,192 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 	return stats
 
 
+## Apply WorldPlan's realized surface to a city BuildingSpec without changing
+## its footprint, contract classification, or stable identifiers.
+static func _grounded_spec(spec: Dictionary, world_plan: WorldPlan) -> Dictionary:
+	if world_plan == null:
+		return spec
+	var out: Dictionary = spec.duplicate(true)
+	var rect: Rect2 = out.get("rect", Rect2()) as Rect2
+	var ground_y: float = world_plan.surface_height_at(rect.get_center())
+	out["ground_y"] = ground_y
+	var foundation_data := _foundation_data(out, world_plan, ground_y)
+	for key: String in foundation_data.keys():
+		out[key] = foundation_data[key]
+	var building_ground_y := float(out.get("building_ground_y", ground_y))
+	var doors: Array[Dictionary] = []
+	for dm_variant in out.get("doors", []):
+		var dm: Dictionary = (dm_variant as Dictionary).duplicate(true)
+		var pos: Vector3 = dm.get("position", Vector3.ZERO) as Vector3
+		pos.y = building_ground_y
+		dm["position"] = pos
+		dm["ground_y"] = building_ground_y
+		doors.append(dm)
+	out["doors"] = doors
+	return out
+
+
+## Compute a raised platform only where the realized footprint relief makes a
+## flat building datum visibly unsafe. The plan stays rectangular/oriented;
+## this helper only stamps material-layer support/access metadata.
+static func _foundation_data(spec: Dictionary, world_plan: WorldPlan,
+		center_ground: float) -> Dictionary:
+	var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+	var center := rect.get_center()
+	var yaw := float(spec.get("yaw", 0.0))
+	var min_ground := INF
+	var max_ground := -INF
+	for ix in 3:
+		for iz in 3:
+			var local := Vector2(rect.size.x * float(ix) * 0.5,
+					rect.size.y * float(iz) * 0.5)
+			var p := CityPlan._rotate_plan_point(center, rect.position + local, yaw)
+			var h := world_plan.surface_height_at(p)
+			min_ground = minf(min_ground, h)
+			max_ground = maxf(max_ground, h)
+	var relief := max_ground - min_ground
+	var out := {
+		"foundation_enabled": false,
+		"foundation_height": 0.0,
+		"foundation_modules": [],
+		"building_ground_y": center_ground,
+		"access": {},
+	}
+	if relief < BuildingBuilder.FOUNDATION_TRIGGER_RELIEF:
+		return out
+
+	var edge := int(spec.get("door_edge", 0))
+	var door_local := BuildingBuilder._access_door_local(rect.size.x, rect.size.y, edge)
+	var outward := BuildingBuilder._access_outward(edge)
+	for approach_distance in [2.0, 4.0, 8.5]:
+		var approach_local := door_local + outward * float(approach_distance)
+		var approach_world := CityPlan._rotate_plan_point(center,
+				rect.position + approach_local, yaw)
+		max_ground = maxf(max_ground, world_plan.surface_height_at(approach_world))
+
+	var building_ground_y := max_ground + BuildingBuilder.FOUNDATION_TOP_CLEARANCE \
+			+ BuildingBuilder.FOUNDATION_ACCESS_MIN_RISE
+	var foundation_top := building_ground_y - BuildingBuilder.SLAB_T - 0.02
+	var foundation_bottom := min_ground - BuildingBuilder.FOUNDATION_BURY
+	var over := BuildingBuilder.FOUNDATION_OVERHANG
+	var modules: Array[Dictionary] = []
+	for ix in BuildingBuilder.FOUNDATION_MODULES_X:
+		var x0 := -over + (rect.size.x + 2.0 * over) \
+				* float(ix) / float(BuildingBuilder.FOUNDATION_MODULES_X)
+		var x1 := -over + (rect.size.x + 2.0 * over) \
+				* float(ix + 1) / float(BuildingBuilder.FOUNDATION_MODULES_X)
+		for iz in BuildingBuilder.FOUNDATION_MODULES_Z:
+			var z0 := -over + (rect.size.y + 2.0 * over) \
+					* float(iz) / float(BuildingBuilder.FOUNDATION_MODULES_Z)
+			var z1 := -over + (rect.size.y + 2.0 * over) \
+					* float(iz + 1) / float(BuildingBuilder.FOUNDATION_MODULES_Z)
+			modules.append({
+				"rect": Rect2(x0, z0, x1 - x0, z1 - z0),
+				"bottom_y": foundation_bottom,
+				"top_y": foundation_top,
+			})
+	out["foundation_enabled"] = true
+	out["foundation_height"] = building_ground_y - center_ground
+	out["foundation_modules"] = modules
+	out["building_ground_y"] = building_ground_y
+
+	# Sample the ground at the eventual stair approach. The access run is
+	# deterministic and capped so a steep foundation remains traversable.
+	var provisional_run := clampf(
+		maxf(building_ground_y - center_ground, 0.0) \
+			/ tan(deg_to_rad(BuildingBuilder.ACCESS_STAIR_PITCH_DEG)),
+			BuildingBuilder.ACCESS_MIN_RUN, BuildingBuilder.ACCESS_MAX_RUN)
+	var approach_local := door_local + outward * (provisional_run + 0.4)
+	var approach_world := CityPlan._rotate_plan_point(center,
+			rect.position + approach_local, yaw)
+	var access_ground := world_plan.surface_height_at(approach_world)
+	var rise := maxf(building_ground_y - access_ground, 0.0)
+	var run := clampf(rise / tan(deg_to_rad(BuildingBuilder.ACCESS_STAIR_PITCH_DEG)),
+			BuildingBuilder.ACCESS_MIN_RUN, BuildingBuilder.ACCESS_MAX_RUN)
+	approach_local = door_local + outward * (run + 0.4)
+	approach_world = CityPlan._rotate_plan_point(center, rect.position + approach_local, yaw)
+	access_ground = world_plan.surface_height_at(approach_world)
+	rise = maxf(building_ground_y - access_ground, 0.0)
+	if rise >= BuildingBuilder.ACCESS_STAIR_TRIGGER:
+		var roll := WorldSeed.unit_float("foundation_access",
+			[WorldSeed.str_hash(str(spec.get("id", "building")))])
+		var kind := "porch" if roll < 0.34 else ("veranda" if roll < 0.70 else "none")
+		out["access"] = {
+			"enabled": true,
+			"kind": kind,
+			"door_edge": edge,
+			"ground_y": access_ground,
+			"building_ground_y": building_ground_y,
+			"rise": rise,
+			"run": run,
+			"width": BuildingBuilder.DOOR_W + 0.8,
+		}
+	return out
+
+
+static func _transform_interior_manifest(manifest: Dictionary,
+		spec: Dictionary) -> void:
+	var yaw := float(spec.get("yaw", 0.0))
+	if is_zero_approx(yaw):
+		return
+	var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+	var center := rect.get_center()
+	var floors: Array = manifest.get("floors", []) as Array
+	for floor_i in floors.size():
+		var floor_dict: Dictionary = floors[floor_i] as Dictionary
+		var floor_doors: Array = floor_dict.get("doors", []) as Array
+		for door_i in floor_doors.size():
+			var dm: Dictionary = floor_doors[door_i] as Dictionary
+			var pos: Vector3 = dm.get("position", Vector3.ZERO) as Vector3
+			var rotated := CityPlan._rotate_plan_point(center,
+					Vector2(pos.x, pos.z), yaw)
+			pos.x = rotated.x
+			pos.z = rotated.y
+			dm["position"] = pos
+			dm["yaw"] = float(dm.get("yaw", 0.0)) - yaw
+			floor_doors[door_i] = dm
+		floor_dict["doors"] = floor_doors
+		var stations: Array = floor_dict.get("stations", []) as Array
+		for station_i in stations.size():
+			var station: Dictionary = stations[station_i] as Dictionary
+			var spos: Vector3 = station.get("position", Vector3.ZERO) as Vector3
+			var rotated_station := CityPlan._rotate_plan_point(center,
+					Vector2(spos.x, spos.z), yaw)
+			spos.x = rotated_station.x
+			spos.z = rotated_station.y
+			station["position"] = spos
+			station["yaw"] = float(station.get("yaw", 0.0)) - yaw
+			stations[station_i] = station
+		floor_dict["stations"] = stations
+		floors[floor_i] = floor_dict
+	manifest["floors"] = floors
+
+
+## Translate floor-relative Y values onto the realized WorldPlan datum.
+static func _translate_interior_manifest_y(manifest: Dictionary, ground_y: float) -> void:
+	var floors: Array = manifest.get("floors", []) as Array
+	for floor_i in floors.size():
+		var floor_dict: Dictionary = floors[floor_i] as Dictionary
+		var floor_doors: Array = floor_dict.get("doors", []) as Array
+		for door_i in floor_doors.size():
+			var dm: Dictionary = floor_doors[door_i] as Dictionary
+			var pos: Vector3 = dm.get("position", Vector3.ZERO) as Vector3
+			pos.y += ground_y
+			dm["position"] = pos
+			floor_doors[door_i] = dm
+		floor_dict["doors"] = floor_doors
+		var stations: Array = floor_dict.get("stations", []) as Array
+		for station_i in stations.size():
+			var sm: Dictionary = stations[station_i] as Dictionary
+			var spos: Vector3 = sm.get("position", Vector3.ZERO) as Vector3
+			spos.y += ground_y
+			sm["position"] = spos
+			stations[station_i] = sm
+		floor_dict["stations"] = stations
+		floors[floor_i] = floor_dict
+	manifest["floors"] = floors
+
+
 ## Buildings whose footprint center lies inside `rect` AND owned by this chunk.
 static func _owned_buildings(plan: CityPlan, rect: Rect2,
 		coord: Vector2i) -> Array:
@@ -256,120 +461,170 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 
 # --- Roads -------------------------------------------------------------------
 
-static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2) -> void:
-	for axis in 2:
-		var along_min := rect.position.y if axis == 0 else rect.position.x
-		var along_max := rect.end.y if axis == 0 else rect.end.x
-		for i in plan.lines_in_range(axis, rect.position.x if axis == 0
-				else rect.position.y, rect.end.x if axis == 0 else rect.end.y):
-			var center := plan.line_pos(axis, i)
-			var half_w := plan.line_half_width(axis, i)
-			var strip := Rect2(
-					Vector2(center - half_w, along_min) if axis == 0
-					else Vector2(along_min, center - half_w),
-					Vector2(half_w * 2.0, along_max - along_min) if axis == 0
-					else Vector2(along_max - along_min, half_w * 2.0))
-			var clipped := strip.intersection(rect)
-			if clipped.size.x <= 0.01 or clipped.size.y <= 0.01:
+static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
+		world_plan: WorldPlan = null) -> void:
+	for edge: Dictionary in plan.city_road_segments_in(rect.grow(8.0)):
+		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
+		var hierarchy: StringName = edge.get("hierarchy", &"local") as StringName
+		var width: float = float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+		for i in range(poly.size() - 1):
+			var a: Vector2 = poly[i]
+			var z: Vector2 = poly[i + 1]
+			var delta := z - a
+			var length := delta.length()
+			if length < 0.05:
 				continue
-			var avenue := plan.is_avenue(axis, i)
-			b.add_visual_box(Vector3(clipped.get_center().x, 0.04,
-					clipped.get_center().y),
-					Vector3(clipped.size.x, 0.08, clipped.size.y),
-					ASPHALT_AVENUE if avenue else ASPHALT)
-			if avenue:
-				_center_dashes(b, axis, center, clipped)
+			# Short pieces keep the visual ribbon attached even where the
+			# realized surface includes a quarry rim or river-bank transition.
+			var piece_count := clampi(int(ceil(length / 2.0)), 1, 32)
+			for piece_i in piece_count:
+				var piece_t0 := float(piece_i) / float(piece_count)
+				var piece_t1 := float(piece_i + 1) / float(piece_count)
+				var piece_a := a.lerp(z, piece_t0)
+				var piece_b := a.lerp(z, piece_t1)
+				var piece_delta := piece_b - piece_a
+				var piece_length := piece_delta.length()
+				if piece_length < 0.05:
+					continue
+				var mid := (piece_a + piece_b) * 0.5
+				var ground_a := 0.0
+				var ground_b := 0.0
+				if world_plan != null:
+					ground_a = world_plan.surface_height_at(piece_a)
+					ground_b = world_plan.surface_height_at(piece_b)
+				var bridge_segment := bool(edge.get("is_bridge", false)) and world_plan != null \
+						and world_plan.water_body_at(mid) != &""
+				if bridge_segment:
+					var deck_y := world_plan.water_level_at(mid) + WorldConstants.BRIDGE_DECK_LIFT_M
+					ground_a = deck_y
+					ground_b = deck_y
+				var road_y_a := ground_a + 0.055
+				var road_y_b := ground_b + 0.055
+				var road_center_y := (road_y_a + road_y_b) * 0.5
+				if world_plan != null and not bridge_segment:
+					road_center_y = world_plan.surface_height_at(mid) + 0.055
+				# Keep the city ribbon attached to the terrain along each
+				# short segment. The basis is a pure rotation: local +Z
+				# follows the 3D road tangent and local +Y stays normal.
+				var tangent := Vector3(piece_delta.x, road_y_b - road_y_a, piece_delta.y).normalized()
+				var x_axis := Vector3(tangent.z, 0.0, -tangent.x).normalized()
+				var y_axis := tangent.cross(x_axis).normalized()
+				var basis := Basis(x_axis, y_axis, tangent)
+				var color := ASPHALT
+				if hierarchy == &"primary":
+					color = ASPHALT_AVENUE
+				elif hierarchy == &"alley":
+					color = ALLEY_FLOOR
+				if bool(edge.get("is_bridge", false)):
+					color = Color("5e5a52")
+				b.add_box_rotated(Vector3(mid.x, road_center_y, mid.y),
+					Vector3(width, 0.11, piece_length + 0.12), basis, color, false)
+			# Lamps are only placed on the arterial hierarchy; local lanes stay
+			# narrow and dark like a historic neighborhood.
+			if hierarchy == &"primary":
+				var step_count := maxi(1, int(floor(length / LAMP_STEP)))
+				for lamp_i in step_count:
+					var t := (float(lamp_i) + 0.5) / float(step_count)
+					var lp := a.lerp(z, t)
+					var side := 1.0 if (lamp_i + i) % 2 == 0 else -1.0
+					var normal := Vector2(-delta.y, delta.x).normalized()
+					var lamp_ground_y := 0.0
+					if world_plan != null:
+						lamp_ground_y = world_plan.surface_height_at(lp)
+						if bool(edge.get("is_bridge", false)) and world_plan.water_body_at(lp) != &"":
+							lamp_ground_y = world_plan.water_level_at(lp) + WorldConstants.BRIDGE_DECK_LIFT_M
+					_lamp_post(b, lp + normal * (width * 0.5 + 0.85), lamp_ground_y)
 
 
-## Center-line dashes anchored to global DASH_STEP grid -> seam-free.
-static func _center_dashes(b: MeshBatcher, axis: int, center: float,
-		clipped: Rect2) -> void:
-	var from_k := ceili(minf(clipped.position.x, clipped.position.y) / DASH_STEP)
-	var to_k := floori(maxf(clipped.end.x, clipped.end.y) / DASH_STEP)
-	for k in range(from_k, to_k + 1):
-		var p := k * DASH_STEP + 1.75   # offset so junctions stay clear-ish
-		var pos := Vector3(p, 0.09, center) if axis == 0 \
-				else Vector3(center, 0.09, p)
-		var size := Vector3(2.6, 0.02, 0.34) if axis == 0 \
-				else Vector3(0.34, 0.02, 2.6)
-		b.add_visual_box(pos, size, DASH_COLOR)
+## Center-line dashes are intentionally omitted: early-1900s city streets are
+## continuous cobble/asphalt ribbons, and the graph itself supplies hierarchy.
 
 
 # --- Blocks ------------------------------------------------------------------
 
-static func _pavement(b: MeshBatcher, block_rect: Rect2, chunk_rect: Rect2,
-		color: Color) -> void:
-	var r := block_rect.intersection(chunk_rect)
-	if r.size.x <= 0.01 or r.size.y <= 0.01:
+static func _pavement(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
+		color: Color, world_plan: WorldPlan = null) -> void:
+	var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+	var clipped := _clip_polygon_to_rect(poly, chunk_rect)
+	if clipped.size() < 3:
 		return
-	b.add_visual_box(Vector3(r.get_center().x, 0.03, r.get_center().y),
-			Vector3(r.size.x, 0.06, r.size.y), color)
+	var ground_y := 0.0
+	if world_plan != null:
+		ground_y = world_plan.surface_height_at(block.get("center", Vector2.ZERO) as Vector2)
+	b.add_visual_polygon(clipped, ground_y + 0.025, color)
 
 
 ## Paved floor of an intra-block passage (see CityPlan._passage_for_block),
 ## clipped to this chunk. Sits a hair above the sidewalk and flush-ish with
 ## the road so the cut reads as its own darker channel between the fronts.
-static func _alley(b: MeshBatcher, block: Dictionary,
-		chunk_rect: Rect2) -> void:
-	var p: Dictionary = block.get("passage", {})
+static func _alley(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
+		world_plan: WorldPlan = null) -> void:
+	var p: Dictionary = block.get("passage", {}) as Dictionary
 	if p.is_empty():
 		return
 	var band: Rect2 = (p["rect"] as Rect2).intersection(chunk_rect)
 	if band.size.x <= 0.01 or band.size.y <= 0.01:
 		return
-	b.add_visual_box(Vector3(band.get_center().x, 0.045,
-				band.get_center().y),
+	var ground_y := 0.0
+	if world_plan != null:
+		ground_y = world_plan.surface_height_at(band.get_center())
+	b.add_visual_box(Vector3(band.get_center().x, ground_y + 0.055,
+			band.get_center().y),
 			Vector3(band.size.x, 0.09, band.size.y), ALLEY_FLOOR)
 
 
 static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,
-		chunk_rect: Rect2, coord: Vector2i) -> void:
-	# The paved square is the block INTERIOR between the perimeter buildings
-	# (a European square is framed by building fronts, not an open field).
-	# Deep insets on large blocks keep squares at walkable, intimate scale.
-	var br: Rect2 = block["rect"]
-	var inset := maxf(15.0, (minf(br.size.x, br.size.y) - 56.0) * 0.5)
-	var interior: Rect2 = br.grow(-inset)
-	if interior.size.x > 8.0 and interior.size.y > 8.0:
-		_pavement(b, interior, chunk_rect, PLAZA_PAVE)
-	var center: Vector2 = interior.get_center()
+		chunk_rect: Rect2, coord: Vector2i, world_plan: WorldPlan = null) -> void:
+	var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+	var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+	# Scale the convex block polygon around its centroid to leave a framed
+	# pedestrian interior; this preserves irregular square outlines.
+	var interior_poly := PackedVector2Array()
+	for p: Vector2 in poly:
+		interior_poly.append(center.lerp(p, 0.58))
+	var clipped := _clip_polygon_to_rect(interior_poly, chunk_rect)
+	if clipped.size() < 3:
+		return
+	var ground_y := 0.0
+	if world_plan != null:
+		ground_y = world_plan.surface_height_at(center)
+	b.add_visual_polygon(clipped, ground_y + 0.045, PLAZA_PAVE)
 	if WorldSeed.chunk_coord(center.x, center.y) != coord:
 		return
-	if interior.size.x < 20.0 or interior.size.y < 20.0:
+	var bounds := _polygon_bounds(interior_poly)
+	if bounds.size.x < 20.0 or bounds.size.y < 20.0:
 		return
 	# Octagonal fountain basin at square center.
 	for i in 8:
 		var ang := TAU * float(i) / 8.0 + TAU / 16.0
 		var dir := Vector2(cos(ang), sin(ang))
-		# Rotate 90 deg further so each segment's long axis runs TANGENT to
-		# the ring, not radially outward through it.
 		var basis := Basis(Vector3.UP, -ang - TAU * 0.25)
 		b.add_box_rotated(
-				Vector3(center.x + dir.x * 2.3, 0.28, center.y + dir.y * 2.3),
+				Vector3(center.x + dir.x * 2.3, ground_y + 0.28, center.y + dir.y * 2.3),
 				Vector3(1.95, 0.56, 0.42), basis, FOUNTAIN_RIM, true)
-	b.add_visual_box(Vector3(center.x, 0.16, center.y), Vector3(4.0, 0.32, 4.0),
+	b.add_visual_box(Vector3(center.x, ground_y + 0.16, center.y), Vector3(4.0, 0.32, 4.0),
 			FOUNTAIN_WATER)
-	b.add_structural_box(Vector3(center.x, 0.62, center.y),
+	b.add_structural_box(Vector3(center.x, ground_y + 0.62, center.y),
 			Vector3(0.9, 0.92, 0.9), FOUNTAIN_RIM)
 	# Market stalls in the four quadrants (abandoned market area).
 	var rng := WorldSeed.rng_for("market", [coord.x, coord.y])
 	var stall_count := rng.randi_range(3, 6)
-	var half := Vector2(minf(14.0, interior.size.x * 0.32),
-			minf(14.0, interior.size.y * 0.32))
+	var half := Vector2(minf(14.0, bounds.size.x * 0.32),
+			minf(14.0, bounds.size.y * 0.32))
 	for i in stall_count:
 		var qx := -1.0 if i % 2 == 0 else 1.0
 		var qy := -1.0 if (i >> 1) % 2 == 0 else 1.0
 		var p := center + Vector2(qx * rng.randf_range(6.5, half.x),
 				qy * rng.randf_range(6.5, half.y))
-		if not interior.grow(-1.5).has_point(p):
+		if not _point_in_polygon(interior_poly, p):
 			continue
 		if p.distance_to(center) < 7.0:
 			continue
-		_market_stall(b, p, rng)
+		_market_stall(b, p, rng, ground_y)
 
 
 static func _market_stall(b: MeshBatcher, p: Vector2,
-		rng: RandomNumberGenerator) -> void:
+		rng: RandomNumberGenerator, ground_y := 0.0) -> void:
 	var yaw := PI * 0.5 * float(rng.randi_range(0, 1)) \
 			+ rng.randf_range(-0.08, 0.08)
 	var basis := Basis(Vector3.UP, -yaw)
@@ -398,7 +653,7 @@ static func _market_stall(b: MeshBatcher, p: Vector2,
 		"collide": false,
 	})
 	b.add_prop_def({
-		"position": Vector3(p.x, 0.0, p.y),
+		"position": Vector3(p.x, ground_y, p.y),
 		"yaw": yaw,
 		"material": &"wood",
 		"parts": parts,
@@ -407,29 +662,34 @@ static func _market_stall(b: MeshBatcher, p: Vector2,
 	for j in rng.randi_range(1, 3):
 		var off := basis * Vector3(rng.randf_range(-0.9, 0.9), 0,
 				rng.randf_range(-0.35, 0.35))
-		b.add_box(Vector3(p.x + off.x, 1.02, p.y + off.z),
-				Vector3(rng.randf_range(0.25, 0.5), rng.randf_range(0.15, 0.3),
-						rng.randf_range(0.25, 0.5)),
-				Color("8c7b5a").lightened(rng.randf() * 0.25))
+		b.add_box(Vector3(p.x + off.x, ground_y + 1.02, p.y + off.z),
+			Vector3(rng.randf_range(0.25, 0.5), rng.randf_range(0.15, 0.3),
+				rng.randf_range(0.25, 0.5)),
+			Color("8c7b5a").lightened(rng.randf() * 0.25))
 
 
 static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
-		chunk_rect: Rect2, coord: Vector2i) -> void:
-	_pavement(b, block["rect"], chunk_rect, GRASS)
+		chunk_rect: Rect2, coord: Vector2i, world_plan: WorldPlan = null) -> void:
+	_pavement(b, block, chunk_rect, GRASS, world_plan)
 	var rng := WorldSeed.rng_for("park_trees",
-			[int(WorldSeed.combine([block["id"].hash()]))])
-	var br: Rect2 = block["rect"]
+			[int(WorldSeed.combine([str(block["id"]).hash()]))])
+	var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+	var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+	var ground_y := 0.0
+	if world_plan != null:
+		ground_y = world_plan.surface_height_at(center)
+	var bounds := _polygon_bounds(poly)
 	var count := 4 + int(rng.randf() * 5.0)
 	for i in count:
 		var p := Vector2(
-				rng.randf_range(br.position.x + 2.5, br.end.x - 2.5),
-				rng.randf_range(br.position.y + 2.5, br.end.y - 2.5))
-		if WorldSeed.chunk_coord(p.x, p.y) != coord:
+			rng.randf_range(bounds.position.x + 2.5, bounds.end.x - 2.5),
+			rng.randf_range(bounds.position.y + 2.5, bounds.end.y - 2.5))
+		if WorldSeed.chunk_coord(p.x, p.y) != coord or not _point_in_polygon(poly, p):
 			continue
 		var h := rng.randf_range(1.9, 2.6)
 		# One destructible wood prop: trunk (collides) + canopy (visual).
 		b.add_prop_def({
-			"position": Vector3(p.x, 0.0, p.y),
+			"position": Vector3(p.x, ground_y, p.y),
 			"material": &"wood",
 			"parts": [
 				{"offset": Vector3(0, h * 0.5, 0),
@@ -437,7 +697,7 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 						"color": TRUNK_COLOR, "collide": true},
 				{"offset": Vector3(0, h + 0.7, 0),
 						"size": Vector3(rng.randf_range(1.9, 2.6), 1.6,
-								rng.randf_range(1.9, 2.6)),
+							rng.randf_range(1.9, 2.6)),
 						"color": CANOPY_COLOR, "collide": false},
 			],
 		})
@@ -446,7 +706,7 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 # --- Props / apocalypse decoration pass v0 ------------------------------------
 
 static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
-		coord: Vector2i) -> void:
+		coord: Vector2i, world_plan: WorldPlan = null) -> void:
 	var rng := WorldSeed.rng_for("props", [coord.x, coord.y])
 
 	# Colliding props must never spawn inside a door's swing arc - the
@@ -457,39 +717,40 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 			var dp: Vector3 = dm["position"]
 			door_pts.append(Vector2(dp.x, dp.z))
 
-	# Wrecked cars parked along street edges.
+	# Wrecked cars follow actual city road tangents, never legacy X/Z lines.
+	var road_segments := plan.city_road_segments_in(rect.grow(10.0))
 	var car_count := rng.randi_range(0, 3)
 	for i in car_count:
-		var axis := 0 if rng.randf() < 0.5 else 1
-		var perp_min := rect.position.x if axis == 0 else rect.position.y
-		var perp_max := rect.end.x if axis == 0 else rect.end.y
-		var lines := plan.lines_in_range(axis, perp_min, perp_max)
-		if lines.is_empty():
+		if road_segments.is_empty():
+			break
+		var edge: Dictionary = road_segments[rng.randi_range(0, road_segments.size() - 1)]
+		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 2:
 			continue
-		var li: int = lines[rng.randi_range(0, lines.size() - 1)]
-		var center := plan.line_pos(axis, li)
-		var lateral := (plan.line_half_width(axis, li) - 1.4) \
-				* (1.0 if rng.randf() < 0.5 else -1.0)
-		var along_lo := rect.position.y if axis == 0 else rect.position.x
-		var along_hi := rect.end.y if axis == 0 else rect.end.x
-		var t := rng.randf_range(along_lo + 4.0, maxf(along_lo + 4.1, along_hi - 4.0))
-		var p := Vector2(center + lateral, t) if axis == 0 \
-				else Vector2(t, center + lateral)
+		var seg_i := rng.randi_range(0, poly.size() - 2)
+		var a: Vector2 = poly[seg_i]
+		var z: Vector2 = poly[seg_i + 1]
+		var tangent := (z - a).normalized()
+		var normal := Vector2(-tangent.y, tangent.x)
+		var p := a.lerp(z, rng.randf()) + normal * rng.randf_range(-1.5, 1.5)
 		if _inside_any_building(plan, p) or _near_door(door_pts, p):
 			continue
-		_car(b, p, rng, CAR_COLORS[rng.randi_range(0, CAR_COLORS.size() - 1)])
+		var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
+		_car(b, p, rng, CAR_COLORS[rng.randi_range(0, CAR_COLORS.size() - 1)],
+				tangent, ground_y)
 
 	# Debris piles.
 	for i in rng.randi_range(4, 10):
 		var p := Vector2(rng.randf_range(rect.position.x, rect.end.x),
-				rng.randf_range(rect.position.y, rect.end.y))
+			rng.randf_range(rect.position.y, rect.end.y))
 		if _inside_any_building(plan, p):
 			continue
+		var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
 		var base_c: Color = DEBRIS_COLORS[rng.randi_range(0, DEBRIS_COLORS.size() - 1)]
 		for j in rng.randi_range(2, 4):
 			var off := Vector2(rng.randf_range(-0.9, 0.9),
-					rng.randf_range(-0.9, 0.9))
-			b.add_box(Vector3(p.x + off.x, rng.randf_range(0.12, 0.3),
+				rng.randf_range(-0.9, 0.9))
+			b.add_box(Vector3(p.x + off.x, ground_y + rng.randf_range(0.12, 0.3),
 					p.y + off.y),
 					Vector3(rng.randf_range(0.4, 1.1), rng.randf_range(0.2, 0.5),
 							rng.randf_range(0.4, 1.1)),
@@ -507,8 +768,9 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		p += Vector2(rng.randf_range(-1.2, 1.2), rng.randf_range(-1.2, 1.2))
 		if _near_door(door_pts, p):
 			continue
+		var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
 		b.add_prop_def({
-			"position": Vector3(p.x, 0.0, p.y),
+			"position": Vector3(p.x, ground_y, p.y),
 			"yaw": rng.randf_range(0.0, TAU),
 			"material": &"steel",
 			"parts": [{
@@ -520,37 +782,19 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 			}],
 		})
 
-	# Street lamps along avenues only (posts now; real lights come later).
-	for axis in 2:
-		var perp_min := rect.position.x if axis == 0 else rect.position.y
-		var perp_max := rect.end.x if axis == 0 else rect.end.y
-		var along_min := rect.position.y if axis == 0 else rect.position.x
-		var along_max := rect.end.y if axis == 0 else rect.end.x
-		for li in plan.lines_in_range(axis, perp_min, perp_max):
-			if not plan.is_avenue(axis, li):
-				continue
-			var center := plan.line_pos(axis, li)
-			var from_k := ceili(along_min / LAMP_STEP)
-			var to_k := floori(along_max / LAMP_STEP)
-			for k in range(from_k, to_k + 1):
-				var side_flip := 1.0 if (k % 2 == 0) else -1.0
-				var lateral := (plan.line_half_width(axis, li) + 0.8) * side_flip
-				var p := Vector2(center + lateral, k * LAMP_STEP) if axis == 0 \
-						else Vector2(k * LAMP_STEP, center + lateral)
-				_lamp_post(b, p)
-
 
 static func _car(b: MeshBatcher, p: Vector2, rng: RandomNumberGenerator,
-		color: Color) -> void:
-	var yaw := rng.randf_range(-0.12, 0.12) + (PI * 0.5 if rng.randf() < 0.5 else 0.0)
-	# Cars align across streets: orient perpendicular to nearest street line.
+		color: Color, road_dir := Vector2.ZERO, ground_y := 0.0) -> void:
+	var yaw := atan2(road_dir.x, road_dir.y) if road_dir.length_squared() > 0.01 \
+			else rng.randf_range(-0.12, 0.12) + (PI * 0.5 if rng.randf() < 0.5 else 0.0)
+	# Cars align across streets: orient with the actual road tangent.
 	var basis := Basis(Vector3.UP, yaw)
 	# One destructible steel prop: body + cabin. Explosions bounce surviving
 	# debris off the blast center; sustained fire wrecks it in place.
 	var body_off: Vector3 = basis * Vector3(0, 0.45, 0)
 	var cabin_off: Vector3 = basis * Vector3(0, 1.05, 0)
 	b.add_prop_def({
-		"position": Vector3(p.x, 0.0, p.y),
+		"position": Vector3(p.x, ground_y, p.y),
 		"yaw": yaw,
 		"material": &"steel",
 		"parts": [
@@ -562,9 +806,9 @@ static func _car(b: MeshBatcher, p: Vector2, rng: RandomNumberGenerator,
 	})
 
 
-static func _lamp_post(b: MeshBatcher, p: Vector2) -> void:
+static func _lamp_post(b: MeshBatcher, p: Vector2, ground_y := 0.0) -> void:
 	b.add_prop_def({
-		"position": Vector3(p.x, 0.0, p.y),
+		"position": Vector3(p.x, ground_y, p.y),
 		"material": &"steel",
 		"parts": [
 			{"offset": Vector3(0, 2.3, 0), "size": Vector3(0.16, 4.6, 0.16),
@@ -575,7 +819,71 @@ static func _lamp_post(b: MeshBatcher, p: Vector2) -> void:
 	})
 	# Phase S: real streetlamp spill light — DayNightController toggles these
 	# at night so pools of warm light punctuate genuine darkness.
-	b.add_street_lamp(Vector3(p.x, 4.1, p.y))
+	b.add_street_lamp(Vector3(p.x, ground_y + 4.1, p.y))
+
+
+static func _clip_polygon_to_rect(poly: PackedVector2Array, rect: Rect2) -> PackedVector2Array:
+	var out := poly
+	out = _clip_polygon_axis(out, 0, rect.position.x, true)
+	out = _clip_polygon_axis(out, 0, rect.end.x, false)
+	out = _clip_polygon_axis(out, 1, rect.position.y, true)
+	out = _clip_polygon_axis(out, 1, rect.end.y, false)
+	return out
+
+
+static func _clip_polygon_axis(poly: PackedVector2Array, axis: int,
+		bound: float, keep_greater: bool) -> PackedVector2Array:
+	if poly.size() < 3:
+		return PackedVector2Array()
+	var out := PackedVector2Array()
+	for i in poly.size():
+		var a: Vector2 = poly[i]
+		var z: Vector2 = poly[(i + 1) % poly.size()]
+		var av := a.x if axis == 0 else a.y
+		var zv := z.x if axis == 0 else z.y
+		var in_a := av >= bound - 0.001 if keep_greater else av <= bound + 0.001
+		var in_z := zv >= bound - 0.001 if keep_greater else zv <= bound + 0.001
+		if in_a:
+			out.append(a)
+		if in_a != in_z:
+			var denom := zv - av
+			if absf(denom) > 1e-8:
+				var t := (bound - av) / denom
+				out.append(a.lerp(z, t))
+	return out
+
+
+static func _polygon_bounds(poly: PackedVector2Array) -> Rect2:
+	if poly.is_empty():
+		return Rect2()
+	var min_x := INF
+	var min_y := INF
+	var max_x := -INF
+	var max_y := -INF
+	for p: Vector2 in poly:
+		min_x = minf(min_x, p.x)
+		min_y = minf(min_y, p.y)
+		max_x = maxf(max_x, p.x)
+		max_y = maxf(max_y, p.y)
+	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
+
+
+static func _point_in_polygon(poly: PackedVector2Array, p: Vector2) -> bool:
+	var inside := false
+	if poly.size() < 3:
+		return false
+	var j := poly.size() - 1
+	for i in poly.size():
+		var a: Vector2 = poly[i]
+		var z: Vector2 = poly[j]
+		if (a.y > p.y) != (z.y > p.y):
+			var denom := z.y - a.y
+			if absf(denom) > 1e-8:
+				var x_at_y := (z.x - a.x) * (p.y - a.y) / denom + a.x
+				if p.x < x_at_y:
+					inside = not inside
+		j = i
+	return inside
 
 
 static func _inside_any_building(plan: CityPlan, p: Vector2) -> bool:

@@ -51,6 +51,30 @@ const BH_CAP_OVERHANG := 0.3       # bulkhead cap overhang beyond bz walls
 const BH_RAIL_H := 0.45            # Phase H roof-exit rim height (grab lip)
 const BH_RAIL_T := 0.08            # rim member thickness
 
+# --- Elevated-ground foundations and exterior access ------------------------
+# These are emitted by the same BuildingBuilder as the building shell. A
+# grounded spec supplies a 2x2 module plan when the realized footprint relief
+# is large enough that a flat slab would visibly float/sink on the terrain.
+const FOUNDATION_TRIGGER_RELIEF := 0.75
+const FOUNDATION_OVERHANG := 0.45
+const FOUNDATION_BURY := 0.10
+const FOUNDATION_TOP_CLEARANCE := 0.08
+const FOUNDATION_MODULES_X := 2
+const FOUNDATION_MODULES_Z := 2
+const ACCESS_STAIR_TRIGGER := 0.35
+const FOUNDATION_ACCESS_MIN_RISE := 0.45
+const ACCESS_STAIR_PITCH_DEG := 32.0
+const ACCESS_RAMP_T := 0.18
+const ACCESS_STEP_T := 0.08
+const ACCESS_MIN_RUN := 1.8
+const ACCESS_MAX_RUN := 8.0
+const ACCESS_MAX_STEPS := 24
+const ACCESS_PORCH_DEPTH := 1.10
+const ACCESS_VERANDA_DEPTH := 1.60
+const ACCESS_VERANDA_MAX_SPAN := 5.40
+const ACCESS_LANDING_T := 0.18
+const FOUNDATION_COLORS := [Color("77736a"), Color("858078")]
+
 # --- Phase K: facade balconies (AC-style climbable-city parkour feature) -----
 const BAL_PROJ := 0.7             # balcony deck protrusion beyond the wall face
 const BAL_W := 2.2                # balcony deck width (along the facade)
@@ -314,11 +338,17 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	var has_stairs := has_stairs_for(fp.size, fh, n)
 	var zone := _zone_rect(fp.size, fh, int(spec.get("door_edge", 0)))
 
-	var off := Vector3(fp.position.x, 0.0, fp.position.y)
+	var ground_y := float(spec.get("ground_y", 0.0))
+	var building_ground_y := float(spec.get("building_ground_y", ground_y))
+	var off := Vector3(fp.position.x, building_ground_y, fp.position.y)
 	var w := fp.size.x
 	var d := fp.size.y
 
-	# --- ground slab (STRUCTURAL, top FLUSH with street level y=0) -------------
+	# Elevated-ground support and exterior approach remain part of the same
+	# contract-owned building assembly; no separate shell or scene is created.
+	_emit_foundation_and_access(b, off, w, d, tag, spec)
+
+	# --- ground slab (STRUCTURAL, top FLUSH with building base plane) ----------
 	# A raised plinth here used to put a 22 cm vertical lip in every doorway -
 	# an impassable wall for a CharacterBody3D (no step-up support). The slab
 	# now sits fully below grade so entrances are truly walkable.
@@ -513,6 +543,129 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	_roof(b, off, fp, style, roof_c, wall_c, total_h, zone, has_stairs,
 			guard_on_east)
 	b.pop_layer()
+
+
+# --- Elevated foundations and exterior access -------------------------------
+
+static func _emit_foundation_and_access(b: MeshBatcher, off: Vector3,
+		w: float, d: float, tag: String, spec: Dictionary) -> void:
+	var modules: Array = spec.get("foundation_modules", []) as Array
+	if not modules.is_empty():
+		b.push_layer(tag + ":foundation")
+		var module_i := 0
+		for module_variant in modules:
+			var module: Dictionary = module_variant as Dictionary
+			var module_rect: Rect2 = module.get("rect", Rect2()) as Rect2
+			var bottom_y := float(module.get("bottom_y", off.y))
+			var top_y := float(module.get("top_y", off.y))
+			var height := top_y - bottom_y
+			if module_rect.size.x <= 0.05 or module_rect.size.y <= 0.05 or height <= 0.05:
+				continue
+			var center := module_rect.get_center()
+			var center_y := (bottom_y + top_y) * 0.5
+			var color: Color = FOUNDATION_COLORS[module_i % FOUNDATION_COLORS.size()]
+			b.add_box_rotated(
+				off + Vector3(center.x, center_y - off.y, center.y),
+				Vector3(module_rect.size.x, height, module_rect.size.y),
+				Basis.IDENTITY, color, true, false, &"concrete", tag, -1)
+			module_i += 1
+		b.pop_layer()
+
+	var access: Dictionary = spec.get("access", {}) as Dictionary
+	if bool(access.get("enabled", false)):
+		_emit_external_access(b, off, w, d, tag, access)
+
+
+static func _emit_external_access(b: MeshBatcher, off: Vector3,
+		w: float, d: float, tag: String, access: Dictionary) -> void:
+	var edge := int(access.get("door_edge", 0))
+	var ground_y := float(access.get("ground_y", off.y))
+	var top_y := float(access.get("building_ground_y", off.y))
+	var rise := top_y - ground_y
+	if rise < ACCESS_STAIR_TRIGGER:
+		return
+	var run := clampf(float(access.get("run", ACCESS_MIN_RUN)), ACCESS_MIN_RUN, ACCESS_MAX_RUN)
+	var width := maxf(float(access.get("width", DOOR_W + 0.8)), DOOR_W + 0.4)
+	var door_local := _access_door_local(w, d, edge)
+	var outward := _access_outward(edge)
+	var inward := -outward
+	var bottom_local := door_local + outward * run
+	var top_local := door_local + outward * 0.04
+	var horizontal := inward.normalized()
+	var tangent := Vector3(horizontal.x, rise / maxf(run, 0.1), horizontal.y).normalized()
+	var x_axis := Vector3(tangent.z, 0.0, -tangent.x).normalized()
+	var y_axis := tangent.cross(x_axis).normalized()
+	var basis := Basis(x_axis, y_axis, tangent)
+	var hyp := sqrt(run * run + rise * rise)
+	var line_center := door_local + outward * run * 0.5
+	var line_y := (ground_y + top_y) * 0.5
+
+	b.push_layer(tag + ":access")
+	# A single colliding ramp is the continuous accessible surface. Treads are
+	# visual-only, as with the proven interior staircase; the ramp is what the
+	# player, survivors, and zombies traverse.
+	b.add_box_rotated(
+		off + Vector3(line_center.x, line_y - off.y, line_center.y) - y_axis * (ACCESS_RAMP_T * 0.5),
+		Vector3(width, ACCESS_RAMP_T, hyp), basis, DECK_COLOR, true, false,
+		&"concrete", tag, -1)
+	var step_count := clampi(int(ceil(rise / 0.18)), 3, ACCESS_MAX_STEPS)
+	var tread_depth := maxf(run / float(step_count) + 0.06, 0.18)
+	var tread_basis := Basis(Vector3.UP, atan2(inward.x, inward.y))
+	for step_i in step_count:
+		var t := (float(step_i) + 0.5) / float(step_count)
+		var p_local := bottom_local.lerp(top_local, t)
+		var py := ground_y + rise * t + ACCESS_STEP_T * 0.5 + 0.02
+		b.add_box_rotated(
+			off + Vector3(p_local.x, py - off.y, p_local.y),
+			Vector3(maxf(width - 0.08, 0.35), ACCESS_STEP_T, tread_depth),
+			tread_basis, FLOOR_COLOR, false)
+
+	var kind := str(access.get("kind", "none"))
+	if kind == "porch" or kind == "veranda":
+		var depth := ACCESS_PORCH_DEPTH if kind == "porch" else ACCESS_VERANDA_DEPTH
+		var span_limit := ACCESS_VERANDA_MAX_SPAN if kind == "veranda" else width
+		var span := minf(w if edge == 0 or edge == 2 else d, span_limit)
+		var deck_center := door_local + outward * depth * 0.5
+		var deck_size := Vector3(span, ACCESS_LANDING_T, depth) \
+			if edge == 0 or edge == 2 else Vector3(depth, ACCESS_LANDING_T, span)
+		var deck_material: StringName = &"wood" if kind == "veranda" else &"concrete"
+		b.add_box_rotated(
+			off + Vector3(deck_center.x, top_y - off.y - ACCESS_LANDING_T * 0.5,
+				deck_center.y),
+			deck_size, Basis.IDENTITY, DECK_COLOR, true, false,
+			deck_material, tag, -1)
+		if kind == "veranda":
+			# Open-front veranda posts leave the stair landing clear while
+			# giving the raised entrance a readable porch edge.
+			var half_span := maxf(span * 0.5 - 0.18, 0.18)
+			for along in [-half_span, half_span]:
+				var post_local := deck_center
+				if edge == 0 or edge == 2:
+					post_local.x += along
+				else:
+					post_local.y += along
+				post_local += outward * (depth * 0.5 - 0.08)
+				b.add_box_rotated(
+						off + Vector3(post_local.x, top_y - off.y + 0.62, post_local.y),
+						Vector3(0.12, 1.24, 0.12), Basis.IDENTITY,
+						RAIL_COLOR, true, false, &"wood", tag, -1)
+	b.pop_layer()
+
+
+static func _access_door_local(w: float, d: float, edge: int) -> Vector2:
+	match edge:
+		0: return Vector2(w * 0.5, 0.0)
+		1: return Vector2(w, d * 0.5)
+		2: return Vector2(w * 0.5, d)
+		_: return Vector2(0.0, d * 0.5)
+
+
+static func _access_outward(edge: int) -> Vector2:
+	match edge:
+		0: return Vector2(0.0, -1.0)
+		1: return Vector2(1.0, 0.0)
+		2: return Vector2(0.0, 1.0)
+		_: return Vector2(-1.0, 0.0)
 
 
 # --- Walls -------------------------------------------------------------------
@@ -851,6 +1004,7 @@ static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: f
 					Vector3(aw, CORN_H, ad), corn_c,
 					&"concrete", true, "cornice", layer_f)
 			b.pop_layer()
+	var entrance_side := int(spec.get("door_edge", -1))
 	for side in 4:
 		var length2 := w if (side == 0 or side == 2) else d
 		if length2 < PIL_MIN_SIDE:
@@ -864,6 +1018,12 @@ static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: f
 			var frac := float(i + 1) / float(count + 1)
 			var t2 := length2 * frac + jitter
 			t2 = clampf(t2, PIL_W * 0.5 + 0.25, length2 - PIL_W * 0.5 - 0.25)
+			# The entrance aperture is a hard no-build zone. Keep pilasters on
+			# the other facade runs for climbable parkour, but never put a
+			# structural pillar across a real exterior door leaf.
+			if side == entrance_side and absf(t2 - length2 * 0.5) \
+					< DOOR_W * 0.5 + PIL_W * 0.5 + 0.18:
+				continue
 			var px: float = 0.0
 			var pz: float = 0.0
 			match side:

@@ -186,6 +186,29 @@ func is_open() -> bool:
 	return state == DoorState.OPEN
 
 
+## ACTIVE/WARM lifecycle seam. Door is a Node3D, not an Area3D, so it must
+## never receive an Area3D `monitorable` assignment from ChunkManager.
+## Warm chunks keep the visual door but release its physical leaf; re-entry
+## restores the same physical state and stable manifest id.
+func set_active_enabled(enabled: bool) -> void:
+	if _leaf == null or not is_instance_valid(_leaf):
+		return
+	if enabled:
+		_leaf.collision_layer = LAYER_ENVIRONMENT
+		_leaf.collision_mask = 1 | 16
+		if state == DoorState.OPENING or state == DoorState.CLOSING:
+			set_physics_process(true)
+	else:
+		_leaf.collision_layer = 0
+		_leaf.collision_mask = 0
+		_leaf.linear_velocity = Vector3.ZERO
+		_leaf.angular_velocity = Vector3.ZERO
+		_leaf.freeze = true
+		set_physics_process(false)
+	if interactable != null and is_instance_valid(interactable):
+		interactable.enabled = enabled
+
+
 ## Semantics (P1-10): the leaf body itself always blocks; only a DESTROYED
 ## door stops being solid. A closed leaf additionally seals the doorway,
 ## so callers that ask "can I pass the opening" get false while closed.

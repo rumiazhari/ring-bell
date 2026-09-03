@@ -23,6 +23,7 @@ extends RefCounted
 ## boxes in plan-derived order only (never iterating unsorted dictionaries).
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
+var _polygon_specs: Array[Dictionary] = [] # visual ground polygons: {points,y,color,layer}
 var _asset_instances: Array[Dictionary] = [] # G9 M2: {pos,size,color,res_path,scale,has_collision,yaw} — visual wall_2m probe, ACTIVE-only, 0 collider
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city lamp OmniLight positions
 var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
@@ -45,6 +46,7 @@ var layer_nodes := {}                  # layer key -> MeshInstance3D
 
 var _parent: Node3D
 var _shape_nodes: Dictionary = {}      # vox_id -> CollisionShape3D
+var _building_transform_stack: Array[Dictionary] = []
 
 # Unified structural-damage records: id -> {damage: float}. Every
 # destructible cell accumulates effective damage (raw / MaterialDB strength)
@@ -79,6 +81,20 @@ static func cell_integrity(size: Vector3, material: StringName) -> float:
 ## small props. If a player must not pass through it, this is the WRONG call.
 func add_visual_box(pos: Vector3, size: Vector3, color: Color) -> void:
 	add_box_rotated(pos, size, Basis.IDENTITY, color, false)
+
+
+## Add a flat visual polygon in XZ space. Used for clipped irregular city
+## blocks/plazas; it carries no collision and remains outside the building
+## destruction ledger.
+func add_visual_polygon(points: PackedVector2Array, y: float, color: Color) -> void:
+	if points.size() < 3:
+		return
+	_polygon_specs.append({
+		"points": points.duplicate(),
+		"y": y,
+		"color": color,
+		"layer": _layers.back(),
+	})
 
 
 ## Roof dressing (pitched shells, membranes, dormers) - flushed into a
@@ -130,6 +146,12 @@ func add_box_rotated(pos: Vector3, size: Vector3, basis: Basis,
 func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 		collide: bool, roof_layer: bool, material: StringName,
 		owner_tag := "", floor_i := -1) -> void:
+	if not _building_transform_stack.is_empty():
+		var transform: Dictionary = _building_transform_stack.back()
+		var origin: Vector3 = transform["origin"] as Vector3
+		var rotation: Basis = transform["basis"] as Basis
+		pos = origin + rotation * (pos - origin)
+		basis = rotation * basis
 	_box_count += 1
 	var id := _box_count
 	# Glass renders translucent (tinted pane); everything else is opaque.
@@ -144,6 +166,24 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 	if collide:
 		_colliders.append({"pos": pos, "size": size.abs(), "basis": basis,
 				"id": id, "material": material, "tag": owner_tag})
+
+
+## Apply a city BuildingSpec's local rectangular grammar around its world
+## centre.  The builder continues to emit its reference-quality boxes and
+## apertures unchanged; this seam only rotates the finished full-quality
+## building when a road-frontage parcel carries a deterministic yaw.
+func push_building_transform(origin: Vector3, yaw: float) -> void:
+	_building_transform_stack.append({
+		"origin": origin,
+		# Plan-space yaw maps local +X to (cos(yaw), sin(yaw)) in X/Z.
+		# Godot's Y basis uses the opposite sign for that mapping.
+		"basis": Basis(Vector3.UP, -yaw),
+	})
+
+
+func pop_building_transform() -> void:
+	if not _building_transform_stack.is_empty():
+		_building_transform_stack.pop_back()
 
 
 ## Start tagging subsequent boxes with `key` (see layer_nodes).
@@ -290,7 +330,8 @@ func manifest() -> Dictionary:
 			"street_lamp_dead": _street_lamp_dead.duplicate(),
 			"street_lamp_flicker": _street_lamp_flicker.duplicate(),
 			"street_lamp_phase": _street_lamp_phase.duplicate(),
-			"asset_instances": _asset_instances.duplicate(true)}
+			"asset_instances": _asset_instances.duplicate(true),
+			"polygons": _polygon_specs.duplicate(true)}
 
 
 # --- Universal Building Contract (G10-P2A): registration -------------------
@@ -621,7 +662,35 @@ func _build_layers() -> Dictionary:
 			"idx": PackedInt32Array(),
 		})
 		_emit_box(buf, spec)
+	for polygon: Dictionary in _polygon_specs:
+		var polygon_key: String = String(polygon.get("layer", ""))
+		var polygon_buf: Dictionary = groups.get_or_add(polygon_key, {
+			"color": polygon.get("color", Color.WHITE),
+			"verts": PackedVector3Array(),
+			"normals": PackedVector3Array(),
+			"colors": PackedColorArray(),
+			"idx": PackedInt32Array(),
+		})
+		_emit_polygon(polygon_buf, polygon)
 	return groups
+
+
+func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
+	var points: PackedVector2Array = polygon.get("points", PackedVector2Array()) as PackedVector2Array
+	if points.size() < 3:
+		return
+	var base := (buf["verts"] as PackedVector3Array).size()
+	var y: float = float(polygon.get("y", 0.0))
+	var col: Color = polygon.get("color", Color.WHITE) as Color
+	for p: Vector2 in points:
+		(buf["verts"] as PackedVector3Array).append(Vector3(p.x, y, p.y))
+		(buf["normals"] as PackedVector3Array).append(Vector3.UP)
+		(buf["colors"] as PackedColorArray).append(col)
+	for i in range(1, points.size() - 1):
+		# XZ points are CCW in plan space; reverse indices for +Y front faces.
+		(buf["idx"] as PackedInt32Array).append_array(PackedInt32Array([
+			base, base + i + 1, base + i,
+		]))
 
 
 func _emit_box(buf: Dictionary, spec: Dictionary) -> void:

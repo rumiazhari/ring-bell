@@ -16,6 +16,7 @@ var fringe # FringePlan
 var cave: CavePlan
 var vertical: VerticalNetworkPlan
 var society: SocietyPlan
+var city_plan: CityPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	seed_used = seed
@@ -26,13 +27,8 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 	settlement = SettlementPlan.new(seed, terrain, hydrology, geology, biome)
 	road_network = RoadNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement)
 	rural_building = RuralBuildingPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network)
-	var cp := CityPlan.new()
-	# CityPlan has internal caches keyed by WorldSeed.get_world_seed(); force correct seed for explicit WorldPlan instances (alt seeds)
-	cp.seed_used = seed
-	cp._cell_cache.clear()
-	cp._building_cache.clear()
-	cp._line_pos_cache = [{}, {}]
-	fringe = FringePlanScript.new(seed, terrain, hydrology, geology, biome, settlement, road_network, cp)
+	city_plan = CityPlan.new(seed)
+	fringe = FringePlanScript.new(seed, terrain, hydrology, geology, biome, settlement, road_network, city_plan)
 	cave = CavePlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	vertical = VerticalNetworkPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
 	society = SocietyPlan.new(seed, terrain, hydrology, geology, biome, settlement, road_network, rural_building)
@@ -58,18 +54,25 @@ func urban_weight_at(p: Vector2) -> float:
 
 func _river_surface_height_at(p: Vector2, base_height: float) -> float:
 	var d: float = distance_to_water(p)
-	if d > WorldConstants.BANK_W:
+	var outer_bank := WorldConstants.BANK_W + WorldConstants.RIVER_BANK_BLEND_M
+	if d > outer_bank:
 		return base_height
 	var water_y: float = water_level_at(p)
 	var bed_y: float = minf(base_height, water_y - WorldConstants.RIVER_BED_DEPTH_M)
-	if d <= 0.0:
-		return bed_y
-	# A real earth bank joins the excavated bed to dry ground rather than
-	# laying water on an unrelated macro hill.
+	if d <= WorldConstants.BANK_W:
+		if d <= 0.0:
+			return bed_y
+		# A real earth bank joins the excavated bed to a raised dry bank.
+		var dry_bank_y: float = maxf(base_height, water_y + WorldConstants.RIVER_BANK_FREEBOARD_M)
+		var t := clampf(d / WorldConstants.BANK_W, 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		return lerpf(bed_y, dry_bank_y, t)
+	# Continue the raised bank smoothly into the macro terrain. The old
+	# hard cutoff at BANK_W made an 8 m vertical step at the river edge.
 	var dry_bank_y: float = maxf(base_height, water_y + WorldConstants.RIVER_BANK_FREEBOARD_M)
-	var t := clampf(d / WorldConstants.BANK_W, 0.0, 1.0)
-	t = t * t * (3.0 - 2.0 * t)
-	return lerpf(bed_y, dry_bank_y, t)
+	var outer_t := clampf((d - WorldConstants.BANK_W) / WorldConstants.RIVER_BANK_BLEND_M, 0.0, 1.0)
+	outer_t = outer_t * outer_t * (3.0 - 2.0 * outer_t)
+	return lerpf(dry_bank_y, base_height, outer_t)
 
 func quarry_feature_at(p: Vector2) -> Dictionary:
 	var cell := Vector2i(floori(p.x / WorldConstants.QUARRY_FEATURE_CELL_M), floori(p.y / WorldConstants.QUARRY_FEATURE_CELL_M))
@@ -100,8 +103,8 @@ func quarry_feature_at(p: Vector2) -> Dictionary:
 
 func surface_height_at(p: Vector2) -> float:
 	var surface := lerpf(WorldConstants.URBAN_CITY_TERRACE_Y, terrain_height_at(p), urban_weight_at(p))
-	# CityPlan is constrained to the terrace; all macro features are composed
-	# into the physical terrain outside it, never layered over city geometry.
+	# The flat terrace is limited to the historic centre; outer city buildings
+	# are grounded against the same realized macro surface as every other prop.
 	if p.length() >= WorldConstants.URBAN_INNER_M:
 		surface = _river_surface_height_at(p, surface)
 		var quarry := quarry_feature_at(p)
@@ -149,6 +152,11 @@ func land_use_at(p: Vector2) -> StringName:
 	var site := settlement_at(p)
 	if not site.is_empty():
 		return StringName(str(site.get("kind", "rural")))
+	# The historic city has a larger, walkable fabric than the flat terrace.
+	# Leave actual rural settlement envelopes authoritative so fringe/rural
+	# content does not get relabelled as urban.
+	if p.length() < WorldConstants.CITY_BLOCK_RADIUS_M:
+		return &"historic_urban"
 	var b := biome_at(p)
 	if b == &"deciduous_forest" or b == &"mixed_upland_forest":
 		return &"forest"
@@ -161,7 +169,7 @@ func land_use_at(p: Vector2) -> StringName:
 func should_materialize_city(coord: Vector2i) -> bool:
 	var rect := WorldSeed.chunk_rect(coord)
 	for p in [rect.position, Vector2(rect.end.x, rect.position.y), Vector2(rect.position.x, rect.end.y), rect.end]:
-		if p.length() >= WorldConstants.URBAN_INNER_M:
+		if p.length() > WorldConstants.CITY_MATERIALIZATION_RADIUS_M:
 			return false
 	return true
 
@@ -352,6 +360,24 @@ func nearest_crossing(p: Vector2) -> Dictionary:
 
 func road_width_at(p: Vector2) -> float:
 	return road_network.road_width_at(p)
+
+# --- Organic city topology forwarding ---------------------------------------
+# WorldPlan remains the macro facade; CityPlan owns only the bounded historic
+# fabric and exposes its deterministic graph for probes/streaming.
+func city_road_graph() -> Dictionary:
+	return city_plan.road_graph()
+
+func city_road_segments_in(rect: Rect2) -> Array[Dictionary]:
+	return city_plan.city_road_segments_in(rect)
+
+func city_landmarks() -> Array[Dictionary]:
+	return city_plan.city_landmarks()
+
+func city_extent() -> Dictionary:
+	return city_plan.city_extent()
+
+func city_buildings_in_rect(rect: Rect2) -> Array[Dictionary]:
+	return city_plan.buildings_in_rect(rect)
 
 # --- Rural building forwarding (pure, deterministic) ---
 

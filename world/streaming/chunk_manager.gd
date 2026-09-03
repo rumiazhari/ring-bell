@@ -33,6 +33,7 @@ const MAX_INFLIGHT_BUILDS := 6           # concurrent worker-thread batch jobs (
 
 var plan: CityPlan
 var world_plan: WorldPlan
+var _worker_city_plan: CityPlan
 var synchronous := false                # tests: build inline, no workers
 var _terrain_vertices_total := 0
 var _terrain_triangles_total := 0
@@ -132,12 +133,22 @@ func setup(city_plan: CityPlan) -> void:
 	plan = city_plan
 	if world_plan == null:
 		world_plan = WorldPlan.new(city_plan.seed_used if city_plan != null else WorldSeed.get_world_seed())
+	_prepare_worker_city_plan()
 	add_to_group(&"chunk_manager")
 
 func setup_world(city_plan: CityPlan, wplan: WorldPlan) -> void:
 	plan = city_plan
 	world_plan = wplan
+	_prepare_worker_city_plan()
 	add_to_group(&"chunk_manager")
+
+## CityPlan is immutable after generation. Prewarm that shared read-only
+## snapshot once so every worker does not regenerate the entire city for one
+## 64 m chunk. Chunk-local WorldPlan manifests remain private to workers.
+func _prepare_worker_city_plan() -> void:
+	_worker_city_plan = plan
+	if _worker_city_plan != null:
+		_worker_city_plan.city_extent()
 
 
 func set_player(node: Node3D) -> void:
@@ -379,7 +390,7 @@ func _launch_batch_jobs() -> void:
 			holder["gen_ms"] = 0.0
 		var seed_used: int = world_plan.seed_used if world_plan != null else 0
 		if synchronous:
-			_thread_build(batcher, c, holder, seed_used)
+			_thread_build(batcher, c, holder, seed_used, _worker_city_plan)
 			var gen_ms: float = float(holder.get("gen_ms", 0.0))
 			var t_gen: float = float(holder.get("terrain_gen_ms", 0.0))
 			var w_gen: float = float(holder.get("water_gen_ms", 0.0))
@@ -392,24 +403,36 @@ func _launch_batch_jobs() -> void:
 			_inflight[c] = {"batcher": batcher, "terrain": holder.get("terrain", {}), "water": holder.get("water", {}), "biome": holder.get("biome", {}), "road": holder.get("road", {}), "rural": holder.get("rural", {}), "fringe": holder.get("fringe", {}), "cave": holder.get("cave", {}), "vertical": holder.get("vertical", {}), "task_id": -1,
 					"gen_ms": gen_ms, "terrain_gen_ms": t_gen, "water_gen_ms": w_gen, "biome_gen_ms": b_gen, "road_gen_ms": r_gen, "rural_gen_ms": ru_gen, "fringe_gen_ms": fr_gen, "cave_gen_ms": cav_gen, "vertical_gen_ms": vert_gen}
 		else:
+			# Each worker receives its own deep snapshot. Passing the live plan into
+			# concurrent GDScript jobs caused an engine access violation despite the
+			# plan being logically immutable.
+			var worker_city_plan: CityPlan = null
+			if _worker_city_plan != null:
+				worker_city_plan = _worker_city_plan.clone_generated()
 			var task_id := WorkerThreadPool.add_task(
-					_thread_build.bind(batcher, c, holder, seed_used), false,
+					_thread_build.bind(batcher, c, holder, seed_used, worker_city_plan), false,
 					"chunk_%d_%d" % [c.x, c.y])
 			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
 					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "fringe_gen_ms": 0.0, "cave_gen_ms": 0.0, "vertical_gen_ms": 0.0}
 
 
 ## Pure plan->batcher data generation for ONE chunk (worker-safe).
-## Builds city batcher + terrain manifest (if holder has terrain key) using private plans.
-func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, seed_used: int) -> void:
+## Builds city batcher + terrain manifest (if holder has terrain key). The
+## shared city plan is read-only after setup; world manifests stay private.
+func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary,
+		seed_used: int, city_plan_override: CityPlan = null) -> void:
 	var t_all := Time.get_ticks_usec()
 	var shared_world: WorldPlan = WorldPlan.new(seed_used)
 	var composition: Dictionary = shared_world.chunk_composition(coord)
+	# CityPlan is generated once during setup and then read-only in workers. A
+	# fallback private plan preserves direct legacy callers that never call setup.
+	var local_plan: CityPlan = city_plan_override
+	if local_plan == null:
+		local_plan = _worker_city_plan if _worker_city_plan != null else CityPlan.new(seed_used)
 	# CityPlan is a bounded implementation selected by WorldPlan, never an
 	# unconditional second world beneath rural / river / quarry chunks.
 	if bool(composition.get("city_materialized", false)):
-		var local_plan := CityPlan.new()
-		ChunkBuilder.fill_batcher(batcher, local_plan, coord)
+		ChunkBuilder.fill_batcher(batcher, local_plan, coord, shared_world)
 	if holder.has("terrain"):
 		var t0 := Time.get_ticks_usec()
 		var m := TerrainChunkBuilder.build_manifest(shared_world, coord)
@@ -451,10 +474,17 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary, se
 		holder["rural"] = {}
 		holder["rural_gen_ms"] = 0.0
 	if holder.has("fringe"):
-		var tfr0 := Time.get_ticks_usec()
-		var frm := FringeChunkBuilderScript.build_manifest(shared_world, coord)
-		holder["fringe"] = frm
-		holder["fringe_gen_ms"] = float(Time.get_ticks_usec() - tfr0) / 1000.0
+		# City ownership is authoritative inside the materialized radius. Do not
+		# regenerate the full fringe plan for every urban chunk or overlay fringe
+		# buildings on the city fabric; fringe remains enabled outside the city.
+		if bool(composition.get("city_materialized", false)):
+			holder["fringe"] = {}
+			holder["fringe_gen_ms"] = 0.0
+		else:
+			var tfr0 := Time.get_ticks_usec()
+			var frm := FringeChunkBuilderScript.build_manifest(shared_world, coord)
+			holder["fringe"] = frm
+			holder["fringe_gen_ms"] = float(Time.get_ticks_usec() - tfr0) / 1000.0
 	else:
 		holder["fringe"] = {}
 		holder["fringe_gen_ms"] = 0.0
@@ -484,8 +514,8 @@ func _fill_job(batcher: MeshBatcher, coord: Vector2i) -> void:
 	var local_world := WorldPlan.new(world_plan.seed_used if world_plan != null else WorldSeed.get_world_seed())
 	if not local_world.should_materialize_city(coord):
 		return
-	var local_plan := CityPlan.new()
-	ChunkBuilder.fill_batcher(batcher, local_plan, coord)
+	var local_plan := CityPlan.new(local_world.seed_used)
+	ChunkBuilder.fill_batcher(batcher, local_plan, coord, local_world)
 
 
 func _collect_finished_jobs(pc: Vector2i) -> void:
@@ -592,7 +622,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	var include_collision := chebyshev_distance(coord, pc) <= ACTIVE_RADIUS
 	var city_materialized: bool = bool(composition.get("city_materialized", false))
 	var stats := ChunkBuilder.build(self, plan, coord, batcher, dead_doors,
-			include_collision, city_materialized)
+			include_collision, city_materialized, world_plan)
 	# Materialize terrain under same chunk if manifest present
 	var tstats := {}
 	if not terrain_manifest.is_empty():

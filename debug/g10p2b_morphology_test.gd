@@ -1,0 +1,446 @@
+extends Node
+## Focused, headless-safe G10-P2B morphology acceptance probe.
+## It validates the plan/contract layer; visual acceptance uses the live capture probe.
+
+var _failures: Array[String] = []
+
+
+func _ready() -> void:
+	var seed_a := 19041207
+	var seed_b := 19041208
+	var plan_a := CityPlan.new(seed_a)
+	var plan_a_repeat := CityPlan.new(seed_a)
+	var plan_b := CityPlan.new(seed_b)
+	_check_plan(plan_a, "A")
+	_check_plan(plan_a_repeat, "A-repeat")
+	_check_plan(plan_b, "B")
+	_check_surface_datum(plan_a, "A")
+	_check_surface_datum(plan_b, "B")
+	_check_foundation_access(plan_a, "A")
+	_check_foundation_access(plan_b, "B")
+	_check_same_seed(plan_a, plan_a_repeat)
+	_check_different_seed(plan_a, plan_b)
+	if _failures.is_empty():
+		print("[G10P2BMorphology] PASS all focused checks")
+	else:
+		for failure in _failures:
+			print("[G10P2BMorphology] FAIL ", failure)
+	get_tree().quit(_failures.size())
+
+
+func _check_plan(plan: CityPlan, label: String) -> void:
+	var graph: Dictionary = plan.road_graph()
+	var nodes: Array = graph.get("nodes", []) as Array
+	var edges: Array = graph.get("edges", []) as Array
+	var blocks: Array[Dictionary] = plan.city_blocks()
+	var buildings: Array[Dictionary] = plan.city_buildings()
+	_expect(nodes.size() >= 60, label + " road nodes >= 60")
+	_expect(edges.size() >= 70, label + " road edges >= 70")
+	_expect(_is_connected(graph), label + " road graph connected")
+	var primary := 0
+	var secondary := 0
+	var local := 0
+	var alley := 0
+	var bridges := 0
+	var curved := 0
+	var diagonal_segments := 0
+	var core_fine_routes := 0
+	var core_alleys := 0
+	var node_tangents: Dictionary = {}
+	for edge: Dictionary in edges:
+		match edge.get("hierarchy", &""):
+			&"primary": primary += 1
+			&"secondary": secondary += 1
+			&"local": local += 1
+			&"alley": alley += 1
+		if bool(edge.get("is_bridge", false)):
+			bridges += 1
+		var a_center: Vector2 = edge.get("a_center", Vector2.INF) as Vector2
+		var b_center: Vector2 = edge.get("b_center", Vector2.INF) as Vector2
+		var edge_hierarchy: StringName = edge.get("hierarchy", &"") as StringName
+		if a_center.length() < 300.0 and b_center.length() < 300.0:
+			if edge_hierarchy == &"local" or edge_hierarchy == &"alley":
+				core_fine_routes += 1
+			if edge_hierarchy == &"alley":
+				core_alleys += 1
+		var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
+		if poly.size() >= 3:
+			curved += 1
+		if poly.size() >= 2:
+			var tangent := (poly[1] - poly[0]).normalized()
+			if absf(tangent.x) > 0.12 and absf(tangent.y) > 0.12:
+				diagonal_segments += 1
+			var a_id := str(edge.get("a", ""))
+			var b_id := str(edge.get("b", ""))
+			node_tangents.get_or_add(a_id, []).append(tangent)
+			node_tangents.get_or_add(b_id, []).append((poly[poly.size() - 2] - poly[poly.size() - 1]).normalized())
+	var non_right := 0
+	for directions_variant in node_tangents.values():
+		var directions: Array = directions_variant as Array
+		for i in range(directions.size()):
+			for j in range(i + 1, directions.size()):
+				if absf((directions[i] as Vector2).dot(directions[j] as Vector2)) < 0.94:
+					non_right += 1
+	_expect(primary >= 12, label + " primary radial routes")
+	_expect(secondary >= 15, label + " secondary connectors")
+	_expect(local >= 20, label + " local streets")
+	_expect(alley >= 10, label + " historic alleys")
+	_expect(bridges >= 2, label + " river crossings")
+	_expect(curved >= 20, label + " curved routes")
+	_expect(diagonal_segments >= 10, label + " diagonal route segments")
+	_expect(non_right >= 20, label + " non-90-degree bends/junction approach")
+	print("[G10P2BMorphology] ", label, " core_fine_routes=", core_fine_routes,
+			" core_alleys=", core_alleys)
+	_expect(core_fine_routes >= 14, label + " historic core fine routes")
+	_expect(core_alleys >= 6, label + " historic core narrow alleys")
+	_expect(blocks.size() >= 160, label + " irregular blocks")
+	var irregular := 0
+	for block: Dictionary in blocks:
+		var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+		if poly.size() >= 5:
+			irregular += 1
+	_expect(irregular >= 80, label + " blocks have non-rectangular footprints")
+	_expect(buildings.size() >= 700, label + " dense building fabric")
+	_check_frontage_density(plan, label)
+	_check_block_ownership(plan, label)
+	for spec: Dictionary in buildings:
+		_expect(spec.get("quality", WorldConstants.BUILDING_QUALITY_FULL_BUILDING) == WorldConstants.BUILDING_QUALITY_FULL_BUILDING, label + " building is full quality")
+		var archetype: StringName = spec.get("archetype", &"") as StringName
+		_expect(archetype == &"house" or archetype == &"tenement" or archetype == &"shop_house", label + " building has current city archetype")
+		if not plan._lot_clear_of_city_roads(spec.get("rect", Rect2()) as Rect2,
+					float(spec.get("yaw", 0.0))):
+			_failures.append(label + " building/road clearance " + str(spec.get("id", "")))
+			break
+	var extent := plan.city_extent()
+	print("[G10P2BMorphology] ", label, " nodes=", nodes.size(), " edges=", edges.size(),
+			" blocks=", blocks.size(), " buildings=", buildings.size(), " extent=", extent)
+	_expect(float(extent.get("dense_radius_m", 0.0)) >= 600.0, label + " dense radius target")
+	_expect(float(extent.get("influence_radius_m", 0.0)) >= 1300.0, label + " influence radius target")
+	_expect(plan.validate_area(Rect2(-950.0, -950.0, 1900.0, 1900.0)).is_empty(), label + " no block/building overlaps")
+
+
+func _check_surface_datum(plan: CityPlan, label: String) -> void:
+	# City buildings and roads must share WorldPlan's realized outdoor surface.
+	# This samples an outer building where terrain is non-flat, then inspects
+	# the actual universal-assembler slab and city-road ribbon boxes.
+	var world := WorldPlan.new(plan.seed_used)
+	var river_x := world.hydrology.river_center_x_at(0.0)
+	var river_half := world.hydrology.river_half_width_at(0.0)
+	var bank_inner := Vector2(river_x + river_half + WorldConstants.BANK_W - 0.05, 0.0)
+	var bank_outer := Vector2(river_x + river_half + WorldConstants.BANK_W + 0.05, 0.0)
+	var bank_jump := absf(world.surface_height_at(bank_inner) - world.surface_height_at(bank_outer))
+	_expect(bank_jump <= 0.35,
+			label + " river-bank surface is continuous (%.3f m)" % bank_jump)
+	var target: Dictionary = {}
+	for spec: Dictionary in plan.city_buildings():
+		var center: Vector2 = (spec["rect"] as Rect2).get_center()
+		if absf(world.surface_height_at(center)) > 0.4:
+			target = spec
+			break
+	_expect(not target.is_empty(), label + " non-flat city building sample")
+	if target.is_empty():
+		return
+	var grounded: Dictionary = ChunkBuilder._grounded_spec(target, world)
+	var batcher := MeshBatcher.new()
+	UniversalBuildingAssembler.build_into(batcher, grounded)
+	var tag := str(target["id"])
+	var expected_ground := float(grounded.get("building_ground_y", grounded["ground_y"]))
+	var slab_found := false
+	var slab_error := INF
+	for s: Dictionary in batcher.specs():
+		if str(s.get("layer", "")) != tag + ":f0":
+			continue
+		var size: Vector3 = s["size"] as Vector3
+		if absf(size.y - BuildingBuilder.SLAB_T) > 0.001:
+			continue
+		var pos: Vector3 = s["pos"] as Vector3
+		slab_found = true
+		slab_error = absf(pos.y + size.y * 0.5 - (expected_ground - 0.02))
+		break
+	_expect(slab_found, label + " grounded city slab exists")
+	if slab_found:
+		_expect(slab_error <= 0.05,
+				label + " city building slab follows surface (%.3f m)" % slab_error)
+
+	var graph: Dictionary = plan.city_road_graph()
+	var edges: Array = graph.get("edges", []) as Array
+	var road_samples := 0
+	var road_max_error := 0.0
+	var road_max_endpoint_error := 0.0
+	for edge: Dictionary in edges:
+		if bool(edge.get("is_bridge", false)):
+			continue
+		var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 2:
+			continue
+		var coord := WorldSeed.chunk_coord(poly[0].x, poly[0].y)
+		var road_batch := MeshBatcher.new()
+		ChunkBuilder._roads(road_batch, plan, WorldSeed.chunk_rect(coord), world)
+		for rs: Dictionary in road_batch.specs():
+			if bool(rs.get("collide", false)):
+				continue
+			var rsize: Vector3 = rs["size"] as Vector3
+			if absf(rsize.y - 0.11) > 0.01:
+				continue
+			var rpos: Vector3 = rs["pos"] as Vector3
+			var road_p := Vector2(rpos.x, rpos.z)
+			var nearest_edge_distance := INF
+			var nearest_is_bridge := false
+			for candidate: Dictionary in edges:
+				var candidate_poly: PackedVector2Array = candidate.get("polyline", PackedVector2Array()) as PackedVector2Array
+				var candidate_distance := CityPlan._distance_to_polyline(road_p, candidate_poly)
+				if candidate_distance < nearest_edge_distance:
+					nearest_edge_distance = candidate_distance
+					nearest_is_bridge = bool(candidate.get("is_bridge", false))
+			if nearest_is_bridge:
+				continue
+			road_max_error = maxf(road_max_error,
+					absf(rpos.y - (world.surface_height_at(road_p) + 0.055)))
+			var basis: Basis = rs["basis"] as Basis
+			var half_length := maxf(rsize.z * 0.5 - 0.06, 0.0)
+			var half_vector := basis * Vector3(0.0, 0.0, half_length)
+			for endpoint: Vector3 in [rpos - half_vector, rpos + half_vector]:
+				var endpoint_p := Vector2(endpoint.x, endpoint.z)
+				road_max_endpoint_error = maxf(road_max_endpoint_error,
+						absf(endpoint.y - (world.surface_height_at(endpoint_p) + 0.055)))
+			road_samples += 1
+			if road_samples >= 4:
+				break
+		if road_samples >= 4:
+			break
+	_expect(road_samples >= 4, label + " city road Y samples")
+	_expect(road_max_error <= 0.08,
+			label + " city road centers follow surface (%.3f m)" % road_max_error)
+	_expect(road_max_endpoint_error <= 0.35,
+			label + " city road endpoints follow surface (%.3f m)" % road_max_endpoint_error)
+	print("[G10P2BMorphology] ", label, " surface_y building_error=", slab_error,
+			" road_samples=", road_samples, " road_error=", road_max_error,
+			" road_endpoint_error=", road_max_endpoint_error)
+
+
+func _check_foundation_access(plan: CityPlan, label: String) -> void:
+	var world := WorldPlan.new(plan.seed_used)
+	var grounded_target: Dictionary = {}
+	var elevated_count := 0
+	var access_count := 0
+	var porch_count := 0
+	var veranda_count := 0
+	var plain_count := 0
+	for spec: Dictionary in plan.city_buildings():
+		var grounded := ChunkBuilder._grounded_spec(spec, world)
+		var modules: Array = grounded.get("foundation_modules", []) as Array
+		if not bool(grounded.get("foundation_enabled", false)) or modules.size() < 4:
+			continue
+		elevated_count += 1
+		if grounded_target.is_empty():
+			grounded_target = grounded
+		var candidate_access: Dictionary = grounded.get("access", {}) as Dictionary
+		if not bool(candidate_access.get("enabled", false)):
+			continue
+		access_count += 1
+		match str(candidate_access.get("kind", "")):
+			"porch": porch_count += 1
+			"veranda": veranda_count += 1
+			"none": plain_count += 1
+	_expect(elevated_count > 0, label + " has elevated foundation targets")
+	_expect(access_count == elevated_count,
+			label + " every foundation has exterior access (%d/%d)" % [access_count, elevated_count])
+	_expect(porch_count + veranda_count + plain_count == access_count,
+			label + " access modes are porch/veranda/none")
+	if grounded_target.is_empty():
+		return
+	var id := str(grounded_target["id"])
+	var building_ground := float(grounded_target.get("building_ground_y", 0.0))
+	var natural_ground := float(grounded_target.get("ground_y", 0.0))
+	_expect(building_ground > natural_ground + BuildingBuilder.FOUNDATION_TOP_CLEARANCE - 0.01,
+			label + " foundation raises building datum")
+	var batcher := MeshBatcher.new()
+	UniversalBuildingAssembler.build_into(batcher, grounded_target)
+	var build_errors: Array[String] = BuildingContractValidator.validate_build(grounded_target, batcher)
+	_expect(build_errors.is_empty(), label + " elevated building passes full contract: " + str(build_errors))
+	var foundation_count := 0
+	var foundation_top_error := 0.0
+	for built: Dictionary in batcher.specs():
+		var layer := str(built.get("layer", ""))
+		if layer != id + ":foundation":
+			continue
+		foundation_count += 1
+		var pos: Vector3 = built["pos"] as Vector3
+		var size: Vector3 = built["size"] as Vector3
+		foundation_top_error = maxf(foundation_top_error,
+				absf(pos.y + size.y * 0.5 - (building_ground - BuildingBuilder.SLAB_T - 0.02)))
+	_expect(foundation_count >= 4, label + " emits four foundation modules")
+	_expect(foundation_top_error <= 0.05,
+			label + " foundation tops support slab (%.3f m)" % foundation_top_error)
+
+	var access: Dictionary = grounded_target.get("access", {}) as Dictionary
+	_expect(bool(access.get("enabled", false)), label + " elevated building has exterior access")
+	var kind := str(access.get("kind", ""))
+	_expect(kind == "porch" or kind == "veranda" or kind == "none",
+			label + " access kind is deterministic porch/veranda/none")
+	var access_ramps := 0
+	for built2: Dictionary in batcher.specs():
+		if not str(built2.get("layer", "")).begins_with(id + ":access"):
+			continue
+		if not bool(built2.get("collide", false)):
+			continue
+		if built2.get("material", &"") != &"concrete":
+			continue
+		var ramp_size: Vector3 = built2["size"] as Vector3
+		var ramp_basis: Basis = built2["basis"] as Basis
+		if ramp_size.z >= BuildingBuilder.ACCESS_MIN_RUN - 0.05 and ramp_basis != Basis.IDENTITY:
+			access_ramps += 1
+	_expect(access_ramps >= 1, label + " exterior access ramp collides")
+	for dm: Dictionary in grounded_target.get("doors", []):
+		var door_pos: Vector3 = dm.get("position", Vector3.ZERO) as Vector3
+		_expect(absf(door_pos.y - building_ground) <= 0.05,
+				label + " elevated entrance uses building datum")
+	print("[G10P2BMorphology] ", label, " foundation modules=", foundation_count,
+			" elevated_count=", elevated_count, " access_count=", access_count,
+			" porch=", porch_count, " veranda=", veranda_count, " none=", plain_count,
+			" access=", kind, " ramp_count=", access_ramps,
+			" building_ground=", building_ground, " natural_ground=", natural_ground)
+
+
+func _check_frontage_density(plan: CityPlan, label: String) -> void:
+	var core_area := 0.0
+	var inner_area := 0.0
+	var core_footprints := 0.0
+	var inner_footprints := 0.0
+	var core_buildings := 0
+	var inner_buildings := 0
+	var core_near_road := 0
+	var inner_near_road := 0
+	var core_block_areas: Array[float] = []
+	var inner_block_areas: Array[float] = []
+	for block: Dictionary in plan.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		var block_area := absf(_polygon_area(block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+		if center.length() < WorldConstants.CITY_HISTORIC_RADIUS_M:
+			core_area += block_area
+			core_block_areas.append(block_area)
+		elif center.length() < 600.0:
+			inner_area += block_area
+			inner_block_areas.append(block_area)
+	for spec: Dictionary in plan.city_buildings():
+		var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var radius := rect.get_center().length()
+		var footprint := rect.size.x * rect.size.y
+		if radius < WorldConstants.CITY_HISTORIC_RADIUS_M:
+			core_footprints += footprint
+			core_buildings += 1
+			if plan._distance_to_city_road_raw(rect.get_center()) <= 20.0:
+				core_near_road += 1
+		elif radius < 600.0:
+			inner_footprints += footprint
+			inner_buildings += 1
+			if plan._distance_to_city_road_raw(rect.get_center()) <= 20.0:
+				inner_near_road += 1
+	var core_ratio := core_footprints / maxf(core_area, 1.0)
+	var inner_ratio := inner_footprints / maxf(inner_area, 1.0)
+	var core_road_ratio := float(core_near_road) / maxf(float(core_buildings), 1.0)
+	var inner_road_ratio := float(inner_near_road) / maxf(float(inner_buildings), 1.0)
+	core_block_areas.sort()
+	inner_block_areas.sort()
+	var core_median_area: float = core_block_areas[int(core_block_areas.size() * 0.5)] if not core_block_areas.is_empty() else INF
+	var inner_median_area: float = inner_block_areas[int(inner_block_areas.size() * 0.5)] if not inner_block_areas.is_empty() else INF
+	print("[G10P2BMorphology] ", label, " frontage_coverage core=", core_ratio,
+			" inner=", inner_ratio, " road_frontage core=", core_road_ratio,
+			" inner=", inner_road_ratio, " block_median_area core=", core_median_area,
+			" inner=", inner_median_area)
+	_expect(core_ratio >= 0.20, label + " historic frontage coverage >= 20%")
+	_expect(inner_ratio >= 0.12, label + " inner frontage coverage >= 12%")
+	_expect(core_road_ratio >= 0.55, label + " historic road frontage >= 55%")
+	_expect(inner_road_ratio >= 0.55, label + " inner road frontage >= 55%")
+	_expect(core_block_areas.size() >= 40, label + " historic block count >= 40")
+	_expect(core_median_area <= 8000.0, label + " historic median block area <= 8000 m2")
+	_expect(inner_median_area <= 10000.0, label + " inner median block area <= 10000 m2")
+
+
+func _check_block_ownership(plan: CityPlan, label: String) -> void:
+	var blocks_by_id: Dictionary = {}
+	for block: Dictionary in plan.city_blocks():
+		blocks_by_id[str(block.get("id", ""))] = block
+	var outside := 0
+	var missing_owner := 0
+	var far_from_road := 0
+	var source_counts: Dictionary = {}
+	var district_counts: Dictionary = {}
+	var total := 0
+	for spec: Dictionary in plan.city_buildings():
+		total += 1
+		var block_id := str(spec.get("block_id", ""))
+		var block: Dictionary = blocks_by_id.get(block_id, {}) as Dictionary
+		if block.is_empty():
+			missing_owner += 1
+			continue
+		var source := "global_road" if int(spec.get("front_edge", -1)) < 1000 else "block_road"
+		source_counts[source] = int(source_counts.get(source, 0)) + 1
+		var district := str(spec.get("district", ""))
+		district_counts[district] = int(district_counts.get(district, 0)) + 1
+		var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var yaw := float(spec.get("yaw", 0.0))
+		var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+		if not plan._lot_inside_polygon(lot, yaw, poly):
+			outside += 1
+		var nearest := plan._distance_to_city_road_raw(lot.get_center())
+		if nearest > 28.0:
+			far_from_road += 1
+	print("[G10P2BMorphology] ", label, " ownership total=", total,
+			" outside=", outside, " missing_owner=", missing_owner,
+			" far_from_road=", far_from_road,
+			" source_counts=", source_counts, " district_counts=", district_counts)
+	_expect(outside == 0, label + " every building inside owning block")
+	_expect(missing_owner == 0, label + " every building has owning block")
+
+
+func _polygon_area(poly: PackedVector2Array) -> float:
+	var area := 0.0
+	for i in poly.size():
+		var j := (i + 1) % poly.size()
+		area += poly[i].x * poly[j].y - poly[j].x * poly[i].y
+	return area * 0.5
+
+
+func _is_connected(graph: Dictionary) -> bool:
+	var nodes: Array = graph.get("nodes", []) as Array
+	var edges: Array = graph.get("edges", []) as Array
+	if nodes.is_empty():
+		return false
+	var adjacency: Dictionary = {}
+	for node: Dictionary in nodes:
+		adjacency[str(node.get("id", ""))] = []
+	for edge: Dictionary in edges:
+		var a := str(edge.get("a", ""))
+		var b := str(edge.get("b", ""))
+		if not adjacency.has(a) or not adjacency.has(b):
+			return false
+		(adjacency[a] as Array).append(b)
+		(adjacency[b] as Array).append(a)
+	var seen: Dictionary = {}
+	var queue: Array[String] = [str(nodes[0].get("id", ""))]
+	while not queue.is_empty():
+		var current: String = queue.pop_front()
+		if seen.has(current):
+			continue
+		seen[current] = true
+		for next_id in adjacency.get(current, []):
+			if not seen.has(str(next_id)):
+				queue.append(str(next_id))
+	return seen.size() == nodes.size()
+
+
+func _check_same_seed(a: CityPlan, b: CityPlan) -> void:
+	_expect(JSON.stringify(a.road_graph()) == JSON.stringify(b.road_graph()), "same seed graph digest")
+	_expect(JSON.stringify(a.city_blocks()) == JSON.stringify(b.city_blocks()), "same seed block digest")
+	_expect(JSON.stringify(a.city_buildings()) == JSON.stringify(b.city_buildings()), "same seed building digest")
+
+
+func _check_different_seed(a: CityPlan, b: CityPlan) -> void:
+	_expect(JSON.stringify(a.road_graph()) != JSON.stringify(b.road_graph()), "different seed graph variation")
+	_expect(JSON.stringify(a.city_buildings()) != JSON.stringify(b.city_buildings()), "different seed building variation")
+
+
+func _expect(value: bool, message: String) -> void:
+	if not value:
+		_failures.append(message)

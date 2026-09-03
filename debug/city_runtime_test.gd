@@ -22,7 +22,7 @@ var _probe_dir := Vector3.ZERO
 
 
 func _ready() -> void:
-	get_tree().create_timer(150.0).timeout.connect(func() -> void:
+	get_tree().create_timer(360.0).timeout.connect(func() -> void:
 		print("[CityRuntime] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	_run()
@@ -219,7 +219,7 @@ func _run() -> void:
 	var rig := _camera_rig()
 	_check("camera rig found", rig != null)
 	if rig != null:
-		_camera_sector_and_zoom(rig, player, mgr)
+		await _camera_sector_and_zoom(rig, player, mgr)
 
 	# --- 7. REAL streamed destruction persistence (P0-2) ------------------------
 	# Destroy a structural cell through the runtime path, walk away until
@@ -266,13 +266,38 @@ func _wall_ray_blocks(mgr: ChunkManager, player: Node3D) -> bool:
 	if spec.is_empty():
 		return false
 	var lr: Rect2 = spec["rect"]
-	var from := Vector3(lr.get_center().x, 0.9, lr.position.y - 0.8)
 	if not await _building_resident(mgr, spec):
 		return false
+	# Choose a facade that is not the entrance, then aim below the window
+	# band. The old probe aimed at the north-face midpoint, which is often the
+	# real doorway and therefore correctly returned no wall hit.
+	var door_edge := int(spec.get("door_edge", -1))
+	var wall_edge := 0 if door_edge != 0 else 1
+	var wall_y := 0.45
+	var building_center := lr.get_center()
+	var yaw := float(spec.get("yaw", 0.0))
+	var local_point := Vector2.ZERO
+	var local_direction := Vector2.ZERO
+	match wall_edge:
+		0:
+			local_point = Vector2(lr.position.x + lr.size.x * 0.23, lr.position.y - 0.8)
+			local_direction = Vector2(0, 1)
+		1:
+			local_point = Vector2(lr.end.x + 0.8, lr.position.y + lr.size.y * 0.23)
+			local_direction = Vector2(-1, 0)
+		2:
+			local_point = Vector2(lr.position.x + lr.size.x * 0.23, lr.end.y + 0.8)
+			local_direction = Vector2(0, -1)
+		_:
+			local_point = Vector2(lr.position.x - 0.8, lr.position.y + lr.size.y * 0.23)
+			local_direction = Vector2(1, 0)
+	var world_point := CityPlan._rotate_plan_point(building_center, local_point, yaw)
+	var world_direction := CityPlan._rotate_plan_vector(local_direction, yaw)
+	var from := Vector3(world_point.x, wall_y, world_point.y)
+	var to := from + Vector3(world_direction.x, 0, world_direction.y) * 1.6
 	var space: PhysicsDirectSpaceState3D \
 			= player.get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(from,
-			from + Vector3(0, 0, 1.6), 1)   # straight into the north wall
+	var query := PhysicsRayQueryParameters3D.create(from, to, 1)
 	var hit := space.intersect_ray(query)
 	if hit.is_empty():
 		return false
@@ -330,9 +355,16 @@ func _stair_probe_reaches_floor(mgr: ChunkManager) -> bool:
 
 	var fh := float(target["floor_h"])
 	var zone := BuildingBuilder.stair_zone_world(target)
-	# Flight A occupies the WEST lane and climbs NORTH->SOUTH from ground.
-	var entry := Vector3(zone.position.x + BuildingBuilder.LANE_W * 0.5,
-			0.4, zone.position.y + BuildingBuilder.LAND * 0.5)
+	var footprint: Rect2 = target["rect"]
+	var yaw := float(target.get("yaw", 0.0))
+	# Flight A occupies the WEST lane and climbs local NORTH->SOUTH from
+	# ground. Transform both the entry and travel direction with the same
+	# rigid frame as the universal building assembler.
+	var local_entry := Vector2(zone.position.x + BuildingBuilder.LANE_W * 0.5,
+			zone.position.y + BuildingBuilder.LAND * 0.5)
+	var entry_plan := CityPlan._rotate_plan_point(footprint.get_center(), local_entry, yaw)
+	var local_direction := CityPlan._rotate_plan_vector(Vector2(0, 1), yaw)
+	var entry := Vector3(entry_plan.x, 0.4, entry_plan.y)
 
 	_probe = CharacterBody3D.new()
 	_probe.collision_layer = 0
@@ -349,7 +381,7 @@ func _stair_probe_reaches_floor(mgr: ChunkManager) -> bool:
 	_probe.add_child(shape_node)
 	add_child(_probe)
 	_probe.global_position = entry
-	_probe_dir = Vector3(0, 0, 1)   # push south, up the ramp
+	_probe_dir = Vector3(local_direction.x, 0, local_direction.y)
 
 	var t := 0.0
 	while t < 10.0:

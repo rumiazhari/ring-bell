@@ -85,15 +85,29 @@ const TRIB_UPSTREAM_STEP_Z := 1400.0
 const TRIB_UPSTREAM_JITTER_Z := 320.0
 # Meander phase seeded via unit_float("hydro_phi")
 # --- World-composition and realized-surface contract ---
-# WorldPlan is the only owner of the outdoor Y datum. CityPlan uses a flat
-# grade only inside this fully materialized urban terrace; the 350-600 m band
-# is macro terrain / city-edge composition, never an unbounded second city.
+# WorldPlan is the only owner of the outdoor Y datum. CityPlan's historic
+# centre uses the flat terrace; the larger 300-930 m urban fabric is grounded
+# through WorldPlan's realized surface instead of creating a second terrain.
 const URBAN_INNER_M := 350.0
 const URBAN_OUTER_M := 600.0
 const URBAN_CITY_TERRACE_Y := 0.0
+# Organic city morphology bounds.  URBAN_INNER_M remains the flat historic
+# terrace; these values describe the larger city fabric and its stream ring.
+const CITY_HISTORIC_RADIUS_M := 300.0
+const CITY_DENSE_RADIUS_M := 820.0
+const CITY_BLOCK_RADIUS_M := 930.0
+const CITY_MATERIALIZATION_RADIUS_M := 980.0
+const CITY_INFLUENCE_RADIUS_M := 1700.0
+const CITY_ROAD_SAMPLE_M := 12.0
+const CITY_ROAD_WIDTH_PRIMARY := 8.4
+const CITY_ROAD_WIDTH_SECONDARY := 5.8
+const CITY_ROAD_WIDTH_LOCAL := 3.6
+const CITY_ROAD_WIDTH_ALLEY := 1.9
+const CITY_ALLEY_WIDTH := 2.1
 const SURFACE_SAMPLE_EPSILON_M := 0.5
 const RIVER_BED_DEPTH_M := 2.5
 const RIVER_BANK_FREEBOARD_M := 0.65
+const RIVER_BANK_BLEND_M := 26.0
 const QUARRY_FEATURE_CELL_M := 256.0
 const QUARRY_FEATURE_RADIUS_M := 72.0
 const QUARRY_FEATURE_DEPTH_M := 8.0
@@ -114,7 +128,7 @@ const WATER_BODIES: Array[StringName] = [&"sea", &"lake", &"river", &"reservoir"
 
 # --- Settlement & Road (P4.1) authoritative numerics ---
 const SETTLEMENT_VOCAB: Array[StringName] = [&"village", &"hamlet", &"farmstead", &"isolated_farm", &"town"]
-const ROAD_HIERARCHY_VOCAB: Array[StringName] = [&"primary", &"secondary", &"track"]
+const ROAD_HIERARCHY_VOCAB: Array[StringName] = [&"primary", &"secondary", &"local", &"alley", &"track"]
 const SETTLEMENT_MACRO_CELL := 1024.0
 const SETTLEMENT_LANDSCAPE_CELL := 256.0
 const SETTLEMENT_SITE_RADIUS_VILLAGE_MIN := 48.0
