@@ -117,6 +117,8 @@ func _run_all() -> void:
 	print("[CityTest] DEBUG: Starting negative coordinate tests")
 	# --- 10: Negative coordinates -----------------------------------------------
 	_check("negative coordinate blocks", _test_negative_coordinates(plan))
+	_check("city block cell keys are unique and deterministic",
+			_test_block_cell_keys(plan))
 
 	print("[CityTest] DEBUG: Starting chunk state transition tests")
 	# --- 9: Chunk ACTIVE/WARM/COLD transitions ----------------------------------
@@ -3913,6 +3915,9 @@ func _test_facade_layer_keys() -> bool:
 						if colon >= 0:
 							var fl := int(rest.substr(0, colon))
 							var fac := rest.substr(colon + 1)
+							var fac_pipe := fac.find("|")
+							if fac_pipe >= 0:
+								fac = fac.substr(0, fac_pipe)
 							expect_vis = not (fl > 1
 									or (fl == 1 and fac == "N"))
 						else:
@@ -4021,6 +4026,7 @@ func _test_passages() -> bool:
 	# width band, and have NO parcel intruding into the cleared cut. Also
 	# asserts passages actually occur often enough to shape the city.
 	var found := 0
+	var passage_frontage_lots := 0
 	for seed_v: int in [WorldSeed.get_world_seed(),
 			WorldSeed.get_world_seed() + 777]:
 		WorldSeed.set_world_seed(seed_v)
@@ -4048,6 +4054,19 @@ func _test_passages() -> bool:
 				WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
 				return false
 			for s: Dictionary in block["buildings"]:
+				if str(s.get("frontage_role", "")) == "passage":
+					passage_frontage_lots += 1
+					var frontage_id := str(s.get("frontage_edge_id", ""))
+					var expected_id := "passage:%s" % str(block.get("id", ""))
+					var frontage_center: Vector2 = s.get("frontage_center", Vector2.INF) as Vector2
+					var road_point: Vector2 = p.get("road_point", Vector2.INF) as Vector2
+					if frontage_id != expected_id or frontage_id == str(p.get("road_edge_id", "")) \
+							or not frontage_center.is_finite() \
+							or (road_point.is_finite() and frontage_center.distance_to(road_point) < 0.1):
+						print("[CityTest] passage frontage metadata malformed in %s: %s"
+								% [block["id"], str(s)])
+						WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
+						return false
 				var lot: Rect2 = s["rect"]
 				if CityPlan._lots_overlap(lot, float(s.get("yaw", 0.0)),
 						band, 0.0, 0.05):
@@ -4056,7 +4075,7 @@ func _test_passages() -> bool:
 					WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
 					return false
 	WorldSeed.set_world_seed(WorldSeed.DEFAULT_SEED)
-	print("[CityTest] passages checked: %d blocks pierced" % found)
+	print("[CityTest] passages checked: %d blocks pierced, passage frontage lots: %d" % [found, passage_frontage_lots])
 	return found >= 6
 
 
@@ -5407,6 +5426,28 @@ func _test_negative_coordinates(plan: CityPlan) -> bool:
 	return blocks_found > 0 and pos_blocks > 0
 
 
+func _test_block_cell_keys(plan: CityPlan) -> bool:
+	var cells: Array[Vector2i] = []
+	var seen: Dictionary = {}
+	for block: Dictionary in plan.city_blocks():
+		var cell: Vector2i = block.get("cell", Vector2i(999999, 999999)) as Vector2i
+		if seen.has(cell):
+			print("[CityTest] duplicate city block cell key %s (%s and %s)"
+					% [str(cell), str(seen[cell]), str(block.get("id", ""))])
+			return false
+		seen[cell] = str(block.get("id", ""))
+		cells.append(cell)
+	var repeated := CityPlan.new(plan.seed_used)
+	var repeated_cells: Array[Vector2i] = []
+	for block: Dictionary in repeated.city_blocks():
+		repeated_cells.append(block.get("cell", Vector2i(999999, 999999)) as Vector2i)
+	if cells != repeated_cells:
+		print("[CityTest] city block cell keys changed across same-seed generation")
+		return false
+	print("[CityTest] city block cell keys checked: %d" % cells.size())
+	return not cells.is_empty()
+
+
 func _test_asset_pipeline() -> bool:
 	# G9 M2: AssetCatalog deterministic + budget + fallback
 	# Verify registry pure, deterministic, byte-identical shuffled, fallback, caps, 1 collider, 9 resident.
@@ -5537,7 +5578,7 @@ func _test_asset_pipeline() -> bool:
 	transform_probe.push_layer("asset_probe:f0")
 	transform_probe.queue_asset_wall(probe_pos, Vector3(2.0, 2.05, 0.18),
 			WorldConstants.COL_ASSET_FALLBACK, str(info_a.get("res_path", "")),
-			1.0, false, PI * 0.5)
+			1.0, false, PI * 0.5, "N", ["N"])
 	transform_probe.pop_layer()
 	transform_probe.pop_building_transform()
 	var transformed_asset: Dictionary = transform_probe.asset_instances()[0]
@@ -5547,10 +5588,31 @@ func _test_asset_pipeline() -> bool:
 		print("[CityTest] asset: rotated transform not applied pos=%s yaw=%.3f" % [str(transformed_pos), transformed_yaw])
 		return false
 	if str(transformed_asset.get("building_id", "")) != "asset_probe" \
-			or int(transformed_asset.get("floor_i", -1)) != 0:
-		print("[CityTest] asset: ownership metadata missing %s" % str(transformed_asset))
+			or int(transformed_asset.get("floor_i", -1)) != 0 \
+			or str(transformed_asset.get("facade", "")) != "N" \
+			or not (transformed_asset.get("facade_sides", []) as Array).has("N"):
+		print("[CityTest] asset: complete reveal ownership metadata missing %s" % str(transformed_asset))
 		return false
-	print("[CityTest] PASS  wall_2m rotated transform and layer ownership")
+	if not MeshBatcher.reveal_layer_hidden("asset_probe:f0:N", "asset_probe", 0, ["N"]):
+		print("[CityTest] asset: structural N facade should be hidden")
+		return false
+	if not MeshBatcher.reveal_asset_hidden(transformed_asset, "asset_probe", 0, ["N"]):
+		print("[CityTest] asset: wall_2m stayed visible with owning N facade hidden")
+		return false
+	if MeshBatcher.reveal_asset_hidden(transformed_asset, "asset_probe", 0, ["E"]):
+		print("[CityTest] asset: wall_2m hid for unrelated E facade")
+		return false
+	var asset_holder := Node3D.new()
+	add_child(asset_holder)
+	transform_probe.flush_into(asset_holder, 1, false)
+	var gate_state := {}
+	transform_probe.apply_floor_gate_probe("asset_probe", 0, ["N"], gate_state)
+	if bool(gate_state.get("asset:0", true)):
+		print("[CityTest] asset: materialized wall_2m remained visible after N gate")
+		asset_holder.free()
+		return false
+	asset_holder.free()
+	print("[CityTest] PASS  wall_2m rotated transform and exact reveal parity")
 	print("[CityTest] asset: wall_2m probe OK exists %s fallback %s, %d chunks with probe, caps %d" % [str(exists_a), str(not exists_a), asset_chunks, WorldConstants.MAX_ASSET_RESOLVES_PER_CHUNK])
 	return true
 

@@ -199,19 +199,45 @@ func pop_layer() -> void:
 # --- G9 M2 Asset Pipeline: queue modular wall instances (visual only, 0 collider) ---
 # Asset positions/yaws enter in the builder's pre-transform frame. Apply the
 # active full-building transform here so GLB and fallback instances cannot
-# detach from rotated BuildingSpecs. Preserve layer ownership for reveal gates.
-func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: String, scale: float, has_collision: bool, yaw: float = 0.0) -> void:
+# detach from rotated BuildingSpecs. Preserve the complete reveal ownership
+# tuple instead of relying on the generic floor layer alone.
+func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: String,
+		scale: float, has_collision: bool, yaw: float = 0.0,
+		facade: String = "", facade_sides: Array = [], roof_layer: bool = false) -> void:
 	var asset_pos := pos
 	var asset_yaw := yaw
 	var layer_key: String = _layers.back()
 	var building_id := ""
 	var floor_i := -1
+	var resolved_facade := facade
+	var resolved_facades: Array = facade_sides.duplicate()
 	var separator := layer_key.find(":")
 	if separator >= 0:
 		building_id = layer_key.substr(0, separator)
 		var suffix := layer_key.substr(separator + 1)
 		if suffix.begins_with("f"):
-			floor_i = int(suffix.substr(1).split(":")[0])
+			var floor_text := suffix.substr(1).split(":")[0]
+			floor_i = int(floor_text)
+			if resolved_facades.is_empty() and suffix.count(":") >= 1:
+				resolved_facade = suffix.substr(suffix.find(":") + 1)
+				resolved_facades.append(resolved_facade)
+	if resolved_facades.is_empty() and resolved_facade != "":
+		resolved_facades.append(resolved_facade)
+	# Reveal ownership is the structural facade letter: strip material-bucket
+	# suffixes (for example N|g from a glass layer) so gate comparisons stay
+	# exact no matter which layer queued the asset.
+	var facade_pipe := resolved_facade.find("|")
+	if facade_pipe >= 0:
+		resolved_facade = resolved_facade.substr(0, facade_pipe)
+	var clean_sides: Array = []
+	for side_variant in resolved_facades:
+		var side_name := str(side_variant)
+		var side_pipe := side_name.find("|")
+		if side_pipe >= 0:
+			side_name = side_name.substr(0, side_pipe)
+		if side_name != "" and not clean_sides.has(side_name):
+			clean_sides.append(side_name)
+	resolved_facades = clean_sides
 	if not _building_transform_stack.is_empty():
 		var transform: Dictionary = _building_transform_stack.back()
 		var origin: Vector3 = transform["origin"] as Vector3
@@ -222,7 +248,69 @@ func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: Strin
 		"pos": asset_pos, "size": size, "color": color, "res_path": res_path,
 		"scale": scale, "has_collision": has_collision, "yaw": asset_yaw,
 		"layer": layer_key, "building_id": building_id, "floor_i": floor_i,
+		"facade": resolved_facade, "facade_sides": resolved_facades,
+		"roof": roof_layer,
 	})
+
+
+## One reveal predicate is shared by structural layer nodes and queued assets.
+## Keeping the parser here prevents ChunkManager and test probes from growing
+## subtly different floor/facade/roof rules.
+static func reveal_layer_hidden(layer_key: String, tag: String,
+		max_floor: int, faded: Array) -> bool:
+	if max_floor < 0 or tag == "" or not layer_key.begins_with(tag + ":"):
+		return false
+	var suffix := layer_key.substr(tag.length() + 1)
+	if suffix.begins_with("roof"):
+		return true
+	if not suffix.begins_with("f"):
+		return false
+	var rest := suffix.substr(1)
+	var colon := rest.find(":")
+	if colon < 0:
+		return int(rest) > max_floor
+	var fl := int(rest.substr(0, colon))
+	var facade_name := rest.substr(colon + 1)
+	# Material layers may append a bucket suffix (for example N|g for glass),
+	# but reveal ownership is always the structural facade letter.
+	var bucket_sep := facade_name.find("|")
+	if bucket_sep >= 0:
+		facade_name = facade_name.substr(0, bucket_sep)
+	return fl > max_floor or (fl == max_floor and faded.has(facade_name))
+
+
+static func reveal_asset_hidden(asset: Dictionary, tag: String,
+		max_floor: int, faded: Array) -> bool:
+	# An explicitly keyed asset is always a child of the same structural layer.
+	# Interior wall modules use the generic f<floor> layer and therefore also
+	# carry facade_sides below.
+	if reveal_layer_hidden(str(asset.get("layer", "")), tag, max_floor, faded):
+		return true
+	if max_floor < 0 or tag == "" \
+			or str(asset.get("building_id", "")) != tag:
+		return false
+	var asset_floor := int(asset.get("floor_i", -1))
+	if asset_floor < 0:
+		return false
+	if asset_floor > max_floor:
+		return true
+	if bool(asset.get("roof", false)):
+		return true
+	if asset_floor != max_floor:
+		return false
+	var sides: Array = asset.get("facade_sides", []) as Array
+	if sides.is_empty():
+		var one_side := str(asset.get("facade", ""))
+		if one_side != "":
+			sides = [one_side]
+	for side_variant in sides:
+		var side_name := str(side_variant)
+		var side_pipe := side_name.find("|")
+		if side_pipe >= 0:
+			side_name = side_name.substr(0, side_pipe)
+		if faded.has(side_name):
+			return true
+	return false
 
 func asset_instance_count() -> int:
 	return _asset_instances.size()
@@ -329,22 +417,11 @@ func collider_count() -> int:
 func apply_floor_gate_probe(tag: String, max_floor: int, faded: Array,
 		out: Dictionary) -> void:
 	for key: String in layer_nodes.keys():
-		var hide := false
-		if max_floor >= 0 and tag != "" and key.begins_with(tag + ":"):
-			var suffix := key.substr(tag.length() + 1)
-			if suffix.begins_with("roof"):
-				hide = true
-			elif suffix.begins_with("f"):
-				var rest := suffix.substr(1)
-				var colon := rest.find(":")
-				if colon >= 0:
-					var fl := int(rest.substr(0, colon))
-					var facade := rest.substr(colon + 1)
-					hide = fl > max_floor \
-							or (fl == max_floor and faded.has(facade))
-				else:
-					hide = int(rest) > max_floor
+		var hide := reveal_layer_hidden(key, tag, max_floor, faded)
 		out[key] = not hide
+	for asset_i in _asset_instances.size():
+		out["asset:%d" % asset_i] = not reveal_asset_hidden(
+			_asset_instances[asset_i], tag, max_floor, faded)
 
 
 ## Full deterministic record of everything added (for --citytest equality).
@@ -442,6 +519,9 @@ func flush_into(parent: Node3D, body_layer := 1,
 				node3d.set_meta("asset_layer_key", str(a.get("layer", "")))
 				node3d.set_meta("asset_building_id", str(a.get("building_id", "")))
 				node3d.set_meta("asset_floor_i", int(a.get("floor_i", -1)))
+				node3d.set_meta("asset_facade", str(a.get("facade", "")))
+				node3d.set_meta("asset_facade_sides", (a.get("facade_sides", []) as Array).duplicate())
+				node3d.set_meta("asset_roof", bool(a.get("roof", false)))
 				node3d.add_to_group("asset_wall")
 				_asset_nodes.append(node3d)
 				parent.add_child(node3d)
@@ -469,6 +549,9 @@ func flush_into(parent: Node3D, body_layer := 1,
 		mi_fb.set_meta("asset_layer_key", str(a.get("layer", "")))
 		mi_fb.set_meta("asset_building_id", str(a.get("building_id", "")))
 		mi_fb.set_meta("asset_floor_i", int(a.get("floor_i", -1)))
+		mi_fb.set_meta("asset_facade", str(a.get("facade", "")))
+		mi_fb.set_meta("asset_facade_sides", (a.get("facade_sides", []) as Array).duplicate())
+		mi_fb.set_meta("asset_roof", bool(a.get("roof", false)))
 		mi_fb.add_to_group("asset_wall")
 		_asset_nodes.append(mi_fb)
 		parent.add_child(mi_fb)

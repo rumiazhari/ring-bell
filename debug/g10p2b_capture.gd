@@ -2,7 +2,7 @@ extends Node
 ## Authentic Forward+ visual acceptance capture for G10-P2B.
 ## The images are saved from the live game's viewport, never synthesized.
 
-const OUT_DIR := "C:/Vibe Code project/Godot Project/ring-bell/captures/g10p2b_fix2_iter3_20260904"
+const OUT_DIR := "C:/Vibe Code project/Godot Project/ring-bell/captures/g10p2b_fix3_iter3_20260904"
 const CAPTURE_WAIT := 3.0
 
 var _main: Node3D
@@ -93,11 +93,14 @@ func _run() -> void:
 	var hub := _city.find_spawn_point()
 	var core := _pick_core_point(hub)
 	var junction := _pick_junction(graph, hub)
+	var wider := _pick_dense_point(hub)
 	var courtyard := _pick_courtyard_block(hub)
 	var alley_entrance := _pick_courtyard_entrance(courtyard, hub)
+	var reveal_point := _pick_reveal_point(core)
 	print("[G10P2BCapture] targets hub=", hub, " core=", core,
 			" junction=", junction, " alley=", alley_entrance,
-			" courtyard=", courtyard)
+			" courtyard=", courtyard, " reveal=", reveal_point)
+	_describe_nearby_blocks("core", core)
 
 	await _move_player(core)
 	await _capture_tilted("01_dense_historic_street.png", core, 18.0, 4.0, 78.0,
@@ -114,8 +117,12 @@ func _run() -> void:
 	await _move_player(courtyard)
 	await _capture_top("04_interior_courtyard_block.png", courtyard, 46.0, 78.0)
 
-	await _move_player(hub)
-	await _capture_top("05_wider_inner_city.png", hub, 150.0, 76.0)
+	await _move_player(wider)
+	await _capture_top("05_wider_inner_city.png", wider, 112.0, 76.0)
+
+	await _move_player(reveal_point)
+	await _capture_reveal("06_reveal_parity_interior.png", reveal_point,
+			_road_azimuth(reveal_point, &""))
 
 	print("[G10P2BCapture] all captures done")
 	get_tree().quit(0)
@@ -152,19 +159,64 @@ func _move_player(p: Vector2) -> void:
 	await _wait(CAPTURE_WAIT)
 
 
+func _describe_nearby_blocks(label: String, point: Vector2) -> void:
+	var ranked: Array = []
+	for block: Dictionary in _city.city_blocks():
+		var center: Vector2 = block.get("center", point) as Vector2
+		var distance := center.distance_to(point)
+		if distance <= 110.0:
+			ranked.append({"distance": distance, "block": block})
+	ranked.sort_custom(_nearby_block_cmp)
+	for i in mini(6, ranked.size()):
+		var block: Dictionary = ranked[i]["block"] as Dictionary
+		var bs: Array = block.get("buildings", []) as Array
+		print("[G10P2BCapture] ", label, " block=", block.get("id", ""),
+			" d=", ranked[i]["distance"], " kind=", block.get("kind", ""),
+			" area=", absf(CityPlan._polygon_signed_area(block.get("polygon", PackedVector2Array()) as PackedVector2Array)),
+			" buildings=", bs.size(), " frontage=", block.get("frontage_buildings", 0),
+			" void=", block.get("void_reason", ""))
+
+
+static func _nearby_block_cmp(a: Dictionary, b: Dictionary) -> bool:
+	return float(a.get("distance", INF)) < float(b.get("distance", INF))
+
+
 func _pick_core_point(fallback: Vector2) -> Vector2:
 	var best := fallback
-	var best_count := 0
+	var best_score := -1.0
 	for z in range(-240, 241, 16):
 		for x in range(-240, 241, 16):
 			var p := Vector2(x, z)
 			if p.length() > 290.0:
 				continue
-			var count := _city.buildings_in_rect(Rect2(p - Vector2(48.0, 48.0), Vector2(96.0, 96.0))).size()
-			if count > best_count:
-				best_count = count
-				best = _city.nearest_city_road_point(p)
+			var candidate := _city.nearest_city_road_point(p)
+			if candidate == Vector2.INF:
+				continue
+			var angle := _road_azimuth(candidate, &"")
+			var tangent := Vector2(cos(angle), sin(angle))
+			var normal := Vector2(-tangent.y, tangent.x)
+			var left := _count_buildings_in_road_band(candidate, tangent, normal, 1.0)
+			var right := _count_buildings_in_road_band(candidate, tangent, normal, -1.0)
+			var count := _city.buildings_in_rect(Rect2(candidate - Vector2(48.0, 48.0), Vector2(96.0, 96.0))).size()
+			var score := float(mini(left, right)) * 10000.0 + float(count) * 100.0 - candidate.length()
+			if score > best_score:
+				best_score = score
+				best = candidate
 	return best if best != Vector2.INF else fallback
+
+
+func _count_buildings_in_road_band(center: Vector2, tangent: Vector2,
+		normal: Vector2, side: float) -> int:
+	var count := 0
+	for spec_variant in _city.city_buildings() as Array:
+		var spec: Dictionary = spec_variant as Dictionary
+		var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var delta := lot.get_center() - center
+		var along := delta.dot(tangent)
+		var lateral := delta.dot(normal) * side
+		if absf(along) <= 52.0 and lateral >= 4.0 and lateral <= 34.0:
+			count += 1
+	return count
 
 
 func _pick_primary_point(graph: Dictionary, t: float, fallback: Vector2) -> Vector2:
@@ -186,12 +238,26 @@ func _pick_primary_point(graph: Dictionary, t: float, fallback: Vector2) -> Vect
 
 func _pick_junction(graph: Dictionary, fallback: Vector2) -> Vector2:
 	var best := fallback
-	var best_score := 0
+	var best_score := -1.0
 	for node: Dictionary in graph.get("nodes", []):
 		var p: Vector2 = node.get("center", fallback) as Vector2
 		var degree := int(node.get("degree", 0))
-		if degree > best_score and p.length() < 300.0:
-			best_score = degree
+		if p.length() < 300.0:
+			var nearby := _city.buildings_in_rect(Rect2(p - Vector2(42.0, 42.0), Vector2(84.0, 84.0)))
+			var corner_count := 0
+			for spec_variant in nearby:
+				var spec: Dictionary = spec_variant as Dictionary
+				if str(spec.get("frontage_role", "")) == "corner":
+					corner_count += 1
+			var angle := _road_azimuth(p, &"")
+			var tangent := Vector2(cos(angle), sin(angle))
+			var normal := Vector2(-tangent.y, tangent.x)
+			var side_density := mini(
+				_count_buildings_in_road_band(p, tangent, normal, 1.0),
+				_count_buildings_in_road_band(p, tangent, normal, -1.0))
+			var score := float(side_density) * 100000.0 + float(corner_count) * 10000.0 + float(degree) * 1000.0 + float(nearby.size())
+			if score > best_score:
+				best_score = score
 			best = p
 	return best
 
@@ -214,6 +280,8 @@ func _pick_dense_point(fallback: Vector2) -> Vector2:
 func _pick_courtyard_block(fallback: Vector2) -> Vector2:
 	var best := fallback
 	var best_score := -1.0
+	var access_fallback := fallback
+	var access_score := -1.0
 	for block: Dictionary in _city.city_blocks():
 		if block.get("kind", &"") != &"built":
 			continue
@@ -222,16 +290,44 @@ func _pick_courtyard_block(fallback: Vector2) -> Vector2:
 			continue
 		var regions: Array = block.get("courtyard_regions", []) as Array
 		var buildings: Array = block.get("buildings", []) as Array
+		var passage: Dictionary = block.get("passage", {}) as Dictionary
+		if not passage.is_empty() and buildings.size() >= 3:
+			var passage_center: Vector2 = passage.get("entry_point",
+					(passage.get("rect", Rect2()) as Rect2).get_center()) as Vector2
+			var access_candidate := passage_center
+			var access_candidate_score := float(buildings.size()) * 1000.0 - passage_center.distance_to(fallback)
+			if access_candidate_score > access_score:
+				access_score = access_candidate_score
+				access_fallback = access_candidate
 		if regions.is_empty() or buildings.size() < 2:
 			continue
 		var area := float(regions[0].get("area_m2", 0.0)) if regions[0] is Dictionary else 0.0
-		var passage: Dictionary = block.get("passage", {}) as Dictionary
 		var score := float(buildings.size()) * 1000.0 + area
 		if not passage.is_empty():
 			score += 50000.0
 		if score > best_score:
 			best_score = score
-			best = center
+			best = regions[0].get("center", center) as Vector2
+	return best if best_score >= 0.0 else access_fallback
+
+
+func _pick_reveal_point(fallback: Vector2) -> Vector2:
+	var best := fallback
+	var best_score := -1.0
+	for block: Dictionary in _city.city_blocks():
+		var center: Vector2 = block.get("center", fallback) as Vector2
+		if center.length() > 300.0:
+			continue
+		for spec_variant in block.get("buildings", []) as Array:
+			var spec: Dictionary = spec_variant as Dictionary
+			if str(spec.get("frontage_role", "")) == "rear":
+				continue
+			var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+			var lot_center := lot.get_center()
+			var score := float(lot.size.x * lot.size.y) - lot_center.distance_to(fallback) * 0.05
+			if score > best_score:
+				best_score = score
+				best = lot_center
 	return best
 
 
@@ -240,7 +336,13 @@ func _pick_courtyard_entrance(courtyard: Vector2, fallback: Vector2) -> Vector2:
 	var best_d := INF
 	for block: Dictionary in _city.city_blocks():
 		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
-		if center.distance_to(courtyard) > 0.5:
+		var target := center
+		for region_variant in block.get("courtyard_regions", []) as Array:
+			var region: Dictionary = region_variant as Dictionary
+			var region_center: Vector2 = region.get("center", center) as Vector2
+			if region_center.distance_to(courtyard) < target.distance_to(courtyard):
+				target = region_center
+		if target.distance_to(courtyard) > 8.0:
 			continue
 		var passage: Dictionary = block.get("passage", {}) as Dictionary
 		if passage.is_empty():
@@ -308,6 +410,25 @@ func _road_azimuth(center: Vector2, hierarchy: StringName) -> float:
 				best_distance = d
 				best_angle = atan2(delta.y, delta.x)
 	return best_angle
+
+
+func _capture_reveal(file_name: String, center: Vector2, road_angle: float) -> void:
+	var camera := Camera3D.new()
+	var side := Vector2(cos(road_angle + PI * 0.5), sin(road_angle + PI * 0.5))
+	var target := Vector3(center.x, _world.surface_height_at(center) + 2.0, center.y)
+	var camera_point := center + side * 1.25
+	camera.position = Vector3(camera_point.x, target.y, camera_point.y)
+	camera.fov = 72.0
+	camera.far = 2400.0
+	add_child(camera)
+	# The camera stands just off the selected building. Aim at the building
+	# point itself; adding `side` here would point back out into the street.
+	camera.look_at(target, Vector3.UP)
+	camera.make_current()
+	await _wait_frames()
+	_snap(file_name)
+	camera.queue_free()
+	await get_tree().process_frame
 
 
 func _capture_top(file_name: String, center: Vector2, height: float, fov: float) -> void:

@@ -39,7 +39,8 @@ var _crates: Array[FoodCrate] = []
 var _mode := WorldMode.LEGACY_BLOCK
 var _gate_coord := Vector2i(99, 99)   # chunk currently floor-gated
 var _gate_tag := ""                   # building id currently floor-gated
-var _was_inside := false              # interior hysteresis state
+var _gate_floor := -1                  # storey currently floor-gated
+var _was_inside := false              # InteriorProbe hysteresis state
 var _faded := []                      # currently faded facade letters
 
 var city_plan: CityPlan
@@ -84,6 +85,12 @@ func _ready() -> void:
 		stream_probe.name = "G10P2BStreamProbe"
 		add_child(stream_probe)
 		return
+	if args.has("--g10p2b-revealtest"):
+		var reveal_tester: Node = load("res://debug/g10p2b_reveal_test.gd").new()
+		reveal_tester.name = "G10P2BRevealTest"
+		add_child(reveal_tester)
+		return
+
 	if args.has("--g10p2b-spawnprobe"):
 		var spawn_probe: Node = load("res://debug/g10p2b_spawn_probe.gd").new()
 		spawn_probe.name = "G10P2BSpawnProbe"
@@ -250,7 +257,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 	# Any test flag bypasses menu
 	var test_flags: Array[String] = [
 			"--smoke", "--soak", "--legacy-block",
-			"--citytest", "--cityruntime", "--g10p2b-morphologytest", "--walkthrough", "--havoctest",
+			"--citytest", "--cityruntime", "--g10p2b-morphologytest", "--g10p2b-revealtest", "--walkthrough", "--havoctest",
 			"--terraintest", "--terrainmaterialtest",
 			"--hydrotest", "--hydromaterialtest",
 			"--biometest", "--biomaterialtest",
@@ -686,28 +693,37 @@ func _update_city_interior() -> void:
 		# the ACTUAL Camera3D lens position - the rig origin tracks the
 		# PLAYER, so it sits at the player and its "sector" was near zero.
 		var cam_xz := p
-		if camera_rig != null and is_instance_valid(camera_rig) and camera_rig.is_inside_tree():
-			# Guard against shutdown race where camera_rig is freed but still instance-valid.
-			var cam_pos: Vector3 = camera_rig.camera_world_position() if camera_rig.has_method("camera_world_position") else Vector3.ZERO
+		var active_camera := get_viewport().get_camera_3d()
+		if active_camera != null and is_instance_valid(active_camera) \
+				and active_camera.is_inside_tree():
+			var cam_pos: Vector3 = active_camera.global_position
 			if cam_pos.is_finite():
 				cam_xz = Vector2(cam_pos.x, cam_pos.z)
+		elif camera_rig != null and is_instance_valid(camera_rig) and camera_rig.is_inside_tree():
+			# Guard against shutdown race where camera_rig is freed but still instance-valid.
+			var rig_cam_pos: Vector3 = camera_rig.camera_world_position() if camera_rig.has_method("camera_world_position") else Vector3.ZERO
+			if rig_cam_pos.is_finite():
+				cam_xz = Vector2(rig_cam_pos.x, rig_cam_pos.z)
 			else:
 				# Fallback to rig position if camera not yet inside tree.
 				if camera_rig.is_inside_tree():
 					cam_xz = Vector2(camera_rig.global_position.x, camera_rig.global_position.z)
 		var new_faded: Array = InteriorProbe.faded_facades(p, cam_xz) \
 				if floor_i < n else []
-		if owner_coord != _gate_coord or tag != _gate_tag:
+		if owner_coord != _gate_coord or tag != _gate_tag \
+				or floor_i != _gate_floor or new_faded != _faded:
 			if _gate_coord != Vector2i(99, 99):
 				chunk_manager.apply_floor_gate(_gate_coord, "", -1)
-		chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded)
+			chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded)
 		_gate_coord = owner_coord
 		_gate_tag = tag
+		_gate_floor = floor_i
 		_faded = new_faded
 	elif _gate_coord != Vector2i(99, 99):
 		chunk_manager.apply_floor_gate(_gate_coord, "", -1)
 		_gate_coord = Vector2i(99, 99)
 		_gate_tag = ""
+		_gate_floor = -1
 		_faded = []
 	if camera_rig != null:
 		camera_rig.set_interior(gate_active)

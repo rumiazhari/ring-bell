@@ -826,17 +826,18 @@ static func _polygon_area(poly: PackedVector2Array) -> float:
 static func _alley(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
 		world_plan: WorldPlan = null) -> void:
 	var p: Dictionary = block.get("passage", {}) as Dictionary
-	if p.is_empty():
+	if p.is_empty() or not bool(p.get("road_connected", false)):
 		return
-	var band: Rect2 = (p["rect"] as Rect2).intersection(chunk_rect)
-	if band.size.x <= 0.01 or band.size.y <= 0.01:
+	var passage_poly: PackedVector2Array = p.get("polygon",
+		PackedVector2Array()) as PackedVector2Array
+	if passage_poly.size() < 3:
 		return
-	var ground_y := 0.0
-	if world_plan != null:
-		ground_y = world_plan.surface_height_at(band.get_center())
-	b.add_visual_box(Vector3(band.get_center().x, ground_y + 0.055,
-			band.get_center().y),
-			Vector3(band.size.x, 0.09, band.size.y), ALLEY_FLOOR)
+	var clipped := _clip_polygon_to_rect(passage_poly, chunk_rect)
+	if clipped.size() < 3 or _polygon_area(clipped) < 2.0:
+		return
+	var center := _polygon_center(clipped)
+	var ground_y := world_plan.surface_height_at(center) if world_plan != null else 0.0
+	b.add_visual_polygon(clipped, ground_y + 0.055, ALLEY_FLOOR)
 
 
 static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,

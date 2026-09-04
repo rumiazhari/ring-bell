@@ -123,6 +123,8 @@ func _check_plan(plan: CityPlan, label: String) -> void:
 	_expect(float(extent.get("dense_radius_m", 0.0)) >= 600.0, label + " dense radius target")
 	_expect(float(extent.get("influence_radius_m", 0.0)) >= 1300.0, label + " influence radius target")
 	_check_fabric_metrics(plan, label)
+	_check_void_semantics(plan, label)
+	_check_large_dense_access(plan, label)
 	_expect(plan.validate_area(Rect2(-950.0, -950.0, 1900.0, 1900.0)).is_empty(), label + " no block/building overlaps")
 
 
@@ -450,7 +452,12 @@ func _check_fabric_metrics(plan: CityPlan, label: String) -> void:
 		if edge_id != "":
 			var centers: Array = frontage_by_edge.get(edge_id, []) as Array
 			var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
-			centers.append(spec.get("frontage_center", rect.get_center()) as Vector2)
+			var edge_i := int(spec.get("door_edge", 0))
+			var frontage_span := rect.size.x if edge_i == 0 or edge_i == 2 else rect.size.y
+			centers.append({
+				"center": spec.get("frontage_center", rect.get_center()) as Vector2,
+				"half_span": frontage_span * 0.5,
+			})
 			frontage_by_edge[edge_id] = centers
 		if str(spec.get("frontage_role", "street")) == "corner":
 			corner_lots += 1
@@ -492,8 +499,11 @@ func _check_fabric_metrics(plan: CityPlan, label: String) -> void:
 				samples += 1
 				edge_samples += 1
 				var hit := false
-				for frontage_center_variant in centers:
-					if p.distance_to(frontage_center_variant as Vector2) <= 8.5:
+				for frontage_variant in centers:
+					var frontage: Dictionary = frontage_variant as Dictionary
+					var frontage_center: Vector2 = frontage.get("center", Vector2.ZERO) as Vector2
+					var half_span := float(frontage.get("half_span", 0.0))
+					if p.distance_to(frontage_center) <= half_span + 1.2:
 						hit = true
 						break
 				if hit:
@@ -558,13 +568,113 @@ func _check_fabric_metrics(plan: CityPlan, label: String) -> void:
 	# A majority of ordinary street samples must have a frontage candidate.
 	# Junction mouths and alleys are excluded above; edge_ratio separately
 	# catches a whole road edge that lost all of its parcels.
-	_expect(sample_ratio >= 0.55, label + " frontage sample continuity >= 55%")
-	_expect(edge_ratio >= 0.60, label + " normal road-edge continuity >= 60%")
+	_expect(sample_ratio >= 0.75, label + " physical frontage coverage >= 75%")
+	_expect(edge_ratio >= 0.75, label + " normal road-edge continuity >= 75%")
 	_expect(corner_lots >= 4, label + " intentional corner frontage lots")
 	_expect(empty_ratio <= 0.08, label + " empty dense-block ratio <= 8%")
 	_expect(unclassified_ratio <= 0.10, label + " unclassified dense void ratio <= 10%")
 
 
+func _check_void_semantics(plan: CityPlan, label: String) -> void:
+	var dense_area := 0.0
+	var unresolved_area := 0.0
+	var mega_faces := 0
+	var invalid_regions := 0
+	var underfilled_blocks := 0
+	var max_courtyard := 0.0
+	for block: Dictionary in plan.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= 600.0 or (block.get("kind", &"built") as StringName) != &"built":
+			continue
+		var area := absf(_polygon_area(block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+		if area < 1.0:
+			continue
+		dense_area += area
+		var buildings: Array = block.get("buildings", []) as Array
+		var occupied := 0.0
+		for spec_variant in buildings:
+			var spec: Dictionary = spec_variant as Dictionary
+			var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+			occupied += lot.size.x * lot.size.y
+		if area > 6000.0 and buildings.size() < 4:
+			mega_faces += 1
+		var valid_courtyard_area := 0.0
+		for region_variant in block.get("courtyard_regions", []) as Array:
+			var region: Dictionary = region_variant as Dictionary
+			var region_area := float(region.get("area_m2", 0.0))
+			max_courtyard = maxf(max_courtyard, region_area)
+			var enclosed := bool(region.get("enclosed", true))
+			var accessed := bool(region.get("access", false))
+			var sides := int(region.get("enclosure_sides", 0))
+			if region_area > WorldConstants.CITY_COURTYARD_MAX_SURFACE_AREA_M2 \
+					or region_area > occupied * 0.85 or not enclosed or not accessed or sides < 3:
+				invalid_regions += 1
+				continue
+			valid_courtyard_area += region_area
+		var residual := maxf(area - occupied, 0.0)
+		if residual > area * 0.55 and valid_courtyard_area < residual * 0.70:
+			underfilled_blocks += 1
+			unresolved_area += maxf(residual - valid_courtyard_area, 0.0)
+	var unresolved_ratio := unresolved_area / maxf(dense_area, 1.0)
+	print("[G10P2BMorphology] ", label, " void_semantics mega_faces=", mega_faces,
+			" invalid_courtyards=", invalid_regions, " underfilled_blocks=", underfilled_blocks,
+			" unresolved_ratio=", unresolved_ratio, " max_courtyard=", max_courtyard)
+	_expect(mega_faces == 0, label + " no dense mega-faces")
+	_expect(invalid_regions == 0, label + " every courtyard is enclosed/accessed and bounded")
+	_expect(unresolved_ratio <= 0.08, label + " unresolved dense void ratio <= 8%")
+	_expect(max_courtyard <= WorldConstants.CITY_COURTYARD_MAX_SURFACE_AREA_M2,
+			label + " courtyard surface max respected")
+
+
+func _check_large_dense_access(plan: CityPlan, label: String) -> void:
+	# Large, underfilled dense faces need a real road-connected access seam
+	# before they can host a courtyard or a second building row. This catches
+	# the old random-passage gap without accepting a cosmetic open-space label.
+	var candidate_count := 0
+	var accessed_count := 0
+	var missing_ids: Array[String] = []
+	var edges: Array = plan.road_graph().get("edges", []) as Array
+	for block: Dictionary in plan.city_blocks():
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if center.length() >= 600.0 or (block.get("kind", &"built") as StringName) != &"built":
+			continue
+		var area := absf(_polygon_area(block.get("polygon", PackedVector2Array()) as PackedVector2Array))
+		var buildings: Array = block.get("buildings", []) as Array
+		if area < 10000.0 or buildings.size() > 5:
+			continue
+		var poly: PackedVector2Array = block.get("polygon", PackedVector2Array()) as PackedVector2Array
+		var road_adjacent := false
+		for boundary_i in poly.size():
+			var a: Vector2 = poly[boundary_i]
+			var z: Vector2 = poly[(boundary_i + 1) % poly.size()]
+			if a.distance_to(z) < 6.0:
+				continue
+			var mid: Vector2 = (a + z) * 0.5
+			for edge: Dictionary in edges:
+				if edge.get("hierarchy", &"") == &"alley" or bool(edge.get("is_bridge", false)):
+					continue
+				var road_poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
+				var road_width := float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+				if CityPlan._distance_to_polyline(mid, road_poly) <= road_width * 0.5 + CityPlan._CITY_ROAD_BLOCK_CLEARANCE + 1.0:
+					road_adjacent = true
+					break
+			if road_adjacent:
+				break
+		if not road_adjacent:
+			continue
+		candidate_count += 1
+		var passage: Dictionary = block.get("passage", {}) as Dictionary
+		if not passage.is_empty() and bool(passage.get("road_connected", false)):
+			accessed_count += 1
+		elif missing_ids.size() < 8:
+			missing_ids.append(str(block.get("id", "")))
+	print("[G10P2BMorphology] ", label, " large_dense_access=", accessed_count, "/", candidate_count, " missing=", missing_ids)
+	_expect(candidate_count > 0, label + " has road-adjacent large dense faces")
+	_expect(accessed_count == candidate_count,
+			label + " every road-adjacent large underfilled face has intentional access")
+
+
+# Large-face access regression is defined above.
 func _edge_context(plan: CityPlan, edge: Dictionary) -> String:
 	var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
 	if poly.size() < 2:

@@ -38,7 +38,7 @@ const DOOR_W := 1.5
 
 const _CITY_BOUNDARY_SIDES := 32
 const _CITY_SITE_CANDIDATES := 1200
-const _CITY_MAX_SITES := 230
+const _CITY_MAX_SITES := 300
 const _CITY_EDGE_EPS := 0.001
 const _CITY_ROAD_BLOCK_CLEARANCE := 2.4
 const _CITY_MIN_SPLIT_BLOCK_AREA := 70.0
@@ -882,7 +882,7 @@ func _generate_city_blocks() -> void:
 		if _distance_to_city_road_raw(p) < 11.0:
 			continue
 		var normalized_r := clampf(radius / WorldConstants.CITY_BLOCK_RADIUS_M, 0.0, 1.0)
-		var min_spacing := lerpf(48.0, 96.0, normalized_r)
+		var min_spacing := lerpf(40.0, 88.0, normalized_r)
 		var too_close := false
 		for existing: Vector2 in sites:
 			if p.distance_to(existing) < min_spacing:
@@ -927,8 +927,13 @@ func _generate_city_blocks() -> void:
 
 	_blocks.sort_custom(_dict_id_cmp)
 	_block_by_cell.clear()
+	var seen_cells: Dictionary = {}
 	for block: Dictionary in _blocks:
-		_block_by_cell[block["cell"]] = block
+		var cell: Vector2i = block["cell"] as Vector2i
+		assert(not seen_cells.has(cell),
+				"duplicate city block cell key: " + str(cell))
+		seen_cells[cell] = true
+		_block_by_cell[cell] = block
 	# Generate parcels only after all cells exist, so global overlap checks can
 	# reject a pathological axis-aligned Rect2 that would cross a cell border.
 	for block: Dictionary in _blocks:
@@ -971,34 +976,33 @@ func _finalize_block_fabric() -> void:
 		block["corner_buildings"] = corner_count
 		block["courtyard_regions"] = []
 		block["courtyard_area_m2"] = 0.0
+		block["residual_area_m2"] = maxf(block_area - occupied, 0.0)
+		block["unresolved_void_area_m2"] = 0.0
+		block["enclosure_sides"] = 0
+		block["courtyard_access"] = false
 		if buildings.is_empty():
-			# Do not relabel every valid dense face as a park. Large/invalid
-			# faces are intentional open space; smaller valid faces receive a
-			# bounded garden region owned by this block instead of exposing the
-			# terrain fallback as an unexplained gray plate.
+			# A valid empty built face is not a courtyard: it has no enclosing
+			# fabric. Only invalid terrain is allowed to remain open here.
 			var invalid := not _is_valid_city_land(center)
-			var intentional_park := block_area >= WorldConstants.CITY_EMPTY_DENSE_BLOCK_MAX_AREA_M2 \
-					or (invalid and block_area >= 4000.0)
-			if intentional_park:
+			if invalid and block_area >= 4000.0:
 				block["kind"] = &"park"
-				block["void_reason"] = &"oversized_or_invalid_open_face"
-				_block_by_cell[block["cell"]] = block
-				continue
-			var empty_regions: Array[Dictionary] = _courtyard_regions_for_block(block)
-			if empty_regions.is_empty():
-				block["kind"] = &"park"
-				block["void_reason"] = &"small_open_face"
+				block["void_reason"] = &"invalid_terrain_open_face"
 			else:
-				block["courtyard_regions"] = empty_regions
-				block["void_reason"] = &"bounded_block_garden"
-				for region: Dictionary in empty_regions:
-					block["courtyard_area_m2"] += float(region.get("area_m2", 0.0))
+				block["void_reason"] = &"unbuilt_valid_face"
 			_block_by_cell[block["cell"]] = block
 			continue
 		var regions: Array[Dictionary] = _courtyard_regions_for_block(block)
 		block["courtyard_regions"] = regions
 		for region: Dictionary in regions:
 			block["courtyard_area_m2"] += float(region.get("area_m2", 0.0))
+			block["enclosure_sides"] = maxi(int(block["enclosure_sides"]), int(region.get("enclosure_sides", 0)))
+			block["courtyard_access"] = bool(block["courtyard_access"]) or bool(region.get("access", false))
+		var residual := float(block["residual_area_m2"])
+		if residual > 0.0 and block["courtyard_area_m2"] < residual * 0.70:
+			block["unresolved_void_area_m2"] = residual - block["courtyard_area_m2"]
+			block["void_reason"] = &"underfilled_repack_required"
+		else:
+			block["void_reason"] = &"bounded_enclosed_courtyard" if not regions.is_empty() else &"bounded_backyard"
 		_block_by_cell[block["cell"]] = block
 
 
@@ -1009,25 +1013,86 @@ func _courtyard_regions_for_block(block: Dictionary) -> Array[Dictionary]:
 	var source: PackedVector2Array = block.get("polygon",
 		PackedVector2Array()) as PackedVector2Array
 	var source_area := absf(_polygon_area(source))
-	if source.size() < 3 or source_area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
-		return []
-	# The building footprints already own the structural area. A single inset
-	# of the same road-derived face is the cheap, stable representation of its
-	# shared rear court; subtracting every rotated footprint with Geometry2D here
-	# made plan generation quadratic and stalled the full contract suite.
-	var inset_scale := 0.72 if source_area > WorldConstants.CITY_COURTYARD_MAX_SURFACE_AREA_M2 else 0.88
-	var display_piece := _inset_polygon(source, inset_scale)
-	var area := absf(_polygon_area(display_piece))
-	if area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
-		return []
 	var buildings: Array = block.get("buildings", []) as Array
-	var region_kind: StringName = &"courtyard" if buildings.size() >= 2 else &"garden"
-	return [{
-		"kind": region_kind,
-		"polygon": display_piece,
-		"area_m2": area,
-		"center": _polygon_centroid(display_piece),
-	}]
+	if source.size() < 3 or source_area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2 \
+			or buildings.size() < 3:
+		return []
+	var occupied := 0.0
+	var residuals: Array[PackedVector2Array] = [source]
+	for spec_variant in buildings:
+		var spec: Dictionary = spec_variant as Dictionary
+		var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var yaw := float(spec.get("yaw", 0.0))
+		occupied += lot.size.x * lot.size.y
+		var next: Array[PackedVector2Array] = []
+		for subject: PackedVector2Array in residuals:
+			for clipped_variant in Geometry2D.clip_polygons(subject, _lot_corners(lot, yaw)):
+				var component: PackedVector2Array = clipped_variant as PackedVector2Array
+				if component.size() >= 3 and _polygon_area(component) >= WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+					next.append(component)
+		residuals = next
+		if residuals.is_empty():
+			break
+	var max_courtyard := minf(WorldConstants.CITY_COURTYARD_MAX_SURFACE_AREA_M2, occupied * 0.85)
+	if max_courtyard < WorldConstants.CITY_COURTYARD_MIN_AREA_M2:
+		return []
+	var passage: Dictionary = block.get("passage", {}) as Dictionary
+	if passage.is_empty() or not bool(passage.get("road_connected", false)):
+		return []
+	var access_poly: PackedVector2Array = passage.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+	if access_poly.size() < 3:
+		return []
+	var out: Array[Dictionary] = []
+	for component in residuals:
+		var area := absf(_polygon_area(component))
+		if area < WorldConstants.CITY_COURTYARD_MIN_AREA_M2 or area > max_courtyard:
+			continue
+		if Geometry2D.intersect_polygons(component, access_poly).is_empty():
+			continue
+		var center := _polygon_centroid(component)
+		var enclosure_sides := _courtyard_enclosure_sides(center, buildings)
+		if enclosure_sides < 3:
+			continue
+		out.append({
+			"kind": &"courtyard" if buildings.size() >= 4 else &"garden",
+			"polygon": component,
+			"area_m2": area,
+			"center": center,
+			"enclosed": true,
+			"access": true,
+			"access_kind": passage.get("kind", &"historic_alley"),
+			"enclosure_sides": enclosure_sides,
+		})
+	out.sort_custom(_surface_region_cmp)
+	if out.size() > WorldConstants.CITY_COURTYARD_MAX_REGIONS_PER_BLOCK:
+		out.resize(WorldConstants.CITY_COURTYARD_MAX_REGIONS_PER_BLOCK)
+	return out
+
+
+func _courtyard_enclosure_sides(center: Vector2, buildings: Array) -> int:
+	var sides := 0
+	for direction: Vector2 in [Vector2(0.0, -1.0), Vector2.RIGHT,
+			Vector2(0.0, 1.0), Vector2.LEFT]:
+		var found := false
+		for step in range(2, 38, 2):
+			var probe := center + direction * float(step)
+			for spec_variant in buildings:
+				var spec: Dictionary = spec_variant as Dictionary
+				if _polygon_contains(_lot_corners(spec.get("rect", Rect2()) as Rect2,
+						float(spec.get("yaw", 0.0))), probe):
+					found = true
+					break
+			if found:
+				break
+		if found:
+			sides += 1
+	return sides
+
+
+static func _rect_polygon(rect: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y),
+		rect.end, Vector2(rect.position.x, rect.end.y)])
 
 
 static func _inset_polygon(poly: PackedVector2Array, scale: float) -> PackedVector2Array:
@@ -1058,11 +1123,17 @@ func _split_city_blocks_by_roads(source_blocks: Array[Dictionary]) -> Array[Dict
 		var source_site: Vector2 = source.get("site", Vector2.ZERO) as Vector2
 		# Parks/plazas and the looser outer ring remain macro cells. Built
 		# historic/inner cells are split only by actual generated road ribbons.
-		if source_kind != &"built" or source_site.length() >= 600.0:
+		if source_kind != &"built" or source_site.length() >= WorldConstants.CITY_DENSE_RADIUS_M:
 			out.append(source)
 			continue
 		var pieces := _road_subtracted_pieces(source)
-		if pieces.size() <= 1:
+		var source_area := absf(_polygon_area(source.get("polygon",
+			PackedVector2Array()) as PackedVector2Array))
+		if pieces.is_empty():
+			# The actual road ribbons consumed this face. Do not restore the
+			# original macro polygon as a false built block.
+			continue
+		if pieces.size() == 1 and absf(_polygon_area(pieces[0]) - source_area) <= 0.5:
 			out.append(source)
 			continue
 		var kept := 0
@@ -1075,19 +1146,9 @@ func _split_city_blocks_by_roads(source_blocks: Array[Dictionary]) -> Array[Dict
 				continue
 			out.append(child)
 			kept += 1
-		if kept == 0:
-			var source_area := absf(_polygon_area(source.get("polygon",
-				PackedVector2Array()) as PackedVector2Array))
-			var source_center: Vector2 = source.get("center",
-				Vector2.ZERO) as Vector2
-			if not _is_dense_block_source(source):
-				out.append(source)
-			elif source_area >= 1200.0 and _is_valid_city_land(source_center):
-				# P2B-FIX refined: big VALID crossed faces keep their
-				# individually-validated lots (_lot_clear_of_city_roads rejects
-				# overlaps per parcel). Only shredded small faces stay dropped.
-				out.append(source)
-			# Else: shredded dense face stays dropped — no pavement teeth.
+		# If every resulting component is below the contract minimum, the
+		# crossed face is intentionally left open rather than resurrecting a
+		# giant source polygon that the roads already partitioned.
 	return out
 
 
@@ -1115,7 +1176,12 @@ func _road_subtracted_pieces(source: Dictionary) -> Array[PackedVector2Array]:
 				var clipped: Array = Geometry2D.clip_polygons(subject, strip)
 				for variant in clipped:
 					var result: PackedVector2Array = variant as PackedVector2Array
-					if _polygon_area(result) >= _min_split_area_for(result):
+					# Preserve components until every road ribbon has been
+					# subtracted. Filtering by the final block minimum here can
+					# discard all large-face survivors mid-pass and trigger the
+					# source-face fallback above. Tiny numerical slivers are the
+					# only components discarded early.
+					if result.size() >= 3 and _polygon_area(result) >= 4.0:
 						next.append(result)
 			pieces = next
 			if pieces.is_empty():
@@ -1141,8 +1207,10 @@ func _make_split_block(source: Dictionary, source_index: int,
 		district = DISTRICT_INNER if radius < WorldConstants.CITY_DENSE_RADIUS_M else DISTRICT_OUTER
 	var block := source.duplicate(true)
 	block["id"] = "%s_r%02d" % [str(source.get("id", "city_block")), piece_index]
-	block["cell"] = Vector2i(source_index * 1024 + piece_index,
-			-source_index * 1024 - piece_index - 1)
+	# Ordinary source cells use (index, -index-1). Reserve the opposite
+	# sign quadrant for road-derived children so a split key cannot overwrite
+	# a source cell or another source lookup during deterministic indexing.
+	block["cell"] = Vector2i(-source_index - 1, piece_index)
 	block["site"] = center
 	block["center"] = center
 	block["rect"] = rect
@@ -1152,7 +1220,9 @@ func _make_split_block(source: Dictionary, source_index: int,
 	block["road_derived"] = true
 	block["passage"] = {}
 	block["buildings"] = []
-	if block.get("kind", &"built") == &"built" and rect.size.x > 30.0 and rect.size.y > 30.0:
+	if block.get("kind", &"built") == &"built" and absf(_polygon_area(poly)) >= 3000.0:
+		# A concave road-split face can have a narrow safe centre even when
+		# its actual road boundary is long enough for an intentional passage.
 		block["passage"] = _passage_for_block(block, source_index * 1024 + piece_index)
 	return block
 
@@ -1250,8 +1320,7 @@ func _append_global_road_frontage_fill() -> void:
 					if not _is_valid_city_land(center) or _near_rural_settlement(center):
 						continue
 					var passage: Dictionary = block.get("passage", {}) as Dictionary
-					if not passage.is_empty() and _lots_overlap(lot, yaw,
-							passage["rect"] as Rect2, 0.0, 0.25):
+					if _lot_overlaps_passage(lot, yaw, passage):
 						continue
 					if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
 						continue
@@ -1317,6 +1386,23 @@ func _city_lot_overlaps_existing(lot: Rect2, yaw := 0.0) -> bool:
 	return false
 
 
+func _lot_overlaps_passage(lot: Rect2, yaw: float,
+		passage: Dictionary) -> bool:
+	if passage.is_empty():
+		return false
+	var passage_poly: PackedVector2Array = passage.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+	if passage_poly.size() < 3:
+		return _lots_overlap(lot, yaw, passage.get("rect", Rect2()) as Rect2,
+				0.0, 0.25)
+	for intersection_variant in Geometry2D.intersect_polygons(
+				_lot_corners(lot, yaw, 0.25), passage_poly):
+		var intersection: PackedVector2Array = intersection_variant as PackedVector2Array
+		if _polygon_area(intersection) > 0.25:
+			return true
+	return false
+
+
 ## A frontage segment is a corner candidate when it is close to a real
 ## multi-way road node. The lot remains subject to the ordinary polygon and
 ## road-clearance checks; this only labels/weights the building role.
@@ -1373,7 +1459,7 @@ func _make_block(index: int, site: Vector2, poly: PackedVector2Array) -> Diction
 				break
 	if nearby_square or (radius < 90.0 and index == 0):
 		kind = &"plaza"
-	elif _u("city_block_kind", [index]) < 0.10:
+	elif _u("city_block_kind", [index]) < (0.025 if radius < WorldConstants.CITY_HISTORIC_RADIUS_M else 0.05 if radius < WorldConstants.CITY_DENSE_RADIUS_M else 0.10):
 		kind = &"park"
 	var district: StringName = DISTRICT_HISTORIC
 	if radius >= WorldConstants.CITY_HISTORIC_RADIUS_M:
@@ -1397,28 +1483,174 @@ func _make_block(index: int, site: Vector2, poly: PackedVector2Array) -> Diction
 
 
 func _passage_for_block(block: Dictionary, index: int) -> Dictionary:
-	var br: Rect2 = block["rect"] as Rect2
+	var poly: PackedVector2Array = block.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+	if poly.size() < 3:
+		return {}
 	var chance := 0.34
 	if block.get("district", DISTRICT_OUTER) == DISTRICT_HISTORIC:
 		chance = 0.58
 	elif block.get("district", DISTRICT_OUTER) == DISTRICT_INNER:
 		chance = 0.46
-	if _u("city_alley_presence", [index]) >= chance:
+	var block_area := absf(_polygon_area(poly))
+	var district: StringName = block.get("district", DISTRICT_OUTER) as StringName
+	# A large underfilled dense face needs a real access seam for a second
+	# building row/courtyard; do not leave that decision to the alley roll.
+	var needs_dense_access := block_area >= 10000.0 and district != DISTRICT_OUTER
+	if _u("city_alley_presence", [index]) >= chance and not needs_dense_access:
 		return {}
-	var axis := 0 if _u("city_alley_axis", [index]) < 0.5 else 1
-	var width := lerpf(WorldConstants.CITY_ALLEY_WIDTH * 1.65,
-			WorldConstants.CITY_ALLEY_WIDTH * 2.45, _u("city_alley_width", [index]))
-	if axis == 0:
-		var x := lerpf(br.position.x + width, br.end.x - width,
-				_u("city_alley_position", [index]))
-		return {"axis": 0, "half": width * 0.5,
-			"rect": Rect2(x - width * 0.5, br.position.y, width, br.size.y),
-			"kind": &"historic_alley"}
-	var z := lerpf(br.position.y + width, br.end.y - width,
-			_u("city_alley_position", [index]))
-	return {"axis": 1, "half": width * 0.5,
-		"rect": Rect2(br.position.x, z - width * 0.5, br.size.x, width),
-		"kind": &"historic_alley"}
+	# Choose the nearest point on a REAL road edge, then route a short,
+	# deterministic corridor toward the interior of this exact block polygon.
+	# The corridor is clipped before it is recorded, so an alley can never be
+	# a detached axis-aligned strip outside its owning face.
+	var target := _polygon_centroid(poly)
+	if not _polygon_contains(poly, target):
+		var block_rect: Rect2 = block.get("rect", Rect2()) as Rect2
+		if _polygon_contains(poly, block_rect.get_center()):
+			target = block_rect.get_center()
+		else:
+			return {}
+	var nearest_point := Vector2.INF
+	var nearest_d2 := INF
+	var nearest_width := WorldConstants.CITY_ROAD_WIDTH_LOCAL
+	var nearest_edge_id := ""
+	for edge: Dictionary in _city_edges:
+		var road_poly: PackedVector2Array = edge.get("polyline",
+				PackedVector2Array()) as PackedVector2Array
+		if road_poly.size() < 2:
+			continue
+		for segment_i in range(road_poly.size() - 1):
+			var a: Vector2 = road_poly[segment_i]
+			var z: Vector2 = road_poly[segment_i + 1]
+			var delta := z - a
+			var len2 := delta.length_squared()
+			if len2 < 1e-6:
+				continue
+			var t := clampf((target - a).dot(delta) / len2, 0.0, 1.0)
+			var q := a + delta * t
+			var d2 := target.distance_squared_to(q)
+			if d2 < nearest_d2:
+				nearest_d2 = d2
+				nearest_point = q
+				nearest_width = float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+				nearest_edge_id = str(edge.get("id", ""))
+	if nearest_point == Vector2.INF:
+		return {}
+	# The nearest road to a block centroid is not necessarily the road that
+	# bounds that block. Require the selected point to sit beside the actual
+	# polygon boundary so "road_connected" cannot describe a detached strip.
+	var boundary_distance := INF
+	for boundary_i in poly.size():
+		var boundary := PackedVector2Array([
+			poly[boundary_i], poly[(boundary_i + 1) % poly.size()],
+		])
+		boundary_distance = minf(boundary_distance,
+				_distance_to_polyline(nearest_point, boundary))
+	if boundary_distance > nearest_width * 0.5 + _CITY_ROAD_BLOCK_CLEARANCE + 1.0:
+		# The centroid-nearest road may be across a different face. Recover
+		# the closest actual road-boundary pair before rejecting a large dense
+		# face; this keeps the passage road-connected without adding a road.
+		var boundary_access := _nearest_road_to_boundary(poly, target)
+		if boundary_access.is_empty():
+			return {}
+		nearest_point = boundary_access["road_point"] as Vector2
+		nearest_width = float(boundary_access["road_width"])
+		nearest_edge_id = str(boundary_access["road_edge_id"])
+	var inward_delta := target - nearest_point
+	if inward_delta.length_squared() < 100.0:
+		return {}
+	var inward := inward_delta.normalized()
+	var start := Vector2.INF
+	for step_i in range(1, 161):
+		var candidate := nearest_point + inward * float(step_i) * 0.5
+		if _polygon_contains(poly, candidate):
+			start = candidate
+			break
+	if start == Vector2.INF or start.distance_to(target) < 8.0:
+		return {}
+	var passage_width := lerpf(WorldConstants.CITY_ALLEY_WIDTH * 1.65,
+		WorldConstants.CITY_ALLEY_WIDTH * 2.45,
+		_u("city_alley_width", [index]))
+	var direction := (target - start).normalized()
+	var side := Vector2(-direction.y, direction.x) * passage_width * 0.5
+	var extension := direction * 0.8
+	var raw := PackedVector2Array([
+		start - extension - side,
+		target + extension - side,
+		target + extension + side,
+		start - extension + side,
+	])
+	var best := PackedVector2Array()
+	var best_area := 0.0
+	for clipped_variant in Geometry2D.intersect_polygons(raw, poly):
+		var clipped: PackedVector2Array = clipped_variant as PackedVector2Array
+		var area := absf(_polygon_area(clipped))
+		if clipped.size() >= 3 and area > best_area:
+			best = clipped
+			best_area = area
+	if best.size() < 3 or best_area < 6.0:
+		return {}
+	var axis := 0 if absf(direction.x) >= absf(direction.y) else 1
+	return {
+		"axis": axis,
+		"half": passage_width * 0.5,
+		"rect": _polygon_bounds(best),
+		"polygon": best,
+		"kind": &"historic_alley",
+		"road_connected": true,
+		"road_edge_id": nearest_edge_id,
+		"road_point": nearest_point,
+		"entry_point": start,
+		"direction": direction,
+		"width": passage_width,
+		"road_width": nearest_width,
+		"access_kind": &"road_connected_alley",
+	}
+
+
+func _nearest_road_to_boundary(poly: PackedVector2Array, target: Vector2) -> Dictionary:
+	if poly.size() < 2:
+		return {}
+	var best_score := INF
+	var best: Dictionary = {}
+	# Sampling endpoints and three interior points handles long straight faces
+	# while keeping fallback work bounded; the returned road point is projected
+	# onto the real generated edge, never invented from the block bounds.
+	for boundary_i in poly.size():
+		var a: Vector2 = poly[boundary_i]
+		var z: Vector2 = poly[(boundary_i + 1) % poly.size()]
+		if a.distance_to(z) < 2.0:
+			continue
+		for sample_t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+			var boundary_point: Vector2 = a.lerp(z, float(sample_t))
+			for edge_i in _city_edges.size():
+				var edge: Dictionary = _city_edges[edge_i]
+				if bool(edge.get("is_bridge", false)):
+					continue
+				var road_poly: PackedVector2Array = edge.get("polyline",
+						PackedVector2Array()) as PackedVector2Array
+				var road_point := _nearest_point_on_polyline(boundary_point, road_poly)
+				if road_point == Vector2.INF:
+					continue
+				var road_width := float(edge.get("width",
+						WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+				var distance := boundary_point.distance_to(road_point)
+				if distance > road_width * 0.5 + _CITY_ROAD_BLOCK_CLEARANCE + 1.0:
+					continue
+				# Prefer an entry near the block centre, then the tightest
+				# boundary/road connection for deterministic tie-breaking.
+				var score := boundary_point.distance_squared_to(target) \
+						+ distance * distance * 4.0
+				if score >= best_score:
+					continue
+				best_score = score
+				best = {
+					"road_point": road_point,
+					"road_width": road_width,
+					"road_edge_id": str(edge.get("id", "")),
+					"boundary_point": boundary_point,
+				}
+	return best
 
 
 func _buildings_for_block(block: Dictionary) -> Array[Dictionary]:
@@ -1446,6 +1678,14 @@ func _buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 		_append_boundary_frontage_lots(result, block, poly, radius, max_buildings)
 	if block["kind"] == &"built" and result.size() < max_buildings:
 		_append_road_frontage_lots(result, block, poly, radius, frontage, max_buildings)
+	if block["kind"] == &"built" and result.size() < max_buildings \
+			and district != DISTRICT_OUTER:
+		_append_road_intersection_lots(result, block, poly, radius, frontage,
+				max_buildings)
+	if block["kind"] == &"built" and result.size() < max_buildings \
+			and district != DISTRICT_OUTER \
+			and absf(_polygon_area(poly)) >= 5000.0:
+		_append_passage_side_lots(result, block, poly, radius, max_buildings)
 	# Every accepted parcel in this function is produced against an actual
 	# road frontage. Polygon-edge, corner, and site-centre fallbacks are
 	# intentionally absent: a valid irregular block is not permission to place
@@ -1471,6 +1711,7 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 		depth_min = 8.0
 		depth_max = 13.0
 	var passage: Dictionary = block.get("passage", {}) as Dictionary
+	var rear_candidates: Array[Dictionary] = []
 	for edge_i in _city_edges.size():
 		if result.size() >= max_buildings:
 			return
@@ -1524,8 +1765,7 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 						continue
 					if not _is_valid_city_land(center) or _near_rural_settlement(center):
 						continue
-					if not passage.is_empty() and _lots_overlap(lot, yaw,
-							passage["rect"] as Rect2, 0.0, 0.25):
+					if _lot_overlaps_passage(lot, yaw, passage):
 						continue
 					if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
 						continue
@@ -1545,6 +1785,209 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 					spec["frontage_edge_id"] = str(edge.get("id", ""))
 					spec["frontage_center"] = road_mid
 					result.append(spec)
+					if dense_frontage:
+						rear_candidates.append({
+							"edge_i": edge_i, "segment_i": segment_i,
+							"piece": piece, "side_i": side_i,
+							"road_width": road_width, "normal": normal,
+							"side": side, "road_mid": road_mid,
+							"frontage_width": frontage_width,
+							"front_depth": depth, "yaw": yaw,
+						})
+	# Only use a second shallow row when the frontage pass could not fill its
+	# bounded building budget. This reserves no street-wall capacity and every
+	# candidate remains a validated full BuildingSpec.
+	if dense_frontage and result.size() < max_buildings:
+		var rear_chance := 0.72 if district == DISTRICT_HISTORIC else 0.58
+		for candidate_i in rear_candidates.size():
+			if result.size() >= max_buildings:
+				break
+			if _u("city_rear_frontage_presence", [candidate_i,
+					int(block.get("cell", Vector2i.ZERO).x),
+					int(block.get("cell", Vector2i.ZERO).y)]) >= rear_chance:
+				continue
+			var candidate: Dictionary = rear_candidates[candidate_i]
+			_append_rear_frontage_lot(result, block, poly, passage, radius,
+					int(candidate["edge_i"]), int(candidate["segment_i"]),
+					int(candidate["piece"]), int(candidate["side_i"]),
+					float(candidate["road_width"]), candidate["normal"] as Vector2,
+					float(candidate["side"]), candidate["road_mid"] as Vector2,
+					float(candidate["frontage_width"]), float(candidate["front_depth"]),
+					float(candidate["yaw"]), max_buildings)
+
+
+func _append_road_intersection_lots(result: Array[Dictionary], block: Dictionary,
+		poly: PackedVector2Array, radius: float, frontage: float,
+		max_buildings: int) -> void:
+	# Recover frontage from the actual intersection between a road ribbon and
+	# this block face. Unlike a whole-segment midpoint guess, this still finds
+	# the short road interval owned by a concave or road-split component.
+	var district: StringName = block.get("district", DISTRICT_INNER) as StringName
+	var dense_frontage := district == DISTRICT_HISTORIC or district == DISTRICT_INNER
+	var depth_min := 13.5 if district == DISTRICT_HISTORIC else 14.0
+	var depth_max := 22.0
+	var passage: Dictionary = block.get("passage", {}) as Dictionary
+	for edge_i in _city_edges.size():
+		if result.size() >= max_buildings:
+			return
+		var edge: Dictionary = _city_edges[edge_i]
+		var road_width := float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
+		var road_poly: PackedVector2Array = edge.get("polyline",
+				PackedVector2Array()) as PackedVector2Array
+		for segment_i in range(road_poly.size() - 1):
+			if result.size() >= max_buildings:
+				return
+			var a: Vector2 = road_poly[segment_i]
+			var z: Vector2 = road_poly[segment_i + 1]
+			var delta := z - a
+			var segment_len := delta.length()
+			if segment_len < 4.0:
+				continue
+			var tangent := delta / segment_len
+			var road_strip := _road_strip_polygon(a, z,
+					road_width * 0.5 + _CITY_ROAD_BLOCK_CLEARANCE + 0.8)
+			var near_regions: Array = Geometry2D.intersect_polygons(poly, road_strip)
+			for region_i in near_regions.size():
+				if result.size() >= max_buildings:
+					return
+				var region: PackedVector2Array = near_regions[region_i] as PackedVector2Array
+				if region.size() < 3:
+					continue
+				var min_t := 1.0
+				var max_t := 0.0
+				for p: Vector2 in region:
+					var t := clampf((p - a).dot(tangent) / segment_len, 0.0, 1.0)
+					min_t = minf(min_t, t)
+					max_t = maxf(max_t, t)
+				var owned_len := (max_t - min_t) * segment_len
+				if owned_len < 4.8:
+					continue
+				var pieces := clampi(int(floor(owned_len / maxf(frontage + 1.4, 5.5))), 1, 6)
+				var width_low := 0.90 if dense_frontage else 0.72
+				var width_high := 0.995 if dense_frontage else 0.90
+				var frontage_width := owned_len / float(pieces) * lerpf(width_low,
+						width_high, _u("city_intersection_frontage_width",
+							[edge_i, segment_i, region_i]))
+				frontage_width = clampf(frontage_width,
+						5.4 if dense_frontage else 4.8,
+						11.0 if dense_frontage else 12.0)
+				var region_center := _polygon_centroid(region)
+				for piece in pieces:
+					if result.size() >= max_buildings:
+						return
+					var t := lerpf(min_t, max_t,
+							(float(piece) + 0.5) / float(pieces))
+					var road_mid := a + delta * t
+					var inward_delta := (block.get("center", region_center) as Vector2) - road_mid
+					if inward_delta.length_squared() < 1e-6:
+						inward_delta = region_center - road_mid
+					if inward_delta.length_squared() < 1e-6:
+						continue
+					var inward := inward_delta.normalized()
+					if not _polygon_contains(poly, road_mid + inward * 1.0):
+						inward = -inward
+					if not _polygon_contains(poly, road_mid + inward * 1.0):
+						continue
+					var depth := lerpf(depth_min, depth_max,
+							_u("city_intersection_frontage_depth",
+							[edge_i, segment_i, region_i, piece]))
+					var center := road_mid + inward * (road_width * 0.5
+							+ _CITY_ROAD_BLOCK_CLEARANCE + 0.15 + depth * 0.5)
+					var yaw := atan2(tangent.y, tangent.x)
+					var lot := _fit_frontage_lot(center,
+							Vector2(frontage_width, depth), yaw, poly)
+					if lot.size.x <= 0.0 or lot.size.y <= 0.0:
+						continue
+					if not _city_lot_has_valid_land(lot, yaw) \
+							or _near_rural_settlement(lot.get_center()):
+						continue
+					if _lot_overlaps_passage(lot, yaw, passage):
+						continue
+					if not _lot_clear_of_city_roads(lot, yaw):
+						continue
+					var duplicate := false
+					for existing: Dictionary in result:
+						if _lots_overlap(lot, yaw, existing["rect"] as Rect2,
+								float(existing.get("yaw", 0.0)), 0.22):
+							duplicate = true
+							break
+					if duplicate or _city_lot_overlaps_existing(lot, yaw):
+						continue
+					var door_edge := _door_edge_for_front(center, inward, lot, yaw)
+					var spec := _make_city_spec(block, lot, door_edge,
+							6000 + edge_i * 64 + segment_i * 8 + region_i * 2 + piece,
+							result.size(), radius, yaw)
+					spec["frontage_role"] = &"corner" if _is_corner_frontage(road_mid) else &"street"
+					spec["frontage_edge_id"] = str(edge.get("id", ""))
+					spec["frontage_center"] = road_mid
+					result.append(spec)
+
+
+func _append_passage_side_lots(result: Array[Dictionary], block: Dictionary,
+		poly: PackedVector2Array, radius: float, max_buildings: int) -> void:
+	var passage: Dictionary = block.get("passage", {}) as Dictionary
+	if passage.is_empty() or not bool(passage.get("road_connected", false)):
+		return
+	var entry: Vector2 = passage.get("entry_point", Vector2.INF) as Vector2
+	var direction: Vector2 = passage.get("direction", Vector2.ZERO) as Vector2
+	if entry == Vector2.INF or direction.length_squared() < 1e-6:
+		return
+	direction = direction.normalized()
+	var tangent := Vector2(-direction.y, direction.x)
+	var passage_width := float(passage.get("width", float(passage.get("half", 1.8)) * 2.0))
+	if passage_width <= 0.1:
+		return
+	var district: StringName = block.get("district", DISTRICT_INNER) as StringName
+	var frontage_width := 6.4 if district == DISTRICT_HISTORIC else 7.4
+	var depth_min := 13.5 if district == DISTRICT_HISTORIC else 14.0
+	var depth_max := 20.5 if district == DISTRICT_HISTORIC else 19.0
+	var passage_frontage_id := "passage:%s" % str(block.get("id", "city_block"))
+	var row_step := 20.0 if district == DISTRICT_HISTORIC else 18.0
+	var row_count := 2
+	for row in row_count:
+		if result.size() >= max_buildings:
+			return
+		var depth := lerpf(depth_min, depth_max,
+			_u("city_passage_side_depth", [int(block.get("cell", Vector2i.ZERO).x),
+				int(block.get("cell", Vector2i.ZERO).y), row]))
+		var inward_offset := 0.7 + float(row) * row_step + depth * 0.5
+		# The passage centreline is the frontage datum for both side lots.
+		# It is intentionally distinct from the road point that created the
+		# passage, so these lots cannot be attributed to the main road edge.
+		var passage_frontage_center := entry + direction * inward_offset
+		for side_i in 2:
+			if result.size() >= max_buildings:
+				return
+			var side := -1.0 if side_i == 0 else 1.0
+			var lateral := side * (passage_width * 0.5 + 0.85 + frontage_width * 0.5)
+			var center := entry + direction * inward_offset + tangent * lateral
+			var yaw := atan2(tangent.y, tangent.x)
+			var lot := _fit_frontage_lot(center,
+				Vector2(frontage_width, depth), yaw, poly)
+			if lot.size.x <= 0.0 or lot.size.y <= 0.0:
+				continue
+			if not _city_lot_has_valid_land(lot, yaw) \
+					or _near_rural_settlement(lot.get_center()):
+				continue
+			if _lot_overlaps_passage(lot, yaw, passage):
+				continue
+			if not _lot_clear_of_city_roads(lot, yaw):
+				continue
+			var duplicate := false
+			for existing: Dictionary in result:
+				if _lots_overlap(lot, yaw, existing["rect"] as Rect2,
+						float(existing.get("yaw", 0.0)), 0.22):
+					duplicate = true
+					break
+			if duplicate or _city_lot_overlaps_existing(lot, yaw):
+				continue
+			var spec := _make_city_spec(block, lot,
+					_door_edge_for_front(center, direction, lot, yaw),
+					7000 + row * 4 + side_i, result.size(), radius, yaw)
+			spec["frontage_role"] = &"passage"
+			spec["frontage_edge_id"] = passage_frontage_id
+			spec["frontage_center"] = passage_frontage_center
+			result.append(spec)
 
 
 func _append_boundary_frontage_lots(result: Array[Dictionary], block: Dictionary,
@@ -1579,14 +2022,19 @@ func _append_boundary_frontage_lots(result: Array[Dictionary], block: Dictionary
 			var nearest_edge_i := -1
 			var nearest_distance := INF
 			var nearest_width := WorldConstants.CITY_ROAD_WIDTH_LOCAL
+			var nearest_point := edge_mid
 			for road_i in _city_edges.size():
 				var road_edge: Dictionary = _city_edges[road_i]
 				var road_poly: PackedVector2Array = road_edge.get("polyline",
 						PackedVector2Array()) as PackedVector2Array
-				var distance := _distance_to_polyline(edge_mid, road_poly)
+				var road_point := _nearest_point_on_polyline(edge_mid, road_poly)
+				if road_point == Vector2.INF:
+					continue
+				var distance := edge_mid.distance_to(road_point)
 				if distance < nearest_distance:
 					nearest_distance = distance
 					nearest_edge_i = road_i
+					nearest_point = road_point
 					nearest_width = float(road_edge.get("width",
 							WorldConstants.CITY_ROAD_WIDTH_LOCAL))
 			if nearest_edge_i < 0 or nearest_distance > nearest_width * 0.5 \
@@ -1613,8 +2061,7 @@ func _append_boundary_frontage_lots(result: Array[Dictionary], block: Dictionary
 				continue
 			if not _city_lot_has_valid_land(lot, yaw) or _near_rural_settlement(lot.get_center()):
 				continue
-			if not passage.is_empty() and _lots_overlap(lot, yaw,
-					passage["rect"] as Rect2, 0.0, 0.25):
+			if _lot_overlaps_passage(lot, yaw, passage):
 				continue
 			if not _lot_clear_of_city_roads(lot, yaw):
 				continue
@@ -1632,7 +2079,10 @@ func _append_boundary_frontage_lots(result: Array[Dictionary], block: Dictionary
 					result.size(), radius, yaw)
 			spec["frontage_role"] = &"corner" if _is_corner_frontage(edge_mid) else &"street"
 			spec["frontage_edge_id"] = str(_city_edges[nearest_edge_i].get("id", ""))
-			spec["frontage_center"] = edge_mid
+			# Boundary frontage is inset from the road ribbon. Store the
+			# corresponding road point, not the inset polygon edge, so physical
+			# frontage telemetry measures the same frontage the player sees.
+			spec["frontage_center"] = nearest_point
 			result.append(spec)
 
 
@@ -1660,8 +2110,7 @@ func _append_rear_frontage_lot(result: Array[Dictionary], block: Dictionary,
 		return
 	if not _city_lot_has_valid_land(lot, yaw) or _near_rural_settlement(center):
 		return
-	if not passage.is_empty() and _lots_overlap(lot, yaw,
-			passage["rect"] as Rect2, 0.0, 0.25):
+	if _lot_overlaps_passage(lot, yaw, passage):
 		return
 	if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
 		return
@@ -2392,9 +2841,17 @@ func _inside_obstacle(p: Vector2) -> bool:
 # Polyline helpers
 
 static func _distance_to_polyline(p: Vector2, poly: PackedVector2Array) -> float:
-	if poly.size() < 2:
+	var nearest := _nearest_point_on_polyline(p, poly)
+	if nearest == Vector2.INF:
 		return INF
-	var best := INF
+	return p.distance_to(nearest)
+
+
+static func _nearest_point_on_polyline(p: Vector2, poly: PackedVector2Array) -> Vector2:
+	if poly.size() < 2:
+		return Vector2.INF
+	var best := Vector2.INF
+	var best_d2 := INF
 	for i in range(poly.size() - 1):
 		var a: Vector2 = poly[i]
 		var b: Vector2 = poly[i + 1]
@@ -2403,7 +2860,11 @@ static func _distance_to_polyline(p: Vector2, poly: PackedVector2Array) -> float
 		if len2 < 1e-8:
 			continue
 		var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
-		best = minf(best, p.distance_to(a + ab * t))
+		var q := a + ab * t
+		var d2 := p.distance_squared_to(q)
+		if d2 < best_d2:
+			best_d2 = d2
+			best = q
 	return best
 
 

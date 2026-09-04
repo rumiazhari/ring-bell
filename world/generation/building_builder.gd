@@ -3397,7 +3397,12 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 					# needs a quarter-turn, horizontal stays at zero.
 					var yaw_probe: float = PI * 0.5 if is_vert_probe else 0.0
 					var asset_size: Vector3 = Vector3(2.0, WorldConstants.CITY_INTERIOR_OPEN_H, WorldConstants.CITY_INTERIOR_WALL_T)
-					b.queue_asset_wall(asset_pos, asset_size, WorldConstants.COL_ASSET_FALLBACK, String(resolve_info.get("res_path", "")), float(resolve_info.get("scale", 1.0)), bool(resolve_info.get("has_collision", false)), yaw_probe)
+					# A partition has two visible wall-facing sides. Keep the
+					# primary N/E side plus the opposite side so either matching
+					# camera-facing structural facade hides the same module.
+					var asset_facade := "E" if is_vert_probe else "N"
+					var asset_facades: Array = ["E", "W"] if is_vert_probe else ["N", "S"]
+					b.queue_asset_wall(asset_pos, asset_size, WorldConstants.COL_ASSET_FALLBACK, String(resolve_info.get("res_path", "")), float(resolve_info.get("scale", 1.0)), bool(resolve_info.get("has_collision", false)), yaw_probe, asset_facade, asset_facades)
 					asset_handled = true
 				if asset_handled and b.asset_instance_count() == 1:
 					print("[AssetPipeline] asset wall_2m resolve exists true fallback false at %s" % [str(resolve_info.get("res_path", ""))])

@@ -107,6 +107,14 @@ var _city_interior_buildings_total := 0
 
 var _player: Node3D
 var _chunks := {}                      # Vector2i -> record dict (see _materialize)
+# The active interior gate belongs to the manager, not to a chunk record:
+# _materialize replaces records during unload/reload, so the request must
+# survive that replacement and be reapplied to fresh layers/assets.
+var _floor_gate_coord := Vector2i(99, 99)
+var _floor_gate_tag := ""
+var _floor_gate_max_floor := -1
+var _floor_gate_faded: Array = []
+
 var _pending: Array[Vector2i] = []
 var _inflight := {}                    # Vector2i -> {batcher, task_id}
 var _last_player_chunk := Vector2i(99, 99)   # sentinel forces first update
@@ -1170,6 +1178,11 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 		"vertical_gen_ms": vertical_gen_ms,
 		"vertical_mat_ms": float(vertstats.get("vertical_mat_ms", 0.0)),
 	}
+	# The dictionary above replaces any previous resident record. Reapply the
+	# manager-owned gate after all fresh layer and asset nodes are available.
+	if coord == _floor_gate_coord:
+		apply_floor_gate(coord, _floor_gate_tag, _floor_gate_max_floor,
+				_floor_gate_faded)
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
 	_terrain_colliders_total += terrain_cols
@@ -1540,6 +1553,13 @@ func door_states(coord: Vector2i) -> Dictionary:
 ## reads as a smooth swap rather than flicker.
 func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 		faded: Array = []) -> void:
+	# Remember the current request even when the chunk is not resident yet.
+	# A later _materialize() replaces the record and must replay this exact
+	# state onto the newly created layer and asset nodes.
+	_floor_gate_coord = coord
+	_floor_gate_tag = tag
+	_floor_gate_max_floor = max_floor
+	_floor_gate_faded = faded.duplicate()
 	if not _chunks.has(coord):
 		return
 	var rec: Dictionary = _chunks[coord]
@@ -1547,26 +1567,8 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	var changed := false
 	for key: Variant in rec.get("layers", {}).keys():
 		var layer_key := String(key)
-		var hide := false
-		if max_floor >= 0 and tag != "" \
-				and layer_key.begins_with(tag + ":"):
-			var suffix := layer_key.substr(tag.length() + 1)
-			if suffix.begins_with("roof"):
-				hide = true   # covers "roof" and "roof|r" (visual dressing)
-			elif suffix.begins_with("f"):
-				var rest := suffix.substr(1)
-				# EXPLICIT facade ownership: "f<storey>:<N/E/S/W>" (the
-				# builder pushes "<building>:f<i>:<facade>" directly - no
-				# nesting tricks), plus the composite glass/roof buckets
-				# MeshBatcher appends ("|g"/"|r").
-				var colon := rest.find(":")
-				if colon >= 0:
-					var fl := int(rest.substr(0, colon))
-					var facade := rest.substr(colon + 1)
-					hide = fl > max_floor \
-							or (fl == max_floor and faded.has(facade))
-				else:
-					hide = int(rest) > max_floor
+		var hide := MeshBatcher.reveal_layer_hidden(layer_key, tag,
+				max_floor, faded)
 		if bool(applied.get(layer_key, false)) != hide:
 			applied[layer_key] = hide
 			changed = true
@@ -1579,8 +1581,16 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 			continue
 		var asset_building_id := str(asset.get_meta("asset_building_id", ""))
 		var asset_floor_i := int(asset.get_meta("asset_floor_i", -1))
-		var asset_hide := max_floor >= 0 and tag != "" \
-				and asset_building_id == tag and asset_floor_i > max_floor
+		var asset_def := {
+			"layer": str(asset.get_meta("asset_layer_key", "")),
+			"building_id": asset_building_id,
+			"floor_i": asset_floor_i,
+			"facade": str(asset.get_meta("asset_facade", "")),
+			"facade_sides": asset.get_meta("asset_facade_sides", []),
+			"roof": bool(asset.get_meta("asset_roof", false)),
+		}
+		var asset_hide := MeshBatcher.reveal_asset_hidden(asset_def, tag,
+				max_floor, faded)
 		var asset_visible := not asset_hide
 		if asset.visible != asset_visible:
 			asset.visible = asset_visible
