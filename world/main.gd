@@ -101,10 +101,30 @@ func _ready() -> void:
 		morphology_tester.name = "G10P2BMorphologyTest"
 		add_child(morphology_tester)
 		return
+	if args.has("--g10p2b-denseprobe"):
+		var dense_probe: Node = load("res://debug/g10p2b_dense_probe.gd").new()
+		dense_probe.name = "G10P2BDenseProbe"
+		add_child(dense_probe)
+		return
 	if args.has("--streamingregressiontest"):
 		var streaming_tester: Node = load("res://debug/streaming_regression_test.gd").new()
 		streaming_tester.name = "StreamingRegressionTest"
 		add_child(streaming_tester)
+		return
+	if args.has("--animcapture"):
+		var cap_anim: Node = load("res://debug/anim_capture.gd").new()
+		cap_anim.name = "AnimCapture"
+		add_child(cap_anim)
+		return
+	if args.has("--animmeasure"):
+		var meas_anim: Node = load("res://debug/anim_measure.gd").new()
+		meas_anim.name = "AnimMeasure"
+		add_child(meas_anim)
+		return
+	if args.has("--animsolo"):
+		var solo_anim: Node = load("res://debug/anim_solo.gd").new()
+		solo_anim.name = "AnimSolo"
+		add_child(solo_anim)
 		return
 	if args.has("--worldrealizationtest"):
 		var realization_tester: Node = load("res://debug/world_realization_test.gd").new()
@@ -267,7 +287,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--cavetest",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
-			"--animationtest", "--streamingregressiontest",
+			"--animationtest", "--animcapture", "--animmeasure", "--streamingregressiontest",
 			"--import", "--shot", "--doortest", "--g10p1-capture",
 			"--g10p2b-capture"
 	]
@@ -456,10 +476,12 @@ func _spawn_from_manifest() -> void:
 	else:
 		push_error("Main: no player spawned - check Population.PLAYER_ENTRY")
 
-	for pos in Population.ZOMBIE_POSITIONS:
-		var zombie := Zombie.new()
-		add_child(zombie)
-		zombie.position = pos
+	# DEV MODE: zombies off during P2B dense-fabric work (see CitySpawner).
+	if CitySpawner.zombies_enabled():
+		for pos in Population.ZOMBIE_POSITIONS:
+			var zombie := Zombie.new()
+			add_child(zombie)
+			zombie.position = pos
 
 
 ## entry: Population manifest shape. saved_state: optional Survivor save data.
@@ -774,10 +796,12 @@ func _respawn_after_load(data: Dictionary) -> void:
 					continue
 				_spawn_survivor(entry.duplicate(true), saved_by_id.get(str(entry["id"]), {}))
 
-			for pos in Population.ZOMBIE_POSITIONS:
-				var zombie := Zombie.new()
-				add_child(zombie)
-				zombie.position = pos
+			# DEV MODE: zombies off during P2B dense-fabric work (see CitySpawner).
+			if CitySpawner.zombies_enabled():
+				for pos in Population.ZOMBIE_POSITIONS:
+					var zombie := Zombie.new()
+					add_child(zombie)
+					zombie.position = pos
 
 			var crate_states: Array = data.get("crates", [])
 			for i in mini(crate_states.size(), _crates.size()):

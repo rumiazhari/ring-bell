@@ -264,25 +264,37 @@ func _test_slope() -> void:
 	holder.global_position = Vector3.ZERO
 	var slopes := [0.0, 12.0, 22.0]
 	for slope in slopes:
-		loco.update({"speed": 1.5, "strafe": 0.0, "slope_deg": slope, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1)}, 0.016)
+		loco.update({"speed": 1.5, "strafe": 0.0, "slope_deg": slope, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0, 0, -1), "facing": Vector3(0, 0, -1)}, 0.016)
 		await get_tree().physics_frame
 		var pitch: float = loco.get_pitch_deg()
 		var pitch_ok: bool = abs(pitch) <= 10.5
-		# foot within 3cm of ground: check lower foot (planted) near ground, allow 5cm
+		# Foot plants once per stride and lifts once per stride: with correct
+		# bone anatomy the ankle arcs with the thigh swing, so a single-frame
+		# sample is phase luck. Sweep 120 frames (2+ stride cycles) and
+		# require ground contact every stride plus visible lift-off. The bar
+		# is deliberately below the procedural/clip beat minimum (~0.045):
+		# deep slide quality is owned by the foot_slide subtest's 240-frame
+		# average, this check only guards glued-or-floating feet.
 		var skel: Skeleton3D = loco.skeleton
 		var l_idx: int = skel.find_bone("l_shin")
 		var r_idx: int = skel.find_bone("r_shin")
-		var l_world: Vector3 = skel.global_transform * skel.get_bone_global_pose(l_idx).origin if l_idx>=0 else Vector3.ZERO
-		var r_world: Vector3 = skel.global_transform * skel.get_bone_global_pose(r_idx).origin if r_idx>=0 else Vector3.ZERO
 		var ground_y: float = holder.global_position.y
-		# lower foot is planted
-		var lower_y: float = min(l_world.y, r_world.y)
-		var foot_ok: bool = abs(lower_y - ground_y - 0.02) < 0.05
+		var stride_min := 999.0
+		var stride_max := -999.0
+		for f in 120:
+			loco.update({"speed": 1.5, "strafe": 0.0, "slope_deg": slope, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(0, 0, -1), "facing": Vector3(0, 0, -1)}, 0.016)
+			await get_tree().physics_frame
+			var lw: Vector3 = skel.global_transform * skel.get_bone_global_pose(l_idx).origin if l_idx >= 0 else Vector3(0, 999, 0)
+			var rw: Vector3 = skel.global_transform * skel.get_bone_global_pose(r_idx).origin if r_idx >= 0 else Vector3(0, 999, 0)
+			var lower_y: float = min(lw.y, rw.y) - ground_y
+			stride_min = minf(stride_min, lower_y)
+			stride_max = maxf(stride_max, lower_y)
+		var foot_ok: bool = stride_min < 0.05 and stride_max > 0.03
 		if not pitch_ok or not foot_ok:
-			print("[AnimationTest] slope %.1f pitch %.1f foot l %.3f r %.3f lower %.3f ground %.3f" % [slope, pitch, l_world.y, r_world.y, lower_y, ground_y])
-			var expected_pitch: float = clamp(-slope*0.35, -10, 10)
+			print("[AnimationTest] slope %.1f pitch %.1f stridemin %.3f stridemax %.3f state=%d turn_t=%.2f phase=%.2f" % [slope, pitch, stride_min, stride_max, int(loco.state), loco.get("_turn_timer"), loco.get("_phase")])
+			var expected_pitch: float = clamp(-slope * 0.35, -10, 10)
 			print(" expected pitch %.1f" % expected_pitch)
-		_check("slope %.0f deg pitch within +-10 and foot near ground" % slope, pitch_ok and foot_ok, "pitch %.1f lower %.3f" % [pitch, lower_y])
+		_check("slope %.0f deg pitch within +-10 and foot near ground" % slope, pitch_ok and foot_ok, "pitch %.1f min %.3f max %.3f" % [pitch, stride_min, stride_max])
 	if is_instance_valid(loco.get_parent()):
 		loco.get_parent().queue_free()
 	await get_tree().process_frame

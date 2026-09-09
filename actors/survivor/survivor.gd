@@ -672,11 +672,11 @@ func _spawn_ragdoll_corpse() -> void:
 	var scene := get_tree().current_scene
 	if scene == null or _model_root == null:
 		return
-	for mesh in HumanoidModel.collect_meshes(_model_root):
+	for mesh in HumanoidModel.collect_meshes(_visual_root):
 		if mesh.material_override is StandardMaterial3D:
 			var mat := mesh.material_override as StandardMaterial3D
 			mat.albedo_color = mat.albedo_color.lerp(
-					Color(0.4, 0.12, 0.1), 0.5)
+				Color(0.4, 0.12, 0.1), 0.5)
 	var corpse := CorpseBody.new()
 	scene.add_child(corpse)
 	corpse.global_position = global_position
@@ -684,7 +684,10 @@ func _spawn_ragdoll_corpse() -> void:
 		corpse.rotation.y = _visual_root.rotation.y
 	if _animator != null:
 		_animator.stop()
-	corpse.take_visual(_model_root)
+	# Adopt the SKELETON subtree: since the skeleton migration all limb
+	# meshes live under its BoneAttachments, _model_root only holds empty
+	# pivots (adopting it leaves a bodiless corpse).
+	corpse.take_visual(_skeleton if _skeleton != null and is_instance_valid(_skeleton) else _model_root)
 	var launch := _death_impulse
 	launch.y *= 0.4
 	if launch.length() < 1.0:

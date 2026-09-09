@@ -452,8 +452,9 @@ func _spawn_ragdoll_corpse(_source_id: StringName) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	# Quiet-death tint for the adopted body.
-	for mesh in HumanoidModel.collect_meshes(_model_root):
+	# Quiet-death tint for the adopted body (self covers the skeleton
+	# subtree where the meshes live since the migration).
+	for mesh in HumanoidModel.collect_meshes(self):
 		if mesh.material_override is StandardMaterial3D:
 			var mat := mesh.material_override as StandardMaterial3D
 			mat.albedo_color = mat.albedo_color.lerp(
@@ -461,11 +462,15 @@ func _spawn_ragdoll_corpse(_source_id: StringName) -> void:
 	var corpse := CorpseBody.new()
 	scene.add_child(corpse)
 	corpse.global_position = global_position
-	# Carry the facing into the ragdoll (the model itself never yawed).
+	# Carry the facing into the ragdoll (zombie yaws the skeleton itself).
 	if _animator != null:
 		_animator.stop()
-		corpse.rotation.y = _animator.rotation.y
-	if _model_root != null:
+	corpse.rotation.y = _visual_yaw
+	# Adopt the SKELETON subtree: limb meshes live under its BoneAttachments,
+	# _model_root only holds empty pivots (adopting it leaves no body).
+	if _skeleton != null and is_instance_valid(_skeleton):
+		corpse.take_visual(_skeleton)
+	elif _model_root != null:
 		corpse.take_visual(_model_root)
 	# Dampen the launch: a slump toward the hit, never a rocket jump.
 	var launch := _death_impulse

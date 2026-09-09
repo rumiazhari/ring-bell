@@ -260,74 +260,32 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 	var node_drop := AnimationNodeAnimation.new()
 	node_drop.animation = "locomotion/Drop2Hang"
 	sm.add_node("Drop2Hang", node_drop)
-	# Transitions (allow any via AUTO; for parkour we use travel)
-	var t_idle_walk := AnimationNodeStateMachineTransition.new()
-	t_idle_walk.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
-	sm.add_transition("Idle", "Walk", t_idle_walk)
-	var t_walk_run := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Walk", "Run", t_walk_run)
-	var t_run_sprint := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Run", "Sprint", t_run_sprint)
-	var t_any_turn := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Idle", "TurnL90", t_any_turn)
-	var t_l90_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("TurnL90", "Idle", t_l90_idle)
-	var t_r90_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("TurnR90", "Idle", t_r90_idle)
-	var t_180_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Turn180", "Idle", t_180_idle)
-	# Parkour transitions (auto, travel will force)
-	var t_vault_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Vault", "Idle", t_vault_idle)
-	var t_mantle_hang := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Mantle", "Hang", t_mantle_hang)
-	var t_hang_climb := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Hang", "ClimbUp", t_hang_climb)
-	var t_climb_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("ClimbUp", "Idle", t_climb_idle)
-	# Allow Hang to Idle/Walk etc via travel as well (auto)
-	var t_hang_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Hang", "Idle", t_hang_idle)
-	# Crouch/Slide transitions
-	var t_crouch_walk := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("CrouchIdle", "CrouchWalk", t_crouch_walk)
-	var t_walk_crouch := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Walk", "CrouchIdle", t_walk_crouch)
-	var t_idle_crouch := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Idle", "CrouchIdle", t_idle_crouch)
-	var t_crouch_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("CrouchIdle", "Idle", t_crouch_idle)
-	var t_crouch_stand := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("CrouchIdle", "StandUp", t_crouch_stand)
-	var t_stand_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("StandUp", "Idle", t_stand_idle)
-	var t_slide_stand := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Slide", "StandUp", t_slide_stand)
-	var t_slide_crouch := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Slide", "CrouchIdle", t_slide_crouch)
-	# WallRun/Shimmy/Drop transitions (auto, travel will force)
-	var t_wall_l_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunL", "Idle", t_wall_l_idle)
-	var t_wall_r_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunR", "Idle", t_wall_r_idle)
-	var t_wall_l_hang := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunL", "Hang", t_wall_l_hang)
-	var t_wall_r_hang := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunR", "Hang", t_wall_r_hang)
-	var t_wall_l_drop := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunL", "Drop2Hang", t_wall_l_drop)
-	var t_wall_r_drop := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("WallRunR", "Drop2Hang", t_wall_r_drop)
-	var t_drop_hang := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Drop2Hang", "Hang", t_drop_hang)
-	var t_drop_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Drop2Hang", "Idle", t_drop_idle)
-	var t_shim_idle := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Shimmy", "Idle", t_shim_idle)
-	var t_shim_hang := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Shimmy", "Hang", t_shim_hang)
-	var t_shim_climb := AnimationNodeStateMachineTransition.new()
-	sm.add_transition("Shimmy", "ClimbUp", t_shim_climb)
+	# Transitions are travel-only: CharacterLocomotion._travel_state() drives
+	# every switch via playback.travel() each frame. Auto-advance is OFF on
+	# all edges — an AUTO edge fires at clip end regardless of game state
+	# (Idle->Walk->Run->Sprint chain, Hang auto-climb, crouch auto-stand),
+	# which played wrong clips and tripped the state machine's looped-
+	# transition abort, making travel() unreliable.
+	for edge in [
+		["Idle", "Walk"], ["Walk", "Run"], ["Run", "Sprint"],
+		["Idle", "TurnL90"], ["TurnL90", "Idle"],
+		["Idle", "TurnR90"], ["TurnR90", "Idle"],
+		["Idle", "Turn180"], ["Turn180", "Idle"],
+		["Vault", "Idle"], ["Mantle", "Hang"], ["Hang", "ClimbUp"],
+		["ClimbUp", "Idle"], ["Hang", "Idle"],
+		["CrouchIdle", "CrouchWalk"], ["Walk", "CrouchIdle"],
+		["Idle", "CrouchIdle"], ["CrouchIdle", "Idle"],
+		["CrouchIdle", "StandUp"], ["StandUp", "Idle"],
+		["Slide", "StandUp"], ["Slide", "CrouchIdle"],
+		["WallRunL", "Idle"], ["WallRunR", "Idle"],
+		["WallRunL", "Hang"], ["WallRunR", "Hang"],
+		["WallRunL", "Drop2Hang"], ["WallRunR", "Drop2Hang"],
+		["Drop2Hang", "Hang"], ["Drop2Hang", "Idle"],
+		["Shimmy", "Idle"], ["Shimmy", "Hang"], ["Shimmy", "ClimbUp"],
+	]:
+		var tr := AnimationNodeStateMachineTransition.new()
+		tr.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_DISABLED
+		sm.add_transition(edge[0], edge[1], tr)
 	anim_tree.tree_root = sm
 	anim_tree.active = true
 	anim_tree.process_mode = Node.PROCESS_MODE_INHERIT
@@ -1016,7 +974,7 @@ func _travel_state(s: State) -> void:
 	if target != "" and playback.get_current_node() != target:
 		playback.travel(target)
 
-func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> void:
+func _apply_pose(delta: float, speed: float, _freq: float, run_ratio: float) -> void:
 	if skeleton == null or not is_instance_valid(skeleton):
 		return
 	var root_idx := skeleton.find_bone("root")
@@ -1044,7 +1002,27 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 			skeleton.set_bone_pose_rotation(hips_idx, Quaternion.from_euler(Vector3(0, hips_yaw, 0)))
 		else:
 			skeleton.set_bone_pose_rotation(hips_idx, Quaternion.IDENTITY)
-		skeleton.set_bone_pose_position(hips_idx, Vector3.ZERO)
+		# (pose position stays at rest: ZERO would drop hips to the root)
+	# Positional hygiene: rotations are overwritten on every path below,
+	# but a POSITION written once (hang/shimmy IK, shin offsets) persists
+	# forever unless re-driven - a hang arm offset survived into idle and
+	# rendered as permanently detached arms after climbing. So: any
+	# positionally-driven bone NOT driven on this exact frame snaps back
+	# to rest here (this runs before all the early returns below).
+	var hang_driving := state == State.HANG and ledge_pos != Vector3.ZERO
+	var shim_driving := state == State.SHIMMY and ledge_pos != Vector3.ZERO
+	if not hang_driving and not shim_driving:
+		for ab in ["l_upper_arm", "r_upper_arm"]:
+			var ai := skeleton.find_bone(ab)
+			if ai >= 0:
+				skeleton.set_bone_pose_position(ai, skeleton.get_bone_rest(ai).origin)
+	var parked := state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK, State.WALL_RUN_L, State.WALL_RUN_R]
+	var shins_driven := (not parked) and (not hang_driving) and (not shim_driving) and speed > 0.2 and _turn_timer <= 0.0
+	if not shins_driven:
+		for sb in ["l_shin", "r_shin"]:
+			var si := skeleton.find_bone(sb)
+			if si >= 0:
+				skeleton.set_bone_pose_position(si, skeleton.get_bone_rest(si).origin)
 	# HANG IK: hands to ledge
 	if state == State.HANG and ledge_pos != Vector3.ZERO:
 		_apply_hang_ik()
@@ -1062,16 +1040,9 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 	# Vault/Mantle/Climb/Slide/Stand specific pose overrides are handled by AnimationTree clips;
 	# we keep procedural leg swing for Walk/Run/Sprint but skip during locked parkour to let clip drive
 	if state in [State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP]:
-		# Keep hips root zero, but allow AnimationTree to drive limbs; just ensure foot offsets not applied
-		var l_thigh_idx2 := skeleton.find_bone("l_thigh")
-		var r_thigh_idx2 := skeleton.find_bone("r_thigh")
-		var l_shin_idx2 := skeleton.find_bone("l_shin")
-		var r_shin_idx2 := skeleton.find_bone("r_shin")
-		# Reset shins to zero to not interfere with clip
-		if l_shin_idx2 >= 0:
-			skeleton.set_bone_pose_position(l_shin_idx2, Vector3.ZERO)
-		if r_shin_idx2 >= 0:
-			skeleton.set_bone_pose_position(r_shin_idx2, Vector3.ZERO)
+		# Keep hips root zero, but allow AnimationTree to drive limbs.
+		# Pose positions stay at rest (never ZERO here - that would collapse
+		# shins to the thigh joint); clips drive rotations only.
 		# Arms also driven by clip
 		return
 	if state in [State.CROUCH_IDLE, State.CROUCH_WALK]:
@@ -1080,15 +1051,8 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 			# Slight procedural leg swing on top of crouch pose is okay, but keep minimal to preserve clip
 			pass
 		else:
-			# Crouch idle: let clip drive, no procedural swing
-			var l_thigh_idx2 := skeleton.find_bone("l_thigh")
-			var r_thigh_idx2 := skeleton.find_bone("r_thigh")
-			var l_shin_idx2 := skeleton.find_bone("l_shin")
-			var r_shin_idx2 := skeleton.find_bone("r_shin")
-			if l_shin_idx2 >= 0:
-				skeleton.set_bone_pose_position(l_shin_idx2, Vector3.ZERO)
-			if r_shin_idx2 >= 0:
-				skeleton.set_bone_pose_position(r_shin_idx2, Vector3.ZERO)
+			# Crouch idle: let clip drive, no procedural swing.
+			# Pose positions stay at rest (never ZERO - that collapses bones).
 			return
 	var l_thigh_idx := skeleton.find_bone("l_thigh")
 	var r_thigh_idx := skeleton.find_bone("r_thigh")
@@ -1111,24 +1075,25 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 			skeleton.set_bone_pose_rotation(l_shin_idx, Quaternion.from_euler(Vector3(clamp(swing * 0.3, -0.4, 0.4), 0, 0)))
 		if r_shin_idx >= 0:
 			skeleton.set_bone_pose_rotation(r_shin_idx, Quaternion.from_euler(Vector3(clamp(swing_r * 0.3, -0.4, 0.4), 0, 0)))
-		var A: float = 0.0
-		if freq > 0.1:
-			A = speed / freq
-		A = clamp(A, 0.0, 0.6)
-		var l_offset: float = A * sin(_phase)
-		var r_offset: float = -A * sin(_phase)
+		# Step lift only: no fore-aft positional offset (sliding the shin
+		# along Z dislocates the knee by up to 0.56 m at sprint and reads
+		# as detached limbs). Stride comes from thigh/shin rotations.
+		var l_offset: float = 0.0
+		var r_offset: float = 0.0
 		var l_y_offset: float = 0.0
 		var r_y_offset: float = 0.0
 		if sin(_phase) > 0:
 			l_y_offset = 0.0
-			r_y_offset = 0.08
+			r_y_offset = 0.04
 		else:
-			l_y_offset = 0.08
+			l_y_offset = 0.04
 			r_y_offset = 0.0
 		if l_shin_idx >= 0:
-			skeleton.set_bone_pose_position(l_shin_idx, Vector3(0, l_y_offset, l_offset))
+			# Foot-slide compensation is an OFFSET from rest, not absolute:
+			# absolute would detach the lower leg from the knee.
+			skeleton.set_bone_pose_position(l_shin_idx, skeleton.get_bone_rest(l_shin_idx).origin + Vector3(0, l_y_offset, l_offset))
 		if r_shin_idx >= 0:
-			skeleton.set_bone_pose_position(r_shin_idx, Vector3(0, r_y_offset, r_offset))
+			skeleton.set_bone_pose_position(r_shin_idx, skeleton.get_bone_rest(r_shin_idx).origin + Vector3(0, r_y_offset, r_offset))
 	else:
 		if l_thigh_idx >= 0:
 			skeleton.set_bone_pose_rotation(l_thigh_idx, Quaternion.IDENTITY)
@@ -1136,10 +1101,10 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 			skeleton.set_bone_pose_rotation(r_thigh_idx, Quaternion.IDENTITY)
 		if l_shin_idx >= 0:
 			skeleton.set_bone_pose_rotation(l_shin_idx, Quaternion.IDENTITY)
-			skeleton.set_bone_pose_position(l_shin_idx, Vector3.ZERO)
+			# (pose position stays at rest)
 		if r_shin_idx >= 0:
 			skeleton.set_bone_pose_rotation(r_shin_idx, Quaternion.IDENTITY)
-			skeleton.set_bone_pose_position(r_shin_idx, Vector3.ZERO)
+			# (pose position stays at rest)
 		if spine_idx >= 0 and speed < 0.2 and _turn_timer <= 0.0 and state not in [State.HANG, State.VAULT, State.MANTLE, State.CLIMB_UP, State.SLIDE, State.STAND_UP, State.CROUCH_IDLE, State.CROUCH_WALK]:
 			var breathe: float = sin(_phase * 1.3) * deg_to_rad(1.6)
 			var q2 := Quaternion.from_euler(Vector3(deg_to_rad(_spine_pitch) + breathe * 0.6, 0, _spine_roll))
@@ -1170,7 +1135,7 @@ func _apply_pose(delta: float, speed: float, freq: float, run_ratio: float) -> v
 	var head_idx := skeleton.find_bone("head")
 	if head_idx >= 0:
 		skeleton.set_bone_pose_rotation(head_idx, Quaternion.IDENTITY)
-		skeleton.set_bone_pose_position(head_idx, Vector3.ZERO)
+		# (pose position stays at rest: ZERO would sink the head into the spine)
 
 func _apply_hang_ik() -> void:
 	if skeleton == null or not is_instance_valid(skeleton):
@@ -1203,9 +1168,17 @@ func _apply_hang_ik() -> void:
 		var rest_global: Transform3D = skeleton.get_bone_global_rest(b_idx)
 		var rest_origin: Vector3 = rest_global.origin
 		var pose_offset: Vector3 = desired_local - rest_origin
-		# Clamp offset to avoid extreme
-		pose_offset = pose_offset.limit_length(3.0)
-		skeleton.set_bone_pose_position(b_idx, pose_offset)
+		# Hard anatomical cap: a hand target can never be more than an
+		# arm's length (~0.7 m) from the shoulder rest. HANG is indefinite
+		# and ledge_pos goes stale on drop/fall, so without this cap the
+		# arms fly meters off to a ledge left far behind (detached arms
+		# whenever climbing or falling). Beyond reach: leave the arms
+		# where they are (rotation below still raises them) instead of
+		# yanking them toward an unreachable point.
+		var reachable := pose_offset.length() <= 0.75
+		pose_offset = pose_offset.limit_length(0.7)
+		if reachable:
+			skeleton.set_bone_pose_position(b_idx, pose_offset)
 		# Also set rotation to point up
 		var dir: Vector3 = (tgt - cur_world).normalized()
 		# Keep simple rotation overhead
@@ -1232,10 +1205,10 @@ func _apply_hang_ik() -> void:
 	var r_shin_idx := skeleton.find_bone("r_shin")
 	if l_shin_idx >= 0:
 		skeleton.set_bone_pose_rotation(l_shin_idx, Quaternion.IDENTITY)
-		skeleton.set_bone_pose_position(l_shin_idx, Vector3.ZERO)
+		# (pose position stays at rest)
 	if r_shin_idx >= 0:
 		skeleton.set_bone_pose_rotation(r_shin_idx, Quaternion.IDENTITY)
-		skeleton.set_bone_pose_position(r_shin_idx, Vector3.ZERO)
+		# (pose position stays at rest)
 
 static func solve_two_bone(shoulder: Vector3, elbow_rest: Vector3, hand_rest: Vector3, target: Vector3) -> Dictionary:
 	# Analytic 2-bone IK law-of-cos: shoulder->elbow 0.28, elbow->hand 0.27 (approx from rest)

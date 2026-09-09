@@ -36,9 +36,10 @@ static func build_survivor_skeleton() -> Skeleton3D:
 			skel.set_bone_parent(idx, parents[i])
 		var rest := Transform3D(Basis.IDENTITY, rest_positions[i])
 		skel.set_bone_rest(idx, rest)
-		skel.set_bone_pose_position(idx, Vector3.ZERO)
-		skel.set_bone_pose_rotation(idx, Quaternion.IDENTITY)
-		skel.set_bone_pose_scale(idx, Vector3.ONE)
+	# Live pose must start AT the rest: set_bone_rest() leaves pose at
+	# identity, which renders every bone collapsed at the skeleton origin
+	# (characters sunk to the waist, attachments buried). reset restores it.
+	skel.reset_bone_poses()
 	return skel
 
 static func attach_model(skeleton: Skeleton3D, model_root: Node3D) -> void:
@@ -46,13 +47,16 @@ static func attach_model(skeleton: Skeleton3D, model_root: Node3D) -> void:
 		return
 	if not is_instance_valid(skeleton) or not is_instance_valid(model_root):
 		return
-	# Map pivot names (HumanoidModel) to bone names
+	# Map pivot names (HumanoidModel) to bone names. "head" exists only on
+	# the zombie rig (its head mesh sits at local ZERO under a head pivot;
+	# without this it inherits the spine attachment and renders at the neck).
 	var mapping := {
 		"l_leg": "l_thigh",
 		"r_leg": "r_thigh",
 		"l_arm": "l_upper_arm",
 		"r_arm": "r_upper_arm",
-		"upper": "spine_upper"
+		"upper": "spine_upper",
+		"head": "head",
 	}
 	var anim_limbs: Dictionary = {}
 	if model_root.has_meta("anim_limbs"):
@@ -112,4 +116,9 @@ static func attach_model(skeleton: Skeleton3D, model_root: Node3D) -> void:
 					model_root.remove_child(child)
 					hips_attach.add_child(child)
 					child.position = Vector3.ZERO
-			break
+					# Floor clamp is waist-relative: the node now sits at the
+					# hips bone, so the floor is hips-rest below it. Without
+					# this the clamp pins every row at the waist (flat disc).
+					child.set("ground_local_y",
+						-skeleton.get_bone_rest(hips_idx).origin.y)
+				break
