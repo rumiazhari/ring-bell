@@ -126,6 +126,11 @@ func _ready() -> void:
 		solo_anim.name = "AnimSolo"
 		add_child(solo_anim)
 		return
+	if args.has("--animclimb"):
+		var climb_anim: Node = load("res://debug/anim_climb.gd").new()
+		climb_anim.name = "AnimClimb"
+		add_child(climb_anim)
+		return
 	if args.has("--worldrealizationtest"):
 		var realization_tester: Node = load("res://debug/world_realization_test.gd").new()
 		realization_tester.name = "WorldRealizationTest"

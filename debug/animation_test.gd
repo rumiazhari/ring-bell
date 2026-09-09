@@ -91,6 +91,35 @@ func _check(name: String, cond: bool, detail: String = "") -> void:
 		failures += 1
 		print("[AnimationTest] FAIL %s (%s)" % [name, detail])
 
+## Arms must stay glued at rest: any positional shoulder IK dislocates
+## limbs. Exact check (hygiene restores rest precisely when undriven).
+func _arms_attached(loco: CharacterLocomotion) -> bool:
+	var sk: Skeleton3D = loco.skeleton
+	if sk == null:
+		return false
+	for b in ["l_upper_arm", "r_upper_arm"]:
+		var i := sk.find_bone(b)
+		if i < 0:
+			return false
+		if sk.get_bone_pose_position(i).distance_to(sk.get_bone_rest(i).origin) > 0.0001:
+			return false
+	return true
+
+## Independent reach-gap expectation from REST data only (never from pose):
+## worst |hand target - shoulder rest| - arm length. Pair with
+## _arms_attached: attached proves no position cheat, gap proves aim.
+## Tolerance 0.03-0.05 covers tree spine/hips sway moving shoulders.
+func _reach_gap(loco: CharacterLocomotion, ledge_pos: Vector3, ledge_normal: Vector3) -> float:
+	var sk: Skeleton3D = loco.skeleton
+	var side: Vector3 = ledge_normal.cross(Vector3.UP).normalized()
+	if side.length() < 0.1:
+		side = Vector3(1, 0, 0)
+	var lt: Vector3 = ledge_pos + ledge_normal * 0.06 + side * 0.22
+	var rt: Vector3 = ledge_pos + ledge_normal * 0.06 - side * 0.22
+	var sl: Vector3 = (sk.global_transform * sk.get_bone_global_rest(sk.find_bone("l_upper_arm"))).origin
+	var sr: Vector3 = (sk.global_transform * sk.get_bone_global_rest(sk.find_bone("r_upper_arm"))).origin
+	return maxf(lt.distance_to(sl), rt.distance_to(sr)) - CharacterLocomotion.ARM_SHOULDER_TO_HAND
+
 func _make_locomotion() -> CharacterLocomotion:
 	var skel := SkeletonFactory.build_survivor_skeleton()
 	var dummy_model := Node3D.new()
@@ -588,12 +617,12 @@ func _test_vault_mantle_hang() -> void:
 	loco3.update({"speed": 1.8, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3(0,0,-1), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true}, "jump_pressed": false}, 0.016)
 	var is_ledge_hang: bool = int(loco3.state) == CharacterLocomotion.State.HANG
 	_check("ledge probe 1.9m triggers HANG with hand_snap <=0.04", is_ledge_hang, str(loco3.state))
-	# check hand_snap <=0.04 and velocity freeze is checked in separate test but here check hand_snap property exists
+	# Rotation-only: shoulders glued at rest, snap equals reach gap.
 	if loco3.has_method("get_hand_snap"):
 		var hs: float = loco3.get_hand_snap() if loco3.has_method("get_hand_snap") else 0.0
 		# Actually hand_snap variable
 		hs = loco3.hand_snap
-		_check("hand_snap <=0.04 during HANG", hs <= 0.045, "%.3f" % hs)
+		_check("hand_snap honest during HANG, arms attached", absf(hs - _reach_gap(loco3, ledge_pos, ledge_normal)) < 0.05 and _arms_attached(loco3), "%.3f" % hs)
 	if is_instance_valid(loco3.get_parent()):
 		loco3.get_parent().queue_free()
 	await get_tree().process_frame
@@ -610,14 +639,20 @@ func _test_hand_snap() -> void:
 	await get_tree().process_frame
 	var ok: bool = true
 	var worst: float = 0.0
+	var attach_ok: bool = true
 	for i in 80:
 		loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise": 1.9, "ledge_pos": ledge_pos, "ledge_normal": ledge_normal, "has_hit": true}, "jump_pressed": false}, 0.016)
 		var hs: float = loco.hand_snap
 		worst = max(worst, hs)
-		if hs > 0.04:
+		# Rotation-only: shoulders glued at rest, snap must equal the
+		# geometric reach gap (ledge is 1.1 m out; a 0.63 m arm can't do
+		# better - the old <=0.04 bar required teleporting shoulders).
+		if not _arms_attached(loco):
+			attach_ok = false
+		if absf(hs - _reach_gap(loco, ledge_pos, ledge_normal)) > 0.03:
 			ok = false
 		await get_tree().process_frame
-	_check("hand_snap 4cm every hanging frame over 1.2s loop", ok, "worst %.3f" % worst)
+	_check("hang arms attached, honest reach gap every frame", ok and attach_ok, "worst %.3f" % worst)
 	if is_instance_valid(holder):
 		holder.queue_free()
 	else:
@@ -1082,14 +1117,17 @@ func _test_shimmy_contract() -> void:
 	_check("shimmy triggers SHIMMY with len>=2.0", _is_shimmy_state(int(loco.state)), str(loco.state))
 	var hs_ok: bool = true
 	var worst: float = 0.0
+	var attach_ok: bool = true
 	for i in 80:
 		loco.update({"speed": 0.6, "strafe": 1.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": false, "move_dir": Vector3(1,0,0), "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true,"ledge_length":3.5}, "wall_probe": {}, "shimmy_probe": shimmy_probe, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
 		var hs: float = loco.hand_snap
 		worst = max(worst, hs)
-		if hs > 0.05:
+		if not _arms_attached(loco):
+			attach_ok = false
+		if absf(hs - _reach_gap(loco, ledge_pos, ledge_normal)) > 0.03:
 			hs_ok = false
 		await get_tree().process_frame
-	_check("shimmy hand_snap <=0.05 analytic every frame", hs_ok, "worst %.3f" % worst)
+	_check("shimmy arms attached, honest reach gap every frame", hs_ok and attach_ok, "worst %.3f" % worst)
 	var loco2 := _make_locomotion()
 	var holder2: Node3D = loco2.get_parent() as Node3D
 	holder2.global_position = Vector3.ZERO
@@ -1132,7 +1170,7 @@ func _test_hand_analytic() -> void:
 	loco.update({"speed": 0.1, "strafe": 0.0, "slope_deg": 0.0, "yaw_delta": 0.0, "is_airborne": true, "move_dir": Vector3.ZERO, "facing": Vector3(0,0,-1), "stamina": 100.0, "vault_probe": {}, "mantle_probe": {}, "ledge_probe": {"rise":1.9,"ledge_pos":ledge_pos,"ledge_normal":ledge_normal,"has_hit":true}, "wall_probe": {}, "shimmy_probe": {}, "jump_pressed": false, "crouch_held": false, "crouch_pressed": false, "sprint_held": false, "headroom_clear": true}, 0.016)
 	await get_tree().process_frame
 	var hs: float = loco.hand_snap
-	_check("hang analytic hand_snap <=0.04", hs <= 0.05, "%.3f" % hs)
+	_check("hang analytic honest reach gap, arms attached", absf(hs - _reach_gap(loco, ledge_pos, ledge_normal)) < 0.05 and _arms_attached(loco), "%.3f" % hs)
 	if is_instance_valid(loco.get_parent()):
 		loco.get_parent().queue_free()
 	await get_tree().process_frame

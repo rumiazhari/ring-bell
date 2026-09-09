@@ -431,17 +431,8 @@ static func _build_ledge_hang() -> Animation:
 		[0.6, _quat_from_euler_deg(6, 0, 0)],
 		[1.2, _quat_from_euler_deg(8, 0, 0)],
 	])
-	# Arms overhead: ~ -120 deg X (up)
-	_add_rotation_track(anim, "l_upper_arm", [
-		[0.0, _quat_from_euler_deg(-118, 0, -8)],
-		[0.6, _quat_from_euler_deg(-122, 0, -8)],
-		[1.2, _quat_from_euler_deg(-118, 0, -8)],
-	])
-	_add_rotation_track(anim, "r_upper_arm", [
-		[0.0, _quat_from_euler_deg(-118, 0, 8)],
-		[0.6, _quat_from_euler_deg(-122, 0, 8)],
-		[1.2, _quat_from_euler_deg(-118, 0, 8)],
-	])
+	# Arms: owned by procedural rotation-only aim (_aim_arm_at), so NO arm
+	# tracks here - a clip track would overwrite the aim at render time.
 	return anim
 
 static func _build_climb_up() -> Animation:
@@ -823,20 +814,8 @@ static func _build_shimmy() -> Animation:
 		[0.425, _quat_from_euler_deg(10, 0, 0)],
 		[0.85, _quat_from_euler_deg(8, 0, 0)],
 	])
-	_add_rotation_track(anim, "l_upper_arm", [
-		[0.0, _quat_from_euler_deg(-118, 0, -10)],
-		[0.212, _quat_from_euler_deg(-122, 0, -10)],
-		[0.425, _quat_from_euler_deg(-118, 0, -10)],
-		[0.637, _quat_from_euler_deg(-110, 0, -10)],
-		[0.85, _quat_from_euler_deg(-118, 0, -10)],
-	])
-	_add_rotation_track(anim, "r_upper_arm", [
-		[0.0, _quat_from_euler_deg(-110, 0, 10)],
-		[0.212, _quat_from_euler_deg(-118, 0, 10)],
-		[0.425, _quat_from_euler_deg(-118, 0, 10)],
-		[0.637, _quat_from_euler_deg(-122, 0, 10)],
-		[0.85, _quat_from_euler_deg(-110, 0, 10)],
-	])
+	# Arms: owned by procedural rotation-only aim (_aim_arm_at), so NO arm
+	# tracks here - a clip track would overwrite the aim at render time.
 	return anim
 
 static func _build_drop2hang() -> Animation:

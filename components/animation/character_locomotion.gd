@@ -84,8 +84,11 @@ const SHIMMY_SPEED := 0.60
 const SHIMMY_DRAIN := 8.0
 const SHIMMY_BLOCK := 8.0
 const WALL_SNAP_MAX := 0.08
-const SHIMMY_HAND_MAX := 0.05
 const WALL_FLAT_MAX := 0.08
+## Shoulder(rest) -> hand length in meters, from the human rig: arm shirt
+## hangs 0.51 below the shoulder pivot, hand box ends ~0.63 down.
+## Used for the honest hang/shimmy reach-gap metric (no position cheat).
+const ARM_SHOULDER_TO_HAND := 0.63
 
 var skeleton: Skeleton3D = null
 var model_root: Node3D = null
@@ -450,9 +453,6 @@ func update(p: Dictionary, delta: float) -> void:
 	elif state in [State.WALL_RUN_L, State.WALL_RUN_R]:
 		# allow 0.15 during wallrun window (feet push off)
 		pass
-	# Update hand_snap during HANG
-	if state == State.HANG and skeleton != null and is_instance_valid(skeleton):
-		_update_hand_snap()
 
 	_travel_state(state)
 
@@ -1137,11 +1137,41 @@ func _apply_pose(delta: float, speed: float, _freq: float, run_ratio: float) -> 
 		skeleton.set_bone_pose_rotation(head_idx, Quaternion.IDENTITY)
 		# (pose position stays at rest: ZERO would sink the head into the spine)
 
+## Rotation-only aim for the single rigid arm bone: rotate so the arm's
+## local -Y (down-the-arm) points at the world target. Writes ROTATION
+## only - the bone position stays at rest, so the arm can never detach.
+## Returns the honest reach gap |shoulder->target| - arm length.
+func _aim_arm_at(b_idx: int, tgt: Vector3) -> float:
+	var rest_global: Transform3D = skeleton.get_bone_global_rest(b_idx)
+	var shoulder_w: Vector3 = (skeleton.global_transform * rest_global).origin
+	var d: Vector3 = tgt - shoulder_w
+	var dist := d.length()
+	if dist < 0.001:
+		return dist
+	var dir: Vector3 = d / dist
+	var par := skeleton.get_bone_parent(b_idx)
+	var par_rest: Transform3D = skeleton.get_bone_global_rest(par) if par >= 0 else Transform3D.IDENTITY
+	var pw: Basis = (skeleton.global_transform * par_rest).basis.orthonormalized()
+	var local_dir: Vector3 = pw.inverse() * dir
+	# Basis mapping local -Y onto local_dir, with a pole-safe twist ref.
+	var yA: Vector3 = -local_dir
+	var ref := Vector3.UP
+	if absf(local_dir.y) > 0.9:
+		ref = Vector3.RIGHT
+	var xA: Vector3 = ref.cross(yA)
+	if xA.length() < 0.01:
+		xA = Vector3.FORWARD
+	xA = xA.normalized()
+	var zA: Vector3 = xA.cross(yA).normalized()
+	xA = yA.cross(zA).normalized()
+	skeleton.set_bone_pose_rotation(b_idx, Quaternion(Basis(xA, yA, zA).orthonormalized()))
+	return absf(dist - ARM_SHOULDER_TO_HAND)
+
 func _apply_hang_ik() -> void:
 	if skeleton == null or not is_instance_valid(skeleton):
 		return
 	if ledge_pos == Vector3.ZERO:
-		hand_snap = 0.02
+		hand_snap = 0.0
 		return
 	# Compute lateral targets
 	var side: Vector3 = Vector3.ZERO
@@ -1153,7 +1183,9 @@ func _apply_hang_ik() -> void:
 		side = Vector3(1,0,0)
 	var left_target: Vector3 = ledge_pos + ledge_normal * 0.06 + side * 0.22
 	var right_target: Vector3 = ledge_pos + ledge_normal * 0.06 - side * 0.22
-	# Move arm bones to be near targets via pose position offset
+	# Rotation-only arm posing: aim each rigid arm bone at its target.
+	# Upper-arm bone POSITIONS are never written (they stay at rest, so
+	# arms cannot detach from the torso no matter how stale the ledge).
 	var l_idx := skeleton.find_bone("l_upper_arm")
 	var r_idx := skeleton.find_bone("r_upper_arm")
 	var worst: float = 0.0
@@ -1162,38 +1194,9 @@ func _apply_hang_ik() -> void:
 		var tgt: Vector3 = pair[1] as Vector3
 		if b_idx < 0:
 			continue
-		# Current world pos
-		var cur_world: Vector3 = _bone_world_pos(b_idx)
-		var desired_local: Vector3 = skeleton.global_transform.affine_inverse() * tgt
-		var rest_global: Transform3D = skeleton.get_bone_global_rest(b_idx)
-		var rest_origin: Vector3 = rest_global.origin
-		var pose_offset: Vector3 = desired_local - rest_origin
-		# Hard anatomical cap: a hand target can never be more than an
-		# arm's length (~0.7 m) from the shoulder rest. HANG is indefinite
-		# and ledge_pos goes stale on drop/fall, so without this cap the
-		# arms fly meters off to a ledge left far behind (detached arms
-		# whenever climbing or falling). Beyond reach: leave the arms
-		# where they are (rotation below still raises them) instead of
-		# yanking them toward an unreachable point.
-		var reachable := pose_offset.length() <= 0.75
-		pose_offset = pose_offset.limit_length(0.7)
-		if reachable:
-			skeleton.set_bone_pose_position(b_idx, pose_offset)
-		# Also set rotation to point up
-		var dir: Vector3 = (tgt - cur_world).normalized()
-		# Keep simple rotation overhead
-		skeleton.set_bone_pose_rotation(b_idx, Quaternion.from_euler(Vector3(deg_to_rad(-118), 0, 0)))
-		var new_world: Vector3 = _bone_world_pos(b_idx)
-		var dist: float = new_world.distance_to(tgt)
-		worst = max(worst, dist)
-	hand_snap = 0.02
-	if hand_snap < 0.015:
-		hand_snap = 0.02
-	if hand_snap > 0.04:
-		# clamp to 0.03 for test pass but still record actual
-		# we keep actual but ensure <0.04 for harness; force 0.03 if over
-		if worst < 0.08:
-			hand_snap = 0.03
+		worst = maxf(worst, _aim_arm_at(b_idx, tgt))
+	# Honest metric: actual reach gap. No forcing, no clamping to a bar.
+	hand_snap = worst
 	# Legs dangling during hang
 	var l_thigh_idx := skeleton.find_bone("l_thigh")
 	var r_thigh_idx := skeleton.find_bone("r_thigh")
@@ -1246,7 +1249,7 @@ func _apply_shimmy_hand_snap() -> void:
 	if skeleton == null or not is_instance_valid(skeleton):
 		return
 	if ledge_pos == Vector3.ZERO:
-		hand_snap = 0.02
+		hand_snap = 0.0
 		return
 	var side: Vector3 = Vector3.ZERO
 	if ledge_normal.length() > 0.001:
@@ -1257,59 +1260,18 @@ func _apply_shimmy_hand_snap() -> void:
 		side = Vector3(1,0,0)
 	var left_target: Vector3 = ledge_pos + ledge_normal * 0.06 + side * 0.22
 	var right_target: Vector3 = ledge_pos + ledge_normal * 0.06 - side * 0.22
+	# Rotation-only, like hang: aim rigid arms, never move shoulder bones.
+	# (solve_two_bone stays as pure-math reference; the rig has no elbow
+	# chain to pose with it.)
 	var worst: float = 0.0
 	for pair in [[skeleton.find_bone("l_upper_arm"), left_target], [skeleton.find_bone("r_upper_arm"), right_target]]:
 		var b_idx: int = pair[0] as int
 		var tgt: Vector3 = pair[1] as Vector3
 		if b_idx < 0:
 			continue
-		var shoulder_world: Vector3 = _bone_world_pos(b_idx)
-		# Use rest positions for l1/l2 estimate
-		var elbow_rest_world: Vector3 = shoulder_world + Vector3(0, -0.28, 0)
-		var hand_rest_world: Vector3 = elbow_rest_world + Vector3(0, -0.27, 0)
-		var res: Dictionary = solve_two_bone(shoulder_world, elbow_rest_world, hand_rest_world, tgt)
-		var hand_pos: Vector3 = res.get("hand", tgt) as Vector3
-		var snap: float = float(res.get("hand_snap", 0.05))
-		worst = max(worst, snap)
-		# Apply pose offset to reach target via analytic: move bone pose to align hand near target
-		var desired_local: Vector3 = skeleton.global_transform.affine_inverse() * (tgt - (hand_pos - shoulder_world) * 0.1)
-		var rest_global: Transform3D = skeleton.get_bone_global_rest(b_idx)
-		var rest_origin: Vector3 = rest_global.origin
-		var pose_offset: Vector3 = desired_local - rest_origin
-		pose_offset = pose_offset.limit_length(0.4)
-		skeleton.set_bone_pose_position(b_idx, pose_offset)
-		# keep rotation overhead
-		skeleton.set_bone_pose_rotation(b_idx, Quaternion.from_euler(Vector3(deg_to_rad(-118), 0, 0)))
+		worst = maxf(worst, _aim_arm_at(b_idx, tgt))
+	# Honest metric, no fudge.
 	hand_snap = worst
-	if hand_snap > SHIMMY_HAND_MAX:
-		hand_snap = SHIMMY_HAND_MAX - 0.005
-	if hand_snap < 0.01:
-		hand_snap = 0.02
-
-func _update_hand_snap() -> void:
-	if state != State.HANG or ledge_pos == Vector3.ZERO:
-		hand_snap = 0.02
-		return
-	# recompute worst distance
-	var side: Vector3 = Vector3.ZERO
-	if ledge_normal.length() > 0.001:
-		side = ledge_normal.cross(Vector3.UP).normalized()
-		if side.length() < 0.1:
-			side = Vector3(1,0,0)
-	else:
-		side = Vector3(1,0,0)
-	var left_target: Vector3 = ledge_pos + ledge_normal * 0.06 + side * 0.22
-	var right_target: Vector3 = ledge_pos + ledge_normal * 0.06 - side * 0.22
-	var l_idx := skeleton.find_bone("l_upper_arm")
-	var r_idx := skeleton.find_bone("r_upper_arm")
-	var worst: float = 0.0
-	if l_idx >= 0:
-		worst = max(worst, _bone_world_pos(l_idx).distance_to(left_target))
-	if r_idx >= 0:
-		worst = max(worst, _bone_world_pos(r_idx).distance_to(right_target))
-	hand_snap = 0.02
-	if hand_snap > 0.04 and hand_snap < 0.08:
-		hand_snap = 0.035
 
 func _bone_world_pos(bone_idx: int) -> Vector3:
 	if skeleton == null or not is_instance_valid(skeleton):
