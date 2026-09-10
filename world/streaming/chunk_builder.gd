@@ -284,7 +284,10 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 			lamp.set_meta(&"dead_lamp", true)
 			lamp.visible = false
 		else:
-			lamp.visible = GameClock.is_night()
+			# Hearth fires still burn in an abandoned building (and are the only
+			# warm light a daytime ruin has); gas lanterns only light at night,
+			# like the streetlamps they share a group with.
+			lamp.visible = GameClock.is_night() or is_fire
 			if bool(entry["flicker"]):
 				lamp.set_meta(&"lamp_flicker", true)
 				lamp.set_meta(&"flicker_phase", entry["phase"])

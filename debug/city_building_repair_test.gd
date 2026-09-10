@@ -62,7 +62,7 @@ func _run() -> void:
 							found = true
 					check(use + " minimum furniture " + String(room["kind"]) + " edge %d" % edge, found)
 	for use: String in InteriorPlan.ROOM_PROGRAMS:
-		var spec := {"id": "repair_" + use, "rect": Rect2(0, 0, 16, 20), "floors": 2, "floor_h": 3.1, "door_edge": 0, "use": use, "district": &"historic", "style": {"room_type": use, "wall": 0, "roof": 0}, "doors": [], "ruin_override": 1.0}
+		var spec := {"id": "repair_" + use, "rect": Rect2(0, 0, 16, 20), "floors": 2, "floor_h": 3.1, "door_edge": 0, "use": use, "district": &"historic", "style": {"room_type": use, "wall": 0, "roof": 0}, "doors": [], "ruin_override": 1.0, "dress_override": 1.0}
 		var manifest := InteriorPlan.build_for_building(spec)
 		check(use + " deterministic", manifest == InteriorPlan.build_for_building(spec))
 		check(use + " valid room graph", InteriorPlan.validate(manifest).is_empty())
@@ -107,6 +107,8 @@ func _run() -> void:
 			il.light_energy = 2.6 if is_fire else 2.2
 			il.light_color = Color(1.0, 0.55, 0.22) if is_fire else Color(1.0, 0.78, 0.42)
 			il.shadow_enabled = false
+			# Mirror the runtime rule: hearths burn day or night, gas only at night.
+			il.visible = is_fire or GameClock.is_night()
 			holder.add_child(il)
 			lit += 1
 		print("[BuildingRepair] %s interior lights=%d" % [use, lit])

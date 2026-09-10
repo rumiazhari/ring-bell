@@ -3410,7 +3410,10 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		# ('owner chunk never returned'). Lobby layout and period props stay on
 		# every building, so no interior reads as an empty shell.
 		var dress_roll := absi(int(WorldSeed.str_hash(str(spec.get("id", "")) + "dress"))) % 3
-		var dress_ok := dress_roll == 0
+		# spec.dress_override forces the dressed tier, exactly like ruin_override:
+		# the render fixtures use it so an audit capture actually shows the
+		# period dressing instead of whichever tier the id hash happened to hit.
+		var dress_ok := dress_roll == 0 				or float(spec.get("dress_override", 0.0)) > 0.5
 		var dressed: bool = dress_ok and fi == 0 and str(fl.get("topology", "")) == "lobby"
 		b.push_layer(tag + ":f%d" % fi)
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
@@ -3557,6 +3560,10 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				b.add_visual_box(off + Vector3(w0 - WALL_INSET - 0.012, lin_h * 0.5, sz), Vector3(0.03, lin_h, 0.07), panel_col)
 				sz += stile
 
+		# Prague period details on the ground floor of dressed buildings: the
+		# glazed-tile kachelofen, pipe runs with brass valves, stencilled dado.
+		if dress_ok and fi == 0:
+			_period_interior_details(b, off, w, d, fh, tag)
 		# Round-4 interior architecture: crown moulding at every ceiling line of
 		# a dressed (gated) building; visual-only, hugging the wall faces.
 		if dress_ok:
@@ -3784,6 +3791,50 @@ static func pl_lath_col(rng: RandomNumberGenerator) -> Color:
 	return [Color("8a7a5c"), Color("6f6a5a"), Color("9a8f74"), Color("4f4a3e")][rng.randi_range(0, 3)]
 
 
+## Period interior details that make a Prague interior read as Prague rather
+## than generic Victorian: the glazed-tile KACHELOFEN (masonry stove) that every
+## 19th-century Czech flat had, cast-iron pipe runs with brass valve wheels
+## (steampunk age-of-steam cue), and a stencilled dado band above the wainscot.
+## Dressed (LOD-gated) buildings only, bounded box counts.
+static func _period_interior_details(b: MeshBatcher, off: Vector3, w: float,
+		d: float, fh: float, tag: String) -> void:
+	var rng := WorldSeed.rng_for("period", [WorldSeed.str_hash(tag)])
+	var inset := WALL_T + 0.06
+	# --- Kachelofen: glazed tile body, iron door, stone plinth, soot crown -----
+	var tile_cols := [Color("d8d2c0"), Color("9aa88f"), Color("7f8fa0"), Color("c9bda6")]
+	var body_col: Color = tile_cols[rng.randi_range(0, tile_cols.size() - 1)]
+	var sx := off.x + inset + 0.75
+	var sz := off.z + d * rng.randf_range(0.25, 0.6)
+	b.add_visual_box(Vector3(sx, 0.06, sz), Vector3(1.3, 0.12, 1.0), Color("6f6a5e"))
+	b.add_visual_box(Vector3(sx, 1.12, sz), Vector3(1.15, 2.0, 0.85), body_col)
+	b.add_visual_box(Vector3(sx, 0.72, sz), Vector3(1.2, 0.08, 0.9), body_col.darkened(0.25))
+	b.add_visual_box(Vector3(sx, 1.56, sz), Vector3(1.2, 0.08, 0.9), body_col.darkened(0.25))
+	b.add_visual_box(Vector3(sx, 2.16, sz), Vector3(1.26, 0.16, 0.96), Color("54504a"))
+	b.add_visual_box(Vector3(sx, 2.32, sz), Vector3(0.34, 0.2, 0.34), Color("2c2c30"))
+	b.add_visual_box(Vector3(sx + 0.58, 0.62, sz), Vector3(0.06, 0.42, 0.5), Color("242428"))
+	b.add_visual_box(Vector3(sx + 0.62, 0.62, sz), Vector3(0.05, 0.08, 0.14), Color("b08a44"))
+	# --- Pipe run with valve wheels, and the leak it leaves behind -------------
+	var pipe_y := fh - 0.7
+	b.add_visual_box(Vector3(off.x + w * 0.5, pipe_y, off.z + inset + 0.1), Vector3(w - inset * 2.0, 0.13, 0.13), Color("4a4a50"))
+	for vi in 2:
+		var vx := off.x + inset + (w * 0.28) * (vi + 0.5)
+		b.add_visual_box(Vector3(vx, pipe_y, off.z + inset + 0.1), Vector3(0.16, 0.16, 0.16), Color("8a6d3f"))
+		b.add_visual_box(Vector3(vx, pipe_y + 0.03, off.z + inset + 0.22), Vector3(0.5, 0.05, 0.05), Color("8a6d3f"))
+		b.add_visual_box(Vector3(vx, pipe_y - 0.45, off.z + inset + 0.1), Vector3(0.1, 0.9, 0.1), Color("43434a"))
+		b.add_visual_box(Vector3(vx, 0.04, off.z + inset + 0.35), Vector3(0.7, 0.02, 0.6), Color("2a2620"))
+	# --- Stencilled dado band above the wainscot (painted, not panelled) -------
+	var band_y := 0.92
+	var motif := Color("6d5a3a") if rng.randf() < 0.5 else Color("4a5a4a")
+	var step := 1.1
+	var n := mini(14, int((w - inset * 2.0) / step))
+	for i in n:
+		var mx := off.x + inset + step * (float(i) + 0.5)
+		b.add_visual_box(Vector3(mx, band_y, off.z + inset + 0.012), Vector3(0.22, 0.22, 0.03), motif)
+		b.add_visual_box(Vector3(mx, band_y, off.z + d - inset - 0.012), Vector3(0.22, 0.22, 0.03), motif)
+	b.add_visual_box(Vector3(off.x + w * 0.5, band_y - 0.16, off.z + inset + 0.012), Vector3(w - inset * 2.0, 0.05, 0.03), motif.darkened(0.2))
+	b.add_visual_box(Vector3(off.x + w * 0.5, band_y + 0.16, off.z + inset + 0.012), Vector3(w - inset * 2.0, 0.05, 0.03), motif.darkened(0.2))
+
+
 ## Post-apocalypse decay geometry. Per-vertex weathering alone cannot read on
 ## interiors because walls are single 8-vertex boxes (a smear interpolates
 ## smoothly across 16 m), so decay is built as thin decal slabs on top of the
@@ -3929,6 +3980,39 @@ static func _ruin_features(b: MeshBatcher, off: Vector3, w: float, d: float,
 		b.add_visual_box(off + Vector3(px, 0.17, pz), Vector3(0.42, 0.34, 0.42), Color("4a3c2b"))
 		b.add_visual_box(off + Vector3(px, 0.5, pz), Vector3(0.3, 0.42, 0.3), Color("4d4536"))
 		b.add_visual_box(off + Vector3(px + 0.12, 0.72, pz - 0.08), Vector3(0.1, 0.34, 0.1), Color("3f3a2c"))
+	if ruin > 0.5:
+		var fh := float(spec.get("floor_h", 3.1))
+		# Sacking nailed over openings, and the glass that is no longer in them.
+		var sacking := Color("5a5142")
+		for si in 2:
+			var sxp := off.x + w * rng.randf_range(0.18, 0.82)
+			var syp := rng.randf_range(1.2, 2.1)
+			b.add_visual_box(Vector3(sxp, syp, off.z + WALL_T + 0.05), Vector3(rng.randf_range(1.0, 1.5), rng.randf_range(1.0, 1.6), 0.06), sacking)
+			for shard in 3:
+				b.add_visual_box(off + Vector3(sxp + rng.randf_range(-1.1, 1.1), 0.02, rng.randf_range(0.2, 1.4)),
+						Vector3(rng.randf_range(0.1, 0.26), 0.02, rng.randf_range(0.1, 0.3)), Color("b9c6c4"))
+		# Ceiling water damage: dark rot spreading down from the ceiling line.
+		var rot_cols := [Color("2a241c"), Color("33291d"), Color("262b22")]
+		var rot_n := 3 + rng.randi_range(0, 3)
+		for ri in rot_n:
+			var ry: float = fh - rng.randf_range(0.35, 0.9)
+			var rcol: Color = rot_cols[rng.randi_range(0, rot_cols.size() - 1)]
+			if rng.randf() < 0.5:
+				b.add_visual_box(off + Vector3(w * rng.randf_range(0.1, 0.9), ry, WALL_T + 0.015),
+						Vector3(rng.randf_range(0.5, 1.6), rng.randf_range(0.7, 1.5), 0.02), rcol)
+			else:
+				b.add_visual_box(off + Vector3(WALL_T + 0.015, ry, d * rng.randf_range(0.1, 0.9)),
+						Vector3(0.02, rng.randf_range(0.7, 1.5), rng.randf_range(0.5, 1.6)), rcol)
+		# Papers and an overturned chair: somebody left in a hurry.
+		var papers := 3 + rng.randi_range(0, 3)
+		for pi in papers:
+			b.add_visual_box(off + Vector3(rng.randf_range(0.5, maxf(w - 0.7, 0.6)), 0.012,
+					rng.randf_range(0.5, maxf(d - 0.7, 0.6))),
+					Vector3(0.3, 0.006, 0.22), Color("cfc6ab"))
+		var cx2 := off.x + w * rng.randf_range(0.2, 0.8)
+		var cz2 := off.z + d * rng.randf_range(0.2, 0.8)
+		b.add_visual_box(Vector3(cx2, 0.09, cz2), Vector3(0.5, 0.1, 0.5), Color("5a4830"))
+		b.add_visual_box(Vector3(cx2 + 0.3, 0.4, cz2), Vector3(0.45, 0.08, 0.45), Color("5a4830"))
 
 
 ## Victorian wall palettes. The renderer is flat vertex colour (no textures), so
