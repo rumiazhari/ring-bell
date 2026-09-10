@@ -31,6 +31,7 @@ var _inactive_body: StaticBody3D
 static var debug_profile := false
 
 static var _opaque_material: ShaderMaterial
+static var _tile_array: Texture2DArray
 static var _transparent_material: StandardMaterial3D
 static var _paving_materials: Dictionary = {}
 var _asset_instances: Array[Dictionary] = [] # {pos,size,color,res_path,scale,has_collision,yaw,layer,building_id,floor_i}
@@ -78,6 +79,21 @@ const TILE_MOSS := 12
 const TILE_GRIME := 13
 const TILE_GLASS := 14
 const TILE_RENDER_GREY := 15
+const TILE_SETTS := 16          # street surface: small granite setts
+const TILE_PAVING_SLAB := 17    # pavement: large stone slabs
+const TILE_DIRT_GROUND := 18    # bare city ground: compacted earth + gravel
+const TILE_WALLPAPER := 19      # Victorian wall covering
+const TILE_GRASS := 20          # terrain: grazed meadow / lawn
+const TILE_MEADOW_DRY := 21     # terrain: dry upland grass
+const TILE_SOIL := 22           # terrain: bare / alluvial soil
+const TILE_ROCK := 23           # terrain: exposed rock
+## Atlas geometry - must match tools/gen_surface_atlas.py.
+const ATLAS_COLS := 4
+const ATLAS_ROWS := 6
+const ATLAS_TILE_PX := 512
+const ATLAS_PATH := "res://world/streaming/surface_atlas.png"
+## Total tiles in the atlas (4 x 5 grid).
+const TILE_COUNT := 24
 
 ## How many world metres one atlas tile spans, per tile. Surfaces with fine
 ## structure (wood grain, rust) tile small; plaster tiles large so it reads as
@@ -90,6 +106,18 @@ static func tile_span(tile: int) -> float:
 			return 1.2
 		TILE_BRICK, TILE_STONE_RUBBLE, TILE_TILE_CHECKER:
 			return 1.8
+		TILE_SETTS:
+			return 1.2      # 10 setts per tile -> ~12 cm stones
+		TILE_PAVING_SLAB:
+			return 3.0      # slabs are half a tile -> ~1.5 m slabs
+		TILE_DIRT_GROUND:
+			return 4.0
+		TILE_GRASS, TILE_MEADOW_DRY:
+			return 2.2      # clumps read at a human scale, not as a green wash
+		TILE_SOIL:
+			return 3.0
+		TILE_ROCK:
+			return 3.2
 		TILE_FLOORBOARD, TILE_GLASS, TILE_MOSS:
 			return 2.4
 		_:
@@ -122,8 +150,36 @@ func _tile_for(spec: Dictionary, col: Color) -> int:
 	if bool(spec["roof"]):
 		return TILE_SLATE
 	var layer := String(spec["layer"])
-	if layer.contains("paving") or layer.contains("setts"):
-		return TILE_COBBLE
+	if layer.contains("pavement"):
+		return TILE_PAVING_SLAB
+	if layer.contains("setts"):
+		return TILE_SETTS
+	# Author-declared MATERIAL beats colour guessing. Builders already state the
+	# material of what they emit (a veranda deck says "wood", a ramp says
+	# "concrete"), and guessing from colour used to hand the mid-grey veranda
+	# deck and its near-black posts the RUST METAL tile - so every veranda in
+	# the city rendered as a dark rusty slab with floating dark posts.
+	var val_hint := col.v
+	if mat == &"wood":
+		return TILE_WOOD_DARK if val_hint < 0.45 else TILE_WOOD_PALE
+	if mat == &"concrete":
+		# "concrete" covers both the fabric (facade bands, interior walls) and
+		# slabs (floors, foundations, entry decks, ramps). Split by shape: a
+		# flat box is a slab and gets paving/stone detail, a tall one is wall
+		# fabric and gets render - mapping all concrete to rubble repainted
+		# every facade in the city.
+		var box: Vector3 = spec["size"]
+		return TILE_PAVING_SLAB if box.y <= 0.45 else TILE_RENDER_GREY
+	if mat == &"stone":
+		return TILE_STONE_RUBBLE
+	if mat == &"steel" or mat == &"iron" or mat == &"metal":
+		return TILE_RUST_METAL
+	if mat == &"brick":
+		return TILE_BRICK
+	if mat == &"tile":
+		return TILE_TILE_CHECKER
+	if mat == &"soil" or mat == &"dirt":
+		return TILE_DIRT_GROUND
 	var sat := col.s
 	var val := col.v
 	# Greens read as moss/algae; greys as bare stone; very dark greys as iron.
@@ -1142,12 +1198,11 @@ func _mesh_from(groups: Dictionary) -> ArrayMesh:
 		if key.ends_with("|g"):
 			mesh.surface_set_material(surf_idx, _glass_material())
 		elif key == "street_setts" or key == "street_pavement":
-			if not _paving_materials.has(key):
-				var paving := ShaderMaterial.new()
-				paving.shader = preload("res://world/streaming/urban_paving.gdshader")
-				paving.set_shader_parameter("stone_size", Vector2(0.16, 0.16) if key == "street_pavement" else Vector2(0.32, 0.22))
-				_paving_materials[key] = paving
-			mesh.surface_set_material(surf_idx, _paving_materials[key])
+			# Streets and pavements used a bespoke procedural paving shader; the
+			# surface atlas now owns ground texture (granite setts / stone slabs,
+			# selectable per layer), so they share the one city material instead
+			# of a second shader with its own stone pattern.
+			mesh.surface_set_material(surf_idx, _shared_material())
 		else:
 			mesh.surface_set_material(surf_idx, _shared_material())
 	return mesh
@@ -1162,12 +1217,72 @@ static func _shared_material() -> ShaderMaterial:
 		return _opaque_material
 	var mat := ShaderMaterial.new()
 	mat.shader = preload("res://world/streaming/surface_atlas.gdshader")
-	mat.set_shader_parameter("atlas", preload("res://world/streaming/surface_atlas.png"))
-	mat.set_shader_parameter("atlas_grid", Vector2(4.0, 4.0))
+	var tiles := _atlas_texture_array()
+	if tiles != null:
+		mat.set_shader_parameter("surface_tiles", tiles)
 	mat.set_shader_parameter("surface_roughness", 0.95)
 	mat.set_shader_parameter("metallic_hint", 0.0)
+	# A/B capture support: RB_NO_SURFACE_TILES=1 renders the same scene with
+	# plain vertex colour so the lighting cost of the detail can be measured.
+	if OS.get_environment("RB_NO_SURFACE_TILES") == "1":
+		mat.set_shader_parameter("detail_strength", 0.0)
 	_opaque_material = mat
 	return mat
+
+
+## Slice the generated atlas into a Texture2DArray, one layer per tile.
+##
+## A texture array is used rather than sampling the atlas image directly: mip
+## levels of an atlas average NEIGHBOURING TILES together, so distant surfaces
+## blur into a grey smear (the first attempt's "blurry buildings"). Per-layer
+## mips cannot bleed, and repeat wrapping stays correct per layer.
+static func _atlas_texture_array() -> Texture2DArray:
+	if _tile_array != null:
+		return _tile_array
+	var tex := load(ATLAS_PATH) as Texture2D
+	if tex == null:
+		push_warning("surface atlas missing: %s" % ATLAS_PATH)
+		return null
+	var src := tex.get_image()
+	if src == null:
+		return null
+	if src.has_mipmaps():
+		src.clear_mipmaps()      # mips are generated per tile, never across
+	# Derive the tile size from what was ACTUALLY imported rather than trusting
+	# the expected constant. A stale .ctex (Godot only re-imports assets on an
+	# ENGINE-level `--import`, not on the project's `-- --import` boot flag) once
+	# left a 1024x1024 copy of an older atlas on disk: slicing 512 px tiles out
+	# of it produced wrong regions and empty layers, which the player saw as
+	# black/untextured surfaces everywhere.
+	if src.get_width() % ATLAS_COLS != 0 or src.get_height() % ATLAS_ROWS != 0:
+		push_warning("surface atlas %dx%d does not divide into a %dx%d grid - textures disabled"
+				% [src.get_width(), src.get_height(), ATLAS_COLS, ATLAS_ROWS])
+		return null
+	var tile_px := src.get_width() / ATLAS_COLS
+	if tile_px != ATLAS_TILE_PX or src.get_height() / ATLAS_ROWS != tile_px:
+		push_warning("surface atlas tile is %d px, expected %d (stale import?) - using the actual size"
+				% [tile_px, ATLAS_TILE_PX])
+	var images: Array[Image] = []
+	for i in TILE_COUNT:
+		var col := i % ATLAS_COLS
+		var row := i / ATLAS_COLS
+		var tile := src.get_region(Rect2i(col * tile_px, row * tile_px,
+				tile_px, tile_px))
+		if tile == null:
+			continue
+		if tile.get_format() != Image.FORMAT_RGBA8:
+			tile.convert(Image.FORMAT_RGBA8)
+		tile.generate_mipmaps()
+		images.append(tile)
+	if images.is_empty():
+		return null
+	var arr := Texture2DArray.new()
+	var err := arr.create_from_images(images)
+	if err != OK:
+		push_warning("surface tile array build failed (%d)" % err)
+		return null
+	_tile_array = arr
+	return arr
 
 
 static func _glass_material() -> StandardMaterial3D:

@@ -549,7 +549,9 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	_ruin_features(b, off, w, d, tag, spec, decay, ruin)
 
 	# --- interior partitions (P1) -------------------------------------------------
-	b.push_surface(MeshBatcher.TILE_PLASTER_COARSE)
+	# Dressed buildings get period WALLPAPER on the partitions; the rest stay
+	# plain plaster. Both are period-correct - a bare-plaster flat is a poor one.
+	b.push_surface(MeshBatcher.TILE_WALLPAPER if dress_ok else MeshBatcher.TILE_PLASTER_COARSE)
 	_emit_interior_partitions(b, off, w, d, fh, n, tag, spec, zone, has_stairs)
 	b.pop_surface()
 
@@ -614,15 +616,34 @@ static func _emit_external_access(b: MeshBatcher, off: Vector3,
 	var door_local := _access_door_local(w, d, edge)
 	var outward := _access_outward(edge)
 	var inward := -outward
-	var bottom_local := door_local + outward * run
+	var kind := str(access.get("kind", "none"))
+	var deck_depth := 0.0
+	if kind == "porch":
+		deck_depth = ACCESS_PORCH_DEPTH
+	elif kind == "veranda":
+		deck_depth = ACCESS_VERANDA_DEPTH
+	var span := 0.0
+	if deck_depth > 0.0:
+		var span_limit := ACCESS_VERANDA_MAX_SPAN if kind == "veranda" else width
+		span = minf(w if edge == 0 or edge == 2 else d, span_limit)
+	# With an entry deck the deck IS the top landing, so the flight has to start
+	# at the deck's OUTER edge. Starting it at the door buried the top treads
+	# UNDER the deck, and the staircase visibly failed to meet it - the defect a
+	# capture reported as "the top step does not meet the deck".
+	var ramp_run := run
+	if deck_depth > 0.0:
+		ramp_run = maxf(run - deck_depth, 1.2)
+	var bottom_local := door_local + outward * (deck_depth + ramp_run)
 	var top_local := door_local + outward * 0.04
+	if deck_depth > 0.0:
+		top_local = door_local + outward * (deck_depth + 0.04)
 	var horizontal := inward.normalized()
-	var tangent := Vector3(horizontal.x, rise / maxf(run, 0.1), horizontal.y).normalized()
+	var tangent := Vector3(horizontal.x, rise / maxf(ramp_run, 0.1), horizontal.y).normalized()
 	var x_axis := Vector3(tangent.z, 0.0, -tangent.x).normalized()
 	var y_axis := tangent.cross(x_axis).normalized()
 	var basis := Basis(x_axis, y_axis, tangent)
-	var hyp := sqrt(run * run + rise * rise)
-	var line_center := door_local + outward * run * 0.5
+	var hyp := sqrt(ramp_run * ramp_run + rise * rise)
+	var line_center := top_local.lerp(bottom_local, 0.5)
 	var line_y := (ground_y + top_y) * 0.5
 
 	b.push_layer(tag + ":access")
@@ -634,7 +655,7 @@ static func _emit_external_access(b: MeshBatcher, off: Vector3,
 		Vector3(width, ACCESS_RAMP_T, hyp), basis, DECK_COLOR, true, false,
 		&"concrete", tag, -1)
 	var step_count := clampi(int(ceil(rise / 0.18)), 3, ACCESS_MAX_STEPS)
-	var tread_depth := maxf(run / float(step_count) + 0.06, 0.18)
+	var tread_depth := maxf(ramp_run / float(step_count) + 0.06, 0.18)
 	var tread_basis := Basis(Vector3.UP, atan2(inward.x, inward.y))
 	for step_i in step_count:
 		var t := (float(step_i) + 0.5) / float(step_count)
@@ -645,35 +666,47 @@ static func _emit_external_access(b: MeshBatcher, off: Vector3,
 			Vector3(maxf(width - 0.08, 0.35), ACCESS_STEP_T, tread_depth),
 			tread_basis, FLOOR_COLOR, false)
 
-	var kind := str(access.get("kind", "none"))
-	if kind == "porch" or kind == "veranda":
-		var depth := ACCESS_PORCH_DEPTH if kind == "porch" else ACCESS_VERANDA_DEPTH
-		var span_limit := ACCESS_VERANDA_MAX_SPAN if kind == "veranda" else width
-		var span := minf(w if edge == 0 or edge == 2 else d, span_limit)
-		var deck_center := door_local + outward * depth * 0.5
-		var deck_size := Vector3(span, ACCESS_LANDING_T, depth) \
-			if edge == 0 or edge == 2 else Vector3(depth, ACCESS_LANDING_T, span)
+	if deck_depth > 0.0:
+		var deck_center := door_local + outward * deck_depth * 0.5
+		var deck_size := Vector3(span, ACCESS_LANDING_T, deck_depth) 			if edge == 0 or edge == 2 else Vector3(deck_depth, ACCESS_LANDING_T, span)
 		var deck_material: StringName = &"wood" if kind == "veranda" else &"concrete"
 		b.add_box_rotated(
 			off + Vector3(deck_center.x, top_y - off.y - ACCESS_LANDING_T * 0.5,
 				deck_center.y),
 			deck_size, Basis.IDENTITY, DECK_COLOR, true, false,
 			deck_material, tag, -1)
-		if kind == "veranda":
-			# Open-front veranda posts leave the stair landing clear while
-			# giving the raised entrance a readable porch edge.
-			var half_span := maxf(span * 0.5 - 0.18, 0.18)
-			for along in [-half_span, half_span]:
-				var post_local := deck_center
+		# Load-bearing posts UNDER the deck. Without these the slab reads as
+		# floating in mid air: the only posts were railing posts standing ON the
+		# deck, so nothing visibly held it up.
+		var post_h := top_y - ACCESS_LANDING_T - ground_y
+		if post_h > 0.25:
+			var half_load := maxf(span * 0.5 - 0.22, 0.18)
+			for along in [-half_load, half_load]:
+				var sup_local := deck_center
 				if edge == 0 or edge == 2:
-					post_local.x += along
+					sup_local.x += along
 				else:
-					post_local.y += along
-				post_local += outward * (depth * 0.5 - 0.08)
+					sup_local.y += along
+				sup_local += outward * (deck_depth * 0.5 - 0.16)
 				b.add_box_rotated(
-						off + Vector3(post_local.x, top_y - off.y + 0.62, post_local.y),
-						Vector3(0.12, 1.24, 0.12), Basis.IDENTITY,
-						RAIL_COLOR, true, false, &"wood", tag, -1)
+					off + Vector3(sup_local.x, ground_y + post_h * 0.5 - off.y, sup_local.y),
+					Vector3(0.16, post_h, 0.16), Basis.IDENTITY, RAIL_COLOR,
+					true, false, deck_material, tag, -1)
+	if kind == "veranda":
+		# Open-front veranda posts leave the stair landing clear while
+		# giving the raised entrance a readable porch edge.
+		var half_span := maxf(span * 0.5 - 0.18, 0.18)
+		for along in [-half_span, half_span]:
+			var post_local := door_local + outward * deck_depth * 0.5
+			if edge == 0 or edge == 2:
+				post_local.x += along
+			else:
+				post_local.y += along
+			post_local += outward * (deck_depth * 0.5 - 0.08)
+			b.add_box_rotated(
+				off + Vector3(post_local.x, top_y - off.y + 0.62, post_local.y),
+				Vector3(0.12, 1.24, 0.12), Basis.IDENTITY,
+				RAIL_COLOR, true, false, &"wood", tag, -1)
 	b.pop_layer()
 
 

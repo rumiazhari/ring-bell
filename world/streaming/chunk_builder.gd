@@ -18,14 +18,14 @@ const PavementPlanScript = preload("res://world/generation/pavement_plan.gd")
 ## to GLOBAL grid steps (multiples of fixed meters), never to chunk-local
 ## offsets - so adjacent chunks continue each other's decoration exactly.
 
-const GROUND_COLOR := Color("4c4a44")
-const STREET_SETTS := Color("625c53")
-const AVENUE_SETTS := Color("716b60")
+const GROUND_COLOR := Color("6b6a62")
+const STREET_SETTS := Color("847d70")
+const AVENUE_SETTS := Color("8f887b")
 const DASH_COLOR := Color("b9ae82")
 const SIDEWALK_HISTORIC := Color("a29a8b")
 const SIDEWALK_INNER := Color("98948a")
 const PLAZA_PAVE := Color("b3ab97")
-const ALLEY_FLOOR := Color("6f6759")
+const ALLEY_FLOOR := Color("7e7668")
 const GRASS := Color("55693f")
 const COURTYARD_GREEN := Color("647054")
 const COURTYARD_SERVICE := Color("776b59")
@@ -522,8 +522,13 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 		return
 	# Subtle per-chunk tone variation keeps large surfaces from reading flat.
 	var tint := 0.94 + 0.06 * WorldSeed.unit_float("ground", [coord.x, coord.y])
+	# The city's bare ground carries surface detail (compacted earth, gravel,
+	# scuffs). Streets and pavements lay their own setts/slab tiles on top; this
+	# is what shows in the gaps, yards and unbuilt lots.
+	b.push_surface(MeshBatcher.TILE_DIRT_GROUND)
 	b.add_structural_box(Vector3((coord.x + 0.5) * s, -0.25, (coord.y + 0.5) * s),
 			Vector3(s, 0.5, s), GROUND_COLOR * tint)
+	b.pop_surface()
 
 
 # --- Roads -------------------------------------------------------------------

@@ -89,6 +89,29 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 		"terrain_gen_ms": gen_ms,
 	}
 
+## Which surface tile a terrain vertex gets.
+##
+## Inside the city basin the ground is urban (compacted earth, gravel, scuffs)
+## whatever the soil class says - the countryside classes would put meadow
+## grass in the middle of a city street network. Outside it, the manifest's own
+## material id decides.
+static func _ground_tile(material_ids: Array, idx: int, world_xz: Vector2) -> int:
+	if world_xz.length() < WorldConstants.URBAN_INNER_M:
+		return MeshBatcher.TILE_DIRT_GROUND
+	var mat: StringName = &""
+	if idx < material_ids.size():
+		mat = StringName(material_ids[idx])
+	match mat:
+		&"rock":
+			return MeshBatcher.TILE_ROCK
+		&"alluvial_soil":
+			return MeshBatcher.TILE_SOIL
+		&"upland_grass":
+			return MeshBatcher.TILE_MEADOW_DRY
+		_:
+			return MeshBatcher.TILE_GRASS
+
+
 static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
 	var coord: Vector2i = manifest.get("coord", Vector2i.ZERO)
@@ -117,18 +140,32 @@ static func materialize(parent: Node3D, manifest: Dictionary) -> Dictionary:
 			verts[idx] = Vector3(x, y, z)
 			var n: Vector3 = normals[idx] if idx < normals.size() else Vector3.UP
 			norms[idx] = n
+	# Surface detail: the ground used to be flat vertex colour, which is why the
+	# visible ground of the city read as a featureless grey field. Each vertex
+	# now carries a packed (tile, metres-per-tile) attribute, chosen from the
+	# per-vertex material id the manifest already computes, and the mesh uses the
+	# same atlas material as the city so ground and buildings agree.
+	var material_ids: Array = manifest.get("material_ids", []) as Array
+	var uvs := PackedVector2Array()
+	uvs.resize(RESOLUTION * RESOLUTION)
+	for j in RESOLUTION:
+		for i in RESOLUTION:
+			var idx := j * RESOLUTION + i
+			var x := origin.x + float(i) * SPACING
+			var z := origin.y + float(j) * SPACING
+			var tile := _ground_tile(material_ids, idx, Vector2(x, z))
+			uvs[idx] = Vector2(float(tile), MeshBatcher.tile_span(tile))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = norms
 	if not colors.is_empty():
 		arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
+	var mat := MeshBatcher._shared_material()
 	mesh.surface_set_material(0, mat)
 	var mi := MeshInstance3D.new()
 	mi.name = "TerrainMesh"

@@ -95,6 +95,9 @@ func _ready() -> void:
 	if args.has("--buildingrepairtest"):
 		add_child(load("res://debug/city_building_repair_test.gd").new())
 		return
+	if args.has("--citygroundcapture"):
+		add_child(load("res://debug/city_ground_capture.gd").new())
+		return
 	if args.has("--chunkplanprobe"):
 		add_child(load("res://debug/chunk_plan_probe.gd").new())
 		return
@@ -183,6 +186,19 @@ func _ready() -> void:
 		var tester3: Node = load("res://debug/city_runtime_test.gd").new()
 		tester3.name = "CityRuntimeTest"
 		add_child(tester3)
+	elif user_args.has("--areacapture"):
+		# AFTER the world build: this harness drives the real streamed city
+		# (player, ChunkManager, interiors), so it cannot run in the early
+		# dispatch block that other capture probes use.
+		var tester_area: Node = load("res://debug/area_capture.gd").new()
+		tester_area.name = "AreaCapture"
+		add_child(tester_area)
+	elif user_args.has("--abysstest"):
+		# Anti-abyss recovery harness: needs the real streamed city, player and
+		# ChunkManager, so it runs here instead of the early probe block.
+		var tester_abyss: Node = load("res://debug/abyss_test.gd").new()
+		tester_abyss.name = "AbyssTest"
+		add_child(tester_abyss)
 	elif user_args.has("--g10p2b-capture"):
 		var tester_p2b: Node = load("res://debug/g10p2b_capture.gd").new()
 		tester_p2b.name = "G10P2BCapture"
@@ -293,6 +309,8 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 	var test_flags: Array[String] = [
 			"--smoke", "--soak", "--legacy-block",
 			"--citytest", "--cityruntime", "--g10p2b-morphologytest", "--g10p2b-revealtest", "--walkthrough", "--havoctest",
+			"--areacapture", "--citygroundcapture", "--buildingrepairtest", "--chunkbudget",
+			"--abysstest",
 			"--terraintest", "--terrainmaterialtest",
 			"--hydrotest", "--hydromaterialtest",
 			"--biometest", "--biomaterialtest",
@@ -629,6 +647,8 @@ func _release_city_spawn_gate_when_ready() -> void:
 func _wire_player(p: Survivor) -> void:
 	player = p
 	p.died.connect(_on_player_died)
+	if p.abyss != null:
+		p.abyss.recovered.connect(_on_player_abyss_recovered)
 	_player_controller = PlayerController.new()
 	p.add_child(_player_controller)
 	if hud != null:
@@ -645,6 +665,13 @@ func _on_survivor_interacted(interactor: Node3D, npc: Survivor) -> void:
 func _on_player_died(_p: Survivor) -> void:
 	if hud != null:
 		hud.show_death_screen()
+
+
+## Player-facing cue: the anti-abyss guard just recovered the player onto the
+## verified top-side surface. NPC recoveries stay silent.
+func _on_player_abyss_recovered(_from: Vector3, _to: Vector3, _reason: StringName) -> void:
+	if hud != null:
+		hud.flash_notice("Pulled back from the void!")
 
 
 func _on_dialogue_opened() -> void:
