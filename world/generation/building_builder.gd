@@ -377,6 +377,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# --- walls + windows + furniture ---------------------------------------------
 	# One aperture-composing facade generator handles doors AND windows.
 	var door_edge := int(spec.get("door_edge", 0))
+	# Same deterministic building-level dressing LOD the interior pass uses.
+	var dress_ok := absi(int(WorldSeed.str_hash(str(spec.get("id", "")) + "dress"))) % 3 == 0
 	for f in n:
 		b.push_layer(tag + ":f%d" % f)
 		var y0 := f * fh
@@ -387,7 +389,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 				door_w, door_h)
 		if f == 0:
 			# Room-side casing on the street entrance (interior trim).
-			_interior_entry_casing(b, off, w, d, y0, door_edge, door_w, door_h)
+			if dress_ok:
+				_interior_entry_casing(b, off, w, d, y0, door_edge, door_w, door_h)
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
 			if str(style.get("room_type", "residential")) == "retail":
 				_shopfront(b, off, w, d, spec)
@@ -3378,7 +3381,15 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		var parts: Array = fl.get("partitions", [])
 		# Victorian dressing: lobby ground floors (per InteriorPlan topology)
 		# get wainscot + ochre plaster; other interior walls stay plain.
-		var dressed: bool = fi == 0 and str(fl.get("topology", "")) == "lobby"
+		# Building-level LOD: the heavy architectural trim (parquet, panelling,
+		# cornice, door casings) is applied to a deterministic 1-in-3 of
+		# buildings. Applying it to every building blew the streaming budget -
+		# a city chunk failed to regenerate inside the 60 s wait in 2 of 3 runs
+		# ('owner chunk never returned'). Lobby layout and period props stay on
+		# every building, so no interior reads as an empty shell.
+		var dress_roll := absi(int(WorldSeed.str_hash(str(spec.get("id", "")) + "dress"))) % 3
+		var dress_ok := dress_roll == 0
+		var dressed: bool = dress_ok and fi == 0 and str(fl.get("topology", "")) == "lobby"
 		b.push_layer(tag + ":f%d" % fi)
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
 		var corridor := Rect2()
@@ -3435,7 +3446,8 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
-				_interior_architrave(b, off, fi, fh, Vector3(px, 0.0, 0.0), pr, op, true)
+				if dress_ok:
+					_interior_architrave(b, off, fi, fh, Vector3(px, 0.0, 0.0), pr, op, true)
 			else:
 				var ph2 := pr.size.y
 				if absf(ph2 - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
@@ -3456,7 +3468,8 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h2 > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
-				_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
+				if dress_ok:
+					_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
 		for wall: Rect2 in fl.get("solid_walls", []):
 			var center := wall.get_center() - footprint.position
 			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
@@ -3518,9 +3531,10 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				b.add_visual_box(off + Vector3(w0 - WALL_INSET - 0.012, lin_h * 0.5, sz), Vector3(0.03, lin_h, 0.07), panel_col)
 				sz += stile
 
-		# Round-4 interior architecture: crown moulding at every ceiling line
-		# (visual-only, skipped over nothing - it hugs the wall faces).
-		_interior_cornice(b, off, w, d, fh, fi, dressed)
+		# Round-4 interior architecture: crown moulding at every ceiling line of
+		# a dressed (gated) building; visual-only, hugging the wall faces.
+		if dress_ok:
+			_interior_cornice(b, off, w, d, fh, fi, dressed)
 		b.pop_layer()
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
