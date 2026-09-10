@@ -19,6 +19,9 @@ func _ready() -> void:
 	_check_foundation_access(plan_a, "A")
 	_check_foundation_access(plan_b, "B")
 	_check_same_seed(plan_a, plan_a_repeat)
+	_check_global_ownership(plan_a, "A")
+	_check_global_ownership(plan_b, "B")
+	_check_large_dense_access_fixture()
 	_check_different_seed(plan_a, plan_b)
 	_check_triangulation(plan_a, "A")
 	_check_triangulation(plan_b, "B")
@@ -31,6 +34,7 @@ func _ready() -> void:
 	else:
 		for failure in _failures:
 			print("[G10P2BMorphology] FAIL ", failure)
+	print("[G10P2BMorphology] finished with %d failure(s)" % _failures.size())
 	get_tree().quit(_failures.size())
 
 
@@ -669,9 +673,28 @@ func _check_large_dense_access(plan: CityPlan, label: String) -> void:
 		elif missing_ids.size() < 8:
 			missing_ids.append(str(block.get("id", "")))
 	print("[G10P2BMorphology] ", label, " large_dense_access=", accessed_count, "/", candidate_count, " missing=", missing_ids)
-	_expect(candidate_count > 0, label + " has road-adjacent large dense faces")
 	_expect(accessed_count == candidate_count,
 			label + " every road-adjacent large underfilled face has intentional access")
+
+
+func _check_large_dense_access_fixture() -> void:
+	# Real plans may eliminate every underfilled large face. Requiring one
+	# to survive made successful densification fail. Exercise that branch
+	# explicitly while retaining the universal assertion on all real faces.
+	for seed_value in [19041207, 19041208, -7919]:
+		var plan := CityPlan.new(seed_value)
+		plan._city_edges.append({"id": "fixture_road", "width": 6.0,
+			"polyline": PackedVector2Array([Vector2(-110, -105), Vector2(20, -105)])})
+		var block := {"id": "large_face_fixture", "rect": Rect2(-100, -100, 110, 110),
+			"district": CityPlan.DISTRICT_HISTORIC,
+			"polygon": PackedVector2Array([Vector2(-100, -100), Vector2(10, -100), Vector2(10, 10), Vector2(-100, 10)])}
+		var passage := plan._passage_for_block(block, 7)
+		_expect(not passage.is_empty() and bool(passage.get("road_connected", false)),
+			"large underfilled fixture has road access seed %d" % seed_value)
+		if not passage.is_empty():
+			_expect(str(passage["road_edge_id"]) == "fixture_road"
+				and (passage["entry_point"] as Vector2).distance_to(passage["road_point"]) < 8.0,
+				"large fixture passage reaches its real frontage seed %d" % seed_value)
 
 
 # Large-face access regression is defined above.
@@ -747,9 +770,64 @@ func _is_connected(graph: Dictionary) -> bool:
 
 
 func _check_same_seed(a: CityPlan, b: CityPlan) -> void:
+	var queries := [Rect2(-128, -64, 64, 64), Rect2(0, 0, 64, 64), Rect2(896, -64, 64, 64)]
+	var forward := {}
+	for rect: Rect2 in queries:
+		forward[rect] = var_to_str([a.city_road_segments_in(rect), a.buildings_in_rect(rect)])
+	queries.reverse()
+	for rect: Rect2 in queries:
+		_expect(forward[rect] == var_to_str([b.city_road_segments_in(rect), b.buildings_in_rect(rect)]),
+			"reverse query order preserves roads and buildings at %s" % rect.position)
 	_expect(JSON.stringify(a.road_graph()) == JSON.stringify(b.road_graph()), "same seed graph digest")
 	_expect(JSON.stringify(a.city_blocks()) == JSON.stringify(b.city_blocks()), "same seed block digest")
 	_expect(JSON.stringify(a.city_buildings()) == JSON.stringify(b.city_buildings()), "same seed building digest")
+
+
+func _check_global_ownership(plan: CityPlan, label: String) -> void:
+	var ids := {}
+	var bins := {}
+	var duplicates := 0
+	var overlaps := 0
+	var road_intrusions := 0
+	for spec: Dictionary in plan.city_buildings():
+		var id := str(spec["id"])
+		duplicates += 1 if ids.has(id) else 0
+		ids[id] = true
+		var lot: Rect2 = spec["rect"]
+		var yaw := float(spec.get("yaw", 0.0))
+		road_intrusions += 0 if plan._lot_clear_of_city_roads(lot, yaw) else 1
+		var bounds := CityPlan._spec_world_bounds(spec)
+		var tested := {}
+		for x in range(floori(bounds.position.x / 64), floori(bounds.end.x / 64) + 1):
+			for z in range(floori(bounds.position.y / 64), floori(bounds.end.y / 64) + 1):
+				var key := Vector2i(x, z)
+				for other: Dictionary in bins.get(key, []):
+					var other_id := str(other["id"])
+					if tested.has(other_id):
+						continue
+					tested[other_id] = true
+					if CityPlan._lots_overlap(lot, yaw, other["rect"], float(other.get("yaw", 0.0)), 0.0):
+						overlaps += 1
+				bins.get_or_add(key, []).append(spec)
+	_expect(duplicates == 0, label + " global building IDs unique (%d duplicates)" % duplicates)
+	_expect(overlaps == 0, label + " global footprints disjoint across blocks (%d overlaps)" % overlaps)
+	_expect(road_intrusions == 0, label + " all global footprints clear carriageways (%d intrusions)" % road_intrusions)
+	var owner_counts := {}
+	var coords: Array = bins.keys()
+	coords.reverse()
+	for coord: Vector2i in coords:
+		for spec: Dictionary in ChunkBuilder._owned_buildings(plan, WorldSeed.chunk_rect(coord), coord):
+			var id := str(spec["id"])
+			owner_counts[id] = int(owner_counts.get(id, 0)) + 1
+	var unique_owners := owner_counts.size() == ids.size()
+	for count: int in owner_counts.values():
+		unique_owners = unique_owners and count == 1
+	_expect(unique_owners, label + " reversed chunk traversal assigns every building exactly one owner")
+	var street_ids := {}
+	for edge: Dictionary in plan.road_graph()["edges"]:
+		var id := str(edge["id"])
+		_expect(not street_ids.has(id), label + " global street ID unique " + id)
+		street_ids[id] = true
 
 
 func _check_different_seed(a: CityPlan, b: CityPlan) -> void:

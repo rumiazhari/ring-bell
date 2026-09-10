@@ -1,6 +1,7 @@
 class_name WorldPlan
 extends RefCounted
 const FringePlanScript = preload("res://world/generation/fringe_plan.gd")
+static var _construction_mutex := Mutex.new()
 ## Thin facade owning one TerrainPlan and one HydrologyPlan and exposing stable queries.
 ## Does not touch scene tree, CityPlan caches, or ProjectSettings after construction.
 
@@ -19,6 +20,11 @@ var society: SocietyPlan
 var city_plan: CityPlan
 
 func _init(seed: int = WorldSeed.get_world_seed()) -> void:
+	# Support-plan constructors populate/invalidate process-wide caches. Six
+	# chunk workers constructing them concurrently could erase a Dictionary
+	# while another constructor copied it (RuralBuildingPlan._init). Protect
+	# construction only; each resulting world's chunk queries remain parallel.
+	_construction_mutex.lock()
 	seed_used = seed
 	terrain = TerrainPlan.new(seed)
 	hydrology = HydrologyPlan.new(seed)
@@ -36,6 +42,7 @@ func _init(seed: int = WorldSeed.get_world_seed()) -> void:
 		biome.set_world_refs(settlement, road_network, rural_building)
 	if society.has_method("set_world_refs"):
 		society.set_world_refs(self)
+	_construction_mutex.unlock()
 
 func terrain_height_at(p: Vector2) -> float:
 	return terrain.height_at(p)
@@ -45,11 +52,11 @@ func terrain_height_at(p: Vector2) -> float:
 # sites. Every renderer/collider/grounded runtime object uses this surface API.
 func urban_weight_at(p: Vector2) -> float:
 	var d := p.length()
-	if d <= WorldConstants.URBAN_INNER_M:
+	if d <= WorldConstants.CITY_MARKET_TERRACE_RADIUS_M:
 		return 0.0
 	if d >= WorldConstants.URBAN_OUTER_M:
 		return 1.0
-	var t := (d - WorldConstants.URBAN_INNER_M) / (WorldConstants.URBAN_OUTER_M - WorldConstants.URBAN_INNER_M)
+	var t := (d - WorldConstants.CITY_MARKET_TERRACE_RADIUS_M) / (WorldConstants.URBAN_OUTER_M - WorldConstants.CITY_MARKET_TERRACE_RADIUS_M)
 	return t * t * (3.0 - 2.0 * t)
 
 func _river_surface_height_at(p: Vector2, base_height: float) -> float:
@@ -103,10 +110,11 @@ func quarry_feature_at(p: Vector2) -> Dictionary:
 
 func surface_height_at(p: Vector2) -> float:
 	var surface := lerpf(WorldConstants.URBAN_CITY_TERRACE_Y, terrain_height_at(p), urban_weight_at(p))
-	# The flat terrace is limited to the historic centre; outer city buildings
-	# are grounded against the same realized macro surface as every other prop.
+	# Grading is shared by roads, terrain collision, sidewalks and building
+	# foundations. Keep only a small level market approach, not the entire
+	# 350 m historic core. Hydrology remains authoritative wherever it occurs.
+	surface = _river_surface_height_at(p, surface)
 	if p.length() >= WorldConstants.URBAN_INNER_M:
-		surface = _river_surface_height_at(p, surface)
 		var quarry := quarry_feature_at(p)
 		if bool(quarry.get("inside", false)):
 			surface -= float(quarry.get("depth", 0.0))
@@ -168,10 +176,14 @@ func land_use_at(p: Vector2) -> StringName:
 
 func should_materialize_city(coord: Vector2i) -> bool:
 	var rect := WorldSeed.chunk_rect(coord)
-	for p in [rect.position, Vector2(rect.end.x, rect.position.y), Vector2(rect.position.x, rect.end.y), rect.end]:
-		if p.length() > WorldConstants.CITY_MATERIALIZATION_RADIUS_M:
-			return false
-	return true
+	# A chunk that intersects the city must be admitted even when its far
+	# corner is outside. Parcels retain center ownership and roads retain
+	# world-space clipping; requiring all four corners dropped valid owners
+	# at the edge and cut persistent streets at an arbitrary 64 m boundary.
+	var nearest := Vector2(clampf(0.0, rect.position.x, rect.end.x),
+			clampf(0.0, rect.position.y, rect.end.y))
+	return nearest.length_squared() <= WorldConstants.CITY_MATERIALIZATION_RADIUS_M \
+			* WorldConstants.CITY_MATERIALIZATION_RADIUS_M
 
 func chunk_composition(coord: Vector2i) -> Dictionary:
 	var rect := WorldSeed.chunk_rect(coord)

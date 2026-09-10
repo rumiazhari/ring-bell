@@ -19,6 +19,10 @@ extends Node
 
 var failures := 0
 var _heal_accum := 0.0
+var _route_center := Vector2.ZERO
+var _route_yaw := 0.0
+var _route_ground := 0.0
+var _capture_dir := ""
 
 
 func _ready() -> void:
@@ -72,6 +76,10 @@ func _run() -> void:
 
 	var spec: Dictionary = target["spec"]
 	var lr: Rect2 = spec["rect"]
+	_route_center = lr.get_center()
+	_route_yaw = float(spec.get("yaw", 0.0))
+	var grounded := ChunkBuilder._grounded_spec(spec, mgr.world_plan)
+	_route_ground = float(grounded.get("building_ground_y", grounded.get("ground_y", 0.0)))
 	var fh := float(spec["floor_h"])
 	var n := int(spec["floors"])
 	var zone := BuildingBuilder.stair_zone_world(spec)
@@ -81,7 +89,7 @@ func _run() -> void:
 		return _finish()
 
 	var dm: Dictionary = spec["doors"][0]
-	var mid := _door_mid(dm)                 # geometric opening center
+	var mid := CityPlan._rotate_plan_point(_route_center, _door_mid(dm), -_route_yaw)
 	var face: int = int(spec["door_edge"])
 	var face_dir := _inward_dir(face)
 	print(("[Walkthrough][GEO] bld=%s rect=%s zone=%s edge=%d mid=%s "
@@ -97,7 +105,8 @@ func _run() -> void:
 	_check("found free street drop-off", spot != Vector3.INF)
 	if spot == Vector3.INF:
 		return _finish()
-	await _teleport_to_resident(mgr, player, spot)   # resident-wait only;
+	await _teleport_to_resident(mgr, player, _route_to_world(spot))   # resident-wait only;
+	_snap("01_street.png")
 	# the position equals the drop-off itself, no in-route teleport happens.
 
 	# === 2. Approach the closed door; wall/door must stop us ================
@@ -106,16 +115,21 @@ func _run() -> void:
 	var pushed := player.global_position
 	var crossed := _crossed_facade(lr, face, before, pushed)
 	var reached_door := pushed.distance_to(
-			Vector3(mid.x, 0.15, mid.y)) < 2.4
+			_route_to_world(Vector3(mid.x, 0.15, mid.y))) < 2.4
 	_check("approached closed entrance", reached_door or not crossed,
 			"%s" % [pushed])
 	_check("closed door blocks passage", not crossed,
 			"%s -> %s" % [before, pushed])
 
 	# === 3. Door opens =======================================================
+	# Release the closed-leaf collision contact before operating its hinge.
+	# This is ordinary movement back along the same approach, not placement.
+	await _steer_towards(player, Vector3(mid.x, 0.15, mid.y) - face_dir * 1.6, 1.2)
 	door.call("open")
 	ok = await _until(func() -> bool: return bool(door.call("is_open")), 3.0)
 	_check("door reports OPEN", ok)
+	print("[Walkthrough] hinge pose local=", (door.get("_leaf") as Node3D).rotation,
+		" target=", door.get("_open_angle"))
 
 	# === 4..8. Walk THROUGH the door and REACH THE STAIRWELL on foot ========
 	var z_n := zone.position.y + BuildingBuilder.LAND * 0.5
@@ -125,13 +139,20 @@ func _run() -> void:
 	# beyond it) -> pure axial hop onto the west-lane landing center. A
 	# direct diagonal used to ram the capsule into flight A's raised end.
 	var lc := Vector2(lane_w, z_n)
-	var stage := lc - Vector2(face_dir.x, face_dir.z) * 1.4
-	stage = stage.clamp(lr.position + Vector2.ONE * 0.55,
-			lr.end - Vector2.ONE * 0.55)
+	# The first flight always rises south from its north landing. For a south
+	# entrance, approaching that landing along the entrance axis walks into
+	# the raised flight. Use the open side corridor, then turn onto the north
+	# landing; this is the same route for every parcel rotation.
+	var right_space := lr.end.x - zone.end.x
+	var left_space := zone.position.x - lr.position.x
+	var corridor_x := (zone.end.x + lr.end.x) * 0.5 if right_space >= left_space \
+			else (lr.position.x + zone.position.x) * 0.5
+	var inside := Vector3(mid.x, 0.15, mid.y) + face_dir * 1.2
 	var wps: Array[Vector3] = [
 		Vector3(mid.x, 0.15, mid.y) + face_dir * 0.9,
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 2.6,
-		Vector3(stage.x, 0.15, stage.y),
+		inside,
+		Vector3(corridor_x, 0.15, inside.z),
+		Vector3(corridor_x, 0.15, lc.y),
 		Vector3(lc.x, 0.15, lc.y),
 	]
 	var entered := await _follow_waypoints(player, wps, 40.0)
@@ -139,6 +160,8 @@ func _run() -> void:
 			"at %s" % [player.global_position])
 	if not entered:
 		_snap("rb_route_fail.png")
+	else:
+		_snap("02_stairwell.png")
 
 	# === 9. Climb EVERY storey to the deck ===================================
 	# Path derived from the SAME constants BuildingBuilder._staircase uses,
@@ -154,6 +177,7 @@ func _run() -> void:
 	_check("camera tracks the vertical climb",
 			camera_rig_y_near(player.global_position.y),
 			"rig y=%s" % [_rig_y()])
+	_snap("03_climb_result.png")
 
 	# === 10. Descend ==========================================================
 	# Exact reverse of the climb path. Because _stair_path is continuous
@@ -175,19 +199,13 @@ func _run() -> void:
 	# hand-authoring) keeps it valid when a different building/edge is
 	# picked (the earlier version assumed the player ended the descent on
 	# the north-west landing and pushed out a fixed orientation).
-	var lc2 := Vector2(lane_w, z_n)
-	var stage2 := lc2 - Vector2(face_dir.x, face_dir.z) * 1.4
-	stage2 = stage2.clamp(lr.position + Vector2.ONE * 0.55,
-			lr.end - Vector2.ONE * 0.55)
-	var exit_wps: Array[Vector3] = [
-		Vector3(stage2.x, 0.15, stage2.y),
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 2.6,
-		Vector3(mid.x, 0.15, mid.y) + face_dir * 0.9,
-		Vector3(mid.x, 0.15, mid.y) - face_dir * 2.0,
-	]
+	var exit_wps: Array[Vector3] = []
+	for waypoint_i in range(wps.size() - 2, -1, -1):
+		exit_wps.append(wps[waypoint_i])
+	exit_wps.append(Vector3(mid.x, 0.15, mid.y) - face_dir * 2.0)
 	var outside := await _follow_waypoints(player, exit_wps, 90.0)
 	outside = outside and not lr.has_point(
-			Vector2(player.global_position.x, player.global_position.z))
+			Vector2(_route_from_world(player.global_position).x, _route_from_world(player.global_position).z))
 	_check("walked out of the building", outside,
 			str(player.global_position))
 
@@ -281,6 +299,8 @@ func _inward_dir(face: int) -> Vector3:
 
 
 func _crossed_facade(lr: Rect2, face: int, from: Vector3, to: Vector3) -> bool:
+	from = _route_from_world(from)
+	to = _route_from_world(to)
 	match face:
 		0: return to.z > lr.position.y and from.z <= lr.position.y
 		1: return to.x < lr.end.x and from.x >= lr.end.x
@@ -305,7 +325,7 @@ func _free_spot(player: Node3D, start: Vector3, lr: Rect2,
 		var params := PhysicsShapeQueryParameters3D.new()
 		params.shape = cap
 		params.transform = Transform3D(Basis.IDENTITY,
-				Vector3(p.x, 0.87, p.z))
+				_route_to_world(Vector3(p.x, 0.87, p.z)))
 		params.collision_mask = 1
 		if space.intersect_shape(params, 1).is_empty():
 			return Vector3(p.x, 0.15, p.z)
@@ -314,6 +334,19 @@ func _free_spot(player: Node3D, start: Vector3, lr: Rect2,
 
 func _wp(x: float, z: float, y: float) -> Vector3:
 	return Vector3(x, y, z)
+
+
+## Route geometry stays in BuildingBuilder's unrotated plan frame. Only
+## physics targets are transformed; arrival tolerances and required floors
+## remain unchanged, including at negative coordinates and elevated pads.
+func _route_to_world(point: Vector3) -> Vector3:
+	var p := CityPlan._rotate_plan_point(_route_center, Vector2(point.x, point.z), _route_yaw)
+	return Vector3(p.x, point.y + _route_ground, p.y)
+
+
+func _route_from_world(point: Vector3) -> Vector3:
+	var p := CityPlan._rotate_plan_point(_route_center, Vector2(point.x, point.z), -_route_yaw)
+	return Vector3(p.x, point.y - _route_ground, p.y)
 
 
 ## Walkable switchback waypoints, derived from the SAME constants
@@ -357,6 +390,7 @@ func _stair_path(zone: Rect2, fh: float, n: int) -> Array[Vector3]:
 
 ## Push toward a point for `seconds` at most.
 func _steer_towards(player: Node3D, point: Vector3, seconds: float) -> void:
+	point = _route_to_world(point)
 	var t := 0.0
 	while t < seconds:
 		await get_tree().physics_frame
@@ -366,6 +400,7 @@ func _steer_towards(player: Node3D, point: Vector3, seconds: float) -> void:
 		if flat.length() < 0.35:
 			break
 		player.request_move(flat.normalized(), false)
+	player.stop_moving()
 
 
 ## Waypoint follower; true when every waypoint's (x,z,y-band) was hit.
@@ -396,14 +431,14 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 	while i < wps.size() and t < timeout:
 		await get_tree().physics_frame
 		t += get_physics_process_delta_time()
-		var target := wps[i]
+		var target := _route_to_world(wps[i])
 		var flat := target - player.global_position
 		flat.y = 0.0
 		var arrival_radius: float = maxf(0.25, float(radius_for.call(i)))
 		# Horizontal proximity never substitutes for the requested floor band;
 		# otherwise a player can be accepted on an upper landing above a ground
 		# waypoint and the later route starts from the wrong storey.
-		var band_ok := absf(player.global_position.y - wps[i].y) < 0.75
+		var band_ok := absf(player.global_position.y - target.y) < 0.75
 		if flat.length() < arrival_radius and band_ok:
 			print("[Walkthrough] reached waypoint %d/%d pos=%s target=%s floor=%s vel=%s"
 					% [i + 1, wps.size(), player.global_position, target,
@@ -414,7 +449,7 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 			continue
 		if flat.length() > 0.01:
 			var desired := flat.normalized()
-			var pos := player.global_position
+			var pos := _route_from_world(player.global_position)
 			# Corridor containment: if the body sits outside the allowed
 			# shaft rect/y-band, steer back toward the corridor center.
 			if clamp_rect.size != Vector2.ZERO and (
@@ -422,7 +457,7 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 					or pos.y < y_range.x or pos.y > y_range.y):
 				var c3 := Vector3(clamp_rect.get_center().x, 0.0,
 						clamp_rect.get_center().y)
-				desired = (c3 - Vector3(pos.x, 0.0, pos.z)).normalized()
+				desired = (_route_to_world(c3) - _route_to_world(Vector3(pos.x, 0.0, pos.z))).normalized()
 			# Pick the heading closest to `desired` that is actually CLEAR
 			# of nearby solid geometry (rails, guard, walls, furniture).
 			# This makes the body SLIDE ALONG obstacles toward the goal
@@ -451,12 +486,14 @@ func _follow_waypoints_r(player: Node3D, wps: Array[Vector3],
 			if flat.length() > ref_dist - 0.06:
 				# No steady approach over 2 s is a real route failure. Never
 				# skip an unreached waypoint: the generator must be repaired.
-				_route_diagnostics(player, wps[i])
+				_route_diagnostics(player, target)
 				print("[Walkthrough] STALL waypoint %d/%d pos=%s tgt=%s"
 					% [i + 1, wps.size(), player.global_position, wps[i]])
+				player.stop_moving()
 				return false
 			ref_dist = flat.length()
 			win_t = 0.0
+	player.stop_moving()
 	return i >= wps.size()
 
 
@@ -489,9 +526,11 @@ func _clear_dir(player: Node3D, desired: Vector3) -> Vector3:
 	var org := foot + Vector3.UP * 0.5
 	var best := Vector3.ZERO
 	var best_dot := -2.0
+	var headings: Array[Vector3] = [desired.normalized()]
 	for d in 24:
 		var a := TAU * float(d) / 24.0
-		var h := Vector3(cos(a), 0.0, sin(a))
+		headings.append(Vector3(cos(a), 0.0, sin(a)))
+	for h: Vector3 in headings:
 		var blocked := false
 		for reach in [0.6, 1.0, 1.4]:
 			var q := PhysicsRayQueryParameters3D.create(
@@ -566,7 +605,7 @@ func _route_diagnostics(player: Node3D, target: Vector3) -> void:
 			rays.append("%.1f:none" % h)
 		else:
 			var collider: Object = hit.get("collider")
-			rays.append("%.1f:%s/%s" % [h, str(collider),
+			rays.append("%.1f:%s normal=%s/%s" % [h, str(collider), hit.get("normal", Vector3.ZERO),
 				_shape_owner_description(collider, int(hit.get("shape", -1)))])
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.37
@@ -610,7 +649,11 @@ func _snap(file_name: String) -> void:
 		return   # dummy renderer cannot capture frames
 	var img := get_viewport().get_texture().get_image()
 	if img != null:
-		img.save_png("C:/Users/rumia/AppData/Local/Temp/opencode/" + file_name)
+		if _capture_dir.is_empty():
+			_capture_dir = ProjectSettings.globalize_path("res://.hermes/autopilot/reports/walkthrough-%d-%d/" % [WorldSeed.get_world_seed(), int(Time.get_unix_time_from_system())])
+			DirAccess.make_dir_recursive_absolute(_capture_dir)
+		var path := _capture_dir.path_join(file_name)
+		print("[Walkthrough] capture ", path, " error=", img.save_png(path))
 
 
 func _until(predicate: Callable, timeout: float) -> bool:

@@ -1549,7 +1549,7 @@ func _run_all() -> void:
 			break
 	_check("orchard budgets per chunk: field <=4 orchard <=3 fruit <=3 hedgerow 8/6 canopy <=12 total <=96 verts 81/96", budget_ok, budget_detail)
 
-	_check("GENERATOR_VERSION stays 2", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
+	_check("GENERATOR_VERSION is 3 (urban revision)", WorldSeed.GENERATOR_VERSION == 3, str(WorldSeed.GENERATOR_VERSION))
 	# WorldPlan pure check: after queries, second plan gives same height
 	var wp2 := WorldPlan.new(canonical)
 	var pure_ok := is_equal_approx(wp.terrain_height_at(Vector2(100,200)), wp2.terrain_height_at(Vector2(100,200)))

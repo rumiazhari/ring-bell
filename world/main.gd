@@ -41,6 +41,7 @@ var _gate_coord := Vector2i(99, 99)   # chunk currently floor-gated
 var _gate_tag := ""                   # building id currently floor-gated
 var _gate_floor := -1                  # storey currently floor-gated
 var _was_inside := false              # InteriorProbe hysteresis state
+var _interior_ground_cache := {}
 var _faded := []                      # currently faded facade letters
 
 var city_plan: CityPlan
@@ -91,6 +92,9 @@ func _ready() -> void:
 		add_child(reveal_tester)
 		return
 
+	if args.has("--buildingrepairtest"):
+		add_child(load("res://debug/city_building_repair_test.gd").new())
+		return
 	if args.has("--g10p2b-spawnprobe"):
 		var spawn_probe: Node = load("res://debug/g10p2b_spawn_probe.gd").new()
 		spawn_probe.name = "G10P2BSpawnProbe"
@@ -693,8 +697,12 @@ func _update_city_interior() -> void:
 	var floor_i := -1
 	for candidate in city_plan.buildings_in_rect(
 			Rect2(p - Vector2.ONE * 1.5, Vector2.ONE * 3.0)):
+		var candidate_id := str(candidate.get("id", ""))
+		if not _interior_ground_cache.has(candidate_id):
+			_interior_ground_cache[candidate_id] = ChunkBuilder._grounded_spec(candidate, chunk_manager.world_plan)
 		var res: Dictionary = InteriorProbe.evaluate(
-				p, p3.y, candidate, _was_inside)
+				p, p3.y, _interior_ground_cache[candidate_id],
+				_was_inside and str(candidate.get("id", "")) == _gate_tag)
 		if bool(res["inside"]):
 			spec = candidate
 			inside = true
@@ -735,7 +743,8 @@ func _update_city_interior() -> void:
 				# Fallback to rig position if camera not yet inside tree.
 				if camera_rig.is_inside_tree():
 					cam_xz = Vector2(camera_rig.global_position.x, camera_rig.global_position.z)
-		var new_faded: Array = InteriorProbe.faded_facades(p, cam_xz) \
+		var local_camera := p + (cam_xz - p).rotated(-float(spec.get("yaw", 0.0)))
+		var new_faded: Array = InteriorProbe.faded_facades(p, local_camera) \
 				if floor_i < n else []
 		if owner_coord != _gate_coord or tag != _gate_tag \
 				or floor_i != _gate_floor or new_faded != _faded:
@@ -820,6 +829,7 @@ func _respawn_after_load(data: Dictionary) -> void:
 							or city_plan.seed_used != WorldSeed.get_world_seed()):
 				chunk_manager.reset_stream()
 				city_plan = CityPlan.new()
+				_interior_ground_cache.clear()
 				chunk_manager.plan = city_plan
 			_spawn_city_population()
 			if chunk_manager != null and data.has("chunks"):

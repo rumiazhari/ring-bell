@@ -357,7 +357,7 @@ func _run_all() -> void:
 		var wppc := WorldPlan.new(seed)
 		total_chambers_5seed += wppc.cave_chambers().size()
 	_check("at least 3 chambers in 5-seed matrix (inherits entrance variation)", total_chambers_5seed >= 3, "%d total" % total_chambers_5seed)
-	_check("GENERATOR_VERSION stays 2 additive (chamber overlay)", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
+	_check("GENERATOR_VERSION is 3 (urban revision; chamber overlay unchanged)", WorldSeed.GENERATOR_VERSION == 3, str(WorldSeed.GENERATOR_VERSION))
 	var neg_chambers: Array[Dictionary] = cp.cave_chambers_in(Rect2(Vector2(-2000,-2000), Vector2(1000,1000)))
 	_check("negative coords chamber handled", neg_chambers.size() >= 0, "%d" % neg_chambers.size())
 	# ensure chamber nearest works for negative pt

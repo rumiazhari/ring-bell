@@ -15,6 +15,7 @@ tools/out_*.txt
 
 # Local Godot override (test seed pin etc.) - never commit
 override.cfg
+tools/.test-user-data/
 
 # Quarantined WIP moved aside (never delete, per policy)
 junk/

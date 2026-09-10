@@ -2,7 +2,15 @@ extends Node
 ## Authentic Forward+ visual acceptance capture for G10-P2B.
 ## The images are saved from the live game's viewport, never synthesized.
 
-const OUT_DIR := "C:/Vibe Code project/Godot Project/ring-bell/captures/g10p2b_fix3_iter3_20260904"
+var _out_dir := ""
+var _capture_failures := 0
+var _capture_count := 0
+var _next_progress_ms := 0
+var _capture_buildings: Array[Dictionary] = []
+var _capture_edges: Array = []
+var _walking := false
+var _walk_frames: Array[float] = []
+var _last_frame_usec := 0
 const CAPTURE_WAIT := 3.0
 
 var _main: Node3D
@@ -14,6 +22,7 @@ var _debug_overlay: CanvasLayer
 
 
 func _ready() -> void:
+	_out_dir = ProjectSettings.globalize_path("res://.hermes/autopilot/reports/urban-capture-%d-%d" % [WorldSeed.get_world_seed(), int(Time.get_unix_time_from_system())])
 	if DisplayServer.get_name() != "headless" and not OS.has_feature("headless"):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 		DisplayServer.window_set_size(Vector2i(1200, 720))
@@ -64,11 +73,21 @@ func _protect_player() -> void:
 	# The capture camera/manager needs the player's position, not player input
 	# or physics. Keep the live player stationary and invulnerable while the
 	# real Forward+ world streams around the requested viewpoints.
-	_player.process_mode = Node.PROCESS_MODE_DISABLED
+	if not _walking:
+		_player.process_mode = Node.PROCESS_MODE_DISABLED
 
 
 func _process(_delta: float) -> void:
 	_protect_player()
+	if _walking:
+		var now := Time.get_ticks_usec()
+		if _last_frame_usec != 0:
+			_walk_frames.append((now - _last_frame_usec) / 1000.0)
+		_last_frame_usec = now
+	if Time.get_ticks_msec() >= _next_progress_ms and _manager != null:
+		_next_progress_ms = Time.get_ticks_msec() + 10000
+		print("[G10P2BCapture] progress ms=", Time.get_ticks_msec(),
+			" active=", _manager.active_count(), " pending=", _manager.pending_count())
 
 
 func _wait_for_main_world(seconds: float) -> void:
@@ -85,11 +104,18 @@ func _wait_for_main_world(seconds: float) -> void:
 
 func _run() -> void:
 	await _until_ready(75.0)
+	if OS.get_cmdline_user_args().has("--streaming-walk-performance"):
+		await _performance_walk()
+		return
 	if _player == null or _city == null:
 		print("[G10P2BCapture] no live player/city plan")
 		get_tree().quit(2)
 		return
 	var graph: Dictionary = _city.road_graph()
+	# Public plan snapshots are deep copies. Reuse one snapshot while scoring
+	# viewpoints instead of copying thousands of building manifests per probe.
+	_capture_buildings = _city.city_buildings()
+	_capture_edges = graph.get("edges", [])
 	var hub := _city.find_spawn_point()
 	var core := _pick_core_point(hub)
 	var junction := _pick_junction(graph, hub)
@@ -125,7 +151,72 @@ func _run() -> void:
 			_road_azimuth(reveal_point, &""))
 
 	print("[G10P2BCapture] all captures done")
-	get_tree().quit(0)
+	if _capture_count != 6:
+		_capture_failures += 1
+	print("[G10P2BCapture] finished with %d failure(s)" % _capture_failures)
+	get_tree().quit(0 if _capture_failures == 0 else 1)
+
+
+func _performance_walk() -> void:
+	var route := PackedVector2Array()
+	for edge: Dictionary in _city.road_graph().get("edges", []):
+		var line: PackedVector2Array = edge.polyline
+		if line.size() < 2 or line[0].length() > 600.0 or line[line.size() - 1].length() > 600.0:
+			continue
+		var length := 0.0
+		for i in range(line.size() - 1):
+			length += line[i].distance_to(line[i + 1])
+		if length < 150.0:
+			continue
+		route.append(line[0] + (line[1] - line[0]).normalized() * 5.0)
+		var travelled := 5.0
+		for i in range(1, line.size()):
+			var previous := route[route.size() - 1]
+			var leg := previous.distance_to(line[i])
+			if travelled + leg >= 145.0:
+				route.append(previous.move_toward(line[i], 145.0 - travelled))
+				break
+			route.append(line[i])
+			travelled += leg
+		if not route.is_empty():
+			break
+	if route.is_empty():
+		print("[StreamingWalk] FAIL no 140 m street route")
+		get_tree().quit(1)
+		return
+	await _move_player(route[0]) # Initial drop-off only; actual physics thereafter.
+	for child in _player.get_children():
+		if child is PlayerController:
+			child.set_physics_process(false)
+	_walking = true
+	_player.process_mode = Node.PROCESS_MODE_INHERIT
+	var crossed := {}
+	var deadline := Time.get_ticks_msec() + 100000
+	var remaining := INF
+	var waypoint := 1
+	while Time.get_ticks_msec() < deadline:
+		await get_tree().physics_frame
+		var p := Vector2(_player.global_position.x, _player.global_position.z)
+		crossed[WorldSeed.chunk_coord(p.x, p.y)] = true
+		remaining = p.distance_to(route[route.size() - 1])
+		if p.distance_to(route[waypoint]) < 0.7 and waypoint < route.size() - 1:
+			waypoint += 1
+		if remaining < 1.0 and waypoint == route.size() - 1:
+			break
+		var direction := (route[waypoint] - p).normalized()
+		_player.request_move(Vector3(direction.x, 0, direction.y), false)
+	_player.stop_moving()
+	_walking = false
+	_walk_frames.sort()
+	if not _walk_frames.is_empty():
+		print("[StreamingWalk] frames=", _walk_frames.size(), " p95_ms=", _walk_frames[int((_walk_frames.size() - 1) * 0.95)],
+			" p99_ms=", _walk_frames[int((_walk_frames.size() - 1) * 0.99)], " max_ms=", _walk_frames.back())
+	print("[StreamingWalk] route=", route, " visited_chunks=", crossed.size(), " remaining_m=", remaining,
+		" average_chunk_materialization_ms=", _manager.avg_mat_ms())
+	var failures := _capture_failures + (0 if remaining < 1.0 and crossed.size() >= 3 else 1)
+	await _capture_tilted("streaming_walk_end.png", Vector2(_player.global_position.x, _player.global_position.z), 18, 7, 78, -0.72)
+	print("[StreamingWalk] finished with %d failure(s)" % failures)
+	get_tree().quit(0 if failures == 0 else 1)
 
 
 func _until_ready(seconds: float) -> void:
@@ -136,6 +227,8 @@ func _until_ready(seconds: float) -> void:
 				await _wait(1.0)
 				return
 		await _wait(0.25)
+	_capture_failures += 1
+	print("[G10P2BCapture] FAIL initial streaming readiness timed out")
 
 
 func _move_player(p: Vector2) -> void:
@@ -156,6 +249,12 @@ func _move_player(p: Vector2) -> void:
 			" player_chunk=", _manager.last_player_chunk(),
 			" active=", _manager.active_count(),
 			" pending=", _manager.pending_count())
+	print("[G10P2BCapture] average chunk generation_ms=", _manager.avg_gen_ms(),
+		" materialization_ms=", _manager.avg_mat_ms())
+	if _manager.last_player_chunk() != target_coord or _manager.active_count() < 9 \
+			or _manager.pending_count() != 0:
+		_capture_failures += 1
+		print("[G10P2BCapture] FAIL target streaming readiness timed out")
 	await _wait(CAPTURE_WAIT)
 
 
@@ -208,7 +307,7 @@ func _pick_core_point(fallback: Vector2) -> Vector2:
 func _count_buildings_in_road_band(center: Vector2, tangent: Vector2,
 		normal: Vector2, side: float) -> int:
 	var count := 0
-	for spec_variant in _city.city_buildings() as Array:
+	for spec_variant in _capture_buildings:
 		var spec: Dictionary = spec_variant as Dictionary
 		var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
 		var delta := lot.get_center() - center
@@ -395,7 +494,7 @@ func _pick_river_crossing(fallback: Vector2) -> Vector2:
 func _road_azimuth(center: Vector2, hierarchy: StringName) -> float:
 	var best_angle := -0.72
 	var best_distance := INF
-	for edge: Dictionary in _city.road_graph().get("edges", []):
+	for edge: Dictionary in _capture_edges:
 		if hierarchy != &"" and edge.get("hierarchy", &"") != hierarchy:
 			continue
 		var poly: PackedVector2Array = edge.get("polyline", PackedVector2Array()) as PackedVector2Array
@@ -488,10 +587,13 @@ func _wait_frames() -> void:
 
 
 func _snap(file_name: String) -> void:
-	DirAccess.make_dir_recursive_absolute(OUT_DIR)
+	DirAccess.make_dir_recursive_absolute(_out_dir)
 	var image := get_viewport().get_texture().get_image()
-	var path := OUT_DIR + "/" + file_name
-	image.save_png(path)
+	var path := _out_dir + "/" + file_name
+	if image.save_png(path) != OK:
+		_capture_failures += 1
+	else:
+		_capture_count += 1
 	print("[G10P2BCapture] saved ", path, " ", image.get_width(), "x", image.get_height())
 
 

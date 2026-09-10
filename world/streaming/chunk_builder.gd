@@ -1,5 +1,6 @@
 class_name ChunkBuilder
 extends RefCounted
+const PavementPlanScript = preload("res://world/generation/pavement_plan.gd")
 ## Materializes ONE chunk of the deterministic city plan into batched
 ## geometry. This is the MATERIAL layer's worker: it never makes random
 ## choices - every scatter roll flows from WorldSeed with the chunk coords
@@ -15,8 +16,8 @@ extends RefCounted
 ## offsets - so adjacent chunks continue each other's decoration exactly.
 
 const GROUND_COLOR := Color("4c4a44")
-const ASPHALT := Color("3a3d40")
-const ASPHALT_AVENUE := Color("45484c")
+const STREET_SETTS := Color("625c53")
+const AVENUE_SETTS := Color("716b60")
 const DASH_COLOR := Color("b9ae82")
 const SIDEWALK_HISTORIC := Color("a29a8b")
 const SIDEWALK_INNER := Color("98948a")
@@ -33,10 +34,6 @@ const STALL_COLORS := [
 	Color("8c3a30"), Color("3f5e6b"), Color("6b6f36"), Color("7c4a63"),
 ]
 
-const CAR_COLORS := [
-	Color("6d2222"), Color("2c3e50"), Color("7a7a72"),
-	Color("5c5648"), Color("274232"), Color("803c20"),
-]
 const DEBRIS_COLORS := [
 	Color("7a4a35"), Color("6f6b60"), Color("57544c"), Color("4d463c"),
 ]
@@ -53,6 +50,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 		world_plan: WorldPlan = null) -> void:
 	var rect := WorldSeed.chunk_rect(coord)
 	_roads(b, plan, rect, world_plan)
+	_joined_pavements(b, plan, rect, world_plan)
 	for cell in plan.cells_in_rect(rect):
 		var block := plan.cell_block(cell)
 		var block_bounds: Rect2 = block.get("bounds", block["rect"]) as Rect2
@@ -135,29 +133,23 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 			var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
 			var InteriorStationScript = load("res://world/buildings/interior_station.gd")
 			var imanifest: Dictionary = InteriorPlanScript.build_for_building(grounded_spec)
+			var local_floors: Array = imanifest["floors"].duplicate(true)
 			_transform_interior_manifest(imanifest, grounded_spec)
 			var ground_y: float = float(grounded_spec.get("building_ground_y", grounded_spec.get("ground_y", 0.0)))
 			_translate_interior_manifest_y(imanifest, ground_y)
-			# G9 M1 bounded slice: only residential ground floor interiors
-			var use_val: String = str(grounded_spec.get("use", grounded_spec.get("style", {}).get("room_type", "residential")))
-			if use_val != "residential":
-				continue
-			var bcenter: Vector2 = (grounded_spec["rect"] as Rect2).get_center()
-			if bcenter.length() >= WorldConstants.URBAN_INNER_M:
-				continue
-			if int(grounded_spec.get("floors", 1)) < 1:
-				continue
 			for fl in imanifest.get("floors", []):
 				var fi: int = int(fl.get("floor_i", -1))
-				if fi != 0:
-					continue
 				city_interior_rooms += int((fl.get("rooms", []) as Array).size())
 				for dm2 in fl.get("doors", []):
-					if city_interior_doors >= WorldConstants.MAX_CITY_INTERIOR_DOORS_PER_CHUNK:
-						break
+					var part_index: int = (fl["doors"] as Array).find(dm2)
+					var original_floor: Dictionary = local_floors[fi]
+					if not BuildingBuilder.interior_partition_visible(original_floor["partitions"][part_index], grounded_spec, fi):
+						continue
 					if dead_doors.has(String(dm2["id"])):
 						continue
 					var door2 := Door.new()
+					door2.set_meta("interior_building_id", str(grounded_spec["id"]))
+					door2.set_meta("interior_floor", fi)
 					door2.name = String(dm2["id"])
 					door2.setup(dm2)
 					chunk.add_child(door2)
@@ -169,6 +161,8 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 					var st = InteriorStationScript.new()
 					st.name = String(sm["id"])
 					st.setup(sm)
+					st.set_meta("interior_building_id", str(grounded_spec["id"]))
+					st.set_meta("interior_floor", fi)
 					# Tag as city interior for ACTIVE-only handling
 					st.set_meta("city_interior", true)
 					chunk.add_child(st)
@@ -469,7 +463,8 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		world_plan: WorldPlan = null) -> void:
 	_emit_halo_lamps(b, plan, rect, world_plan)
-	for edge: Dictionary in plan.city_road_segments_in(rect.grow(8.0)):
+	var street_edges := plan.city_road_segments_in(rect.grow(8.0))
+	for edge: Dictionary in street_edges:
 		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
 		var hierarchy: StringName = edge.get("hierarchy", &"local") as StringName
 		var width: float = float(edge.get("width", WorldConstants.CITY_ROAD_WIDTH_LOCAL))
@@ -516,15 +511,88 @@ static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 				var x_axis := Vector3(tangent.z, 0.0, -tangent.x).normalized()
 				var y_axis := tangent.cross(x_axis).normalized()
 				var basis := Basis(x_axis, y_axis, tangent)
-				var color := ASPHALT
+				var color := STREET_SETTS
 				if hierarchy == &"primary":
-					color = ASPHALT_AVENUE
+					color = AVENUE_SETTS
 				elif hierarchy == &"alley":
 					color = ALLEY_FLOOR
 				if bool(edge.get("is_bridge", false)):
 					color = Color("5e5a52")
+				b.push_layer("street_setts")
 				b.add_box_rotated(Vector3(mid.x, road_center_y, mid.y),
 					Vector3(width, 0.11, piece_length + 0.12), basis, color, false)
+				b.pop_layer()
+				_emit_street_pavements(b, edge, street_edges, mid, road_center_y,
+					piece_length, width, basis, false)
+
+
+static func _emit_street_pavements(b: MeshBatcher, edge: Dictionary,
+		street_edges: Array[Dictionary], mid: Vector2, road_y: float,
+		length: float, width: float, basis: Basis, emit_surface := true) -> void:
+	# Streets own the reserved 2.4 m band. Intersecting that band with a
+	# block already inset by 2.4 m produced no pavement at all.
+	var depth := WorldConstants.CITY_SIDEWALK_DEPTH_M
+	var yaw := atan2(basis.x.z, basis.x.x)
+	for side: float in [-1.0, 1.0]:
+		var offset: Vector3 = basis.x * side * (width * 0.5 + depth * 0.5)
+		var center := mid + Vector2(offset.x, offset.z)
+		var footprint := Rect2(center - Vector2(depth, length) * 0.5, Vector2(depth, length))
+		var clear := true
+		for other in street_edges:
+			if str(other.get("id", "")) == str(edge.get("id", "")):
+				continue
+			var line: PackedVector2Array = other.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
+			for i in range(line.size() - 1):
+				if CityPlan._segment_intersects_oriented_lot(line[i], line[i + 1], footprint,
+					yaw, float(other.get("width", 5.0)) * 0.5 + 0.1):
+					clear = false
+		if not clear:
+			continue
+		if emit_surface:
+			b.push_layer("street_pavement")
+			b.add_box_rotated(Vector3(center.x, road_y + 0.04, center.y),
+				Vector3(depth, 0.11, length + 0.04), basis, SIDEWALK_HISTORIC, false)
+			b.pop_layer()
+		var curb: Vector3 = Vector3(mid.x, road_y + 0.045, mid.y) + basis.x * side * (width * 0.5 + 0.10)
+		b.add_box_rotated(curb, Vector3(0.20, 0.12, length + 0.04), basis, Color("c3b9a5"), false)
+
+
+static func _joined_pavements(b: MeshBatcher, plan: CityPlan, rect: Rect2, world_plan: WorldPlan = null) -> void:
+	var patches := PavementPlanScript.surfaces(plan.city_road_segments_in(rect.grow(24.0)),
+		plan.buildings_in_rect(rect.grow(24.0)), rect)
+	# Union in shared 2 m cells: no overlapping coplanar slabs at junctions,
+	# and adjacent chunks sample precisely the same world-space boundary.
+	var cells: Dictionary = {}
+	for patch in patches:
+		var bounds := PavementPlanScript.bounds(patch)
+		for x in range(floori(bounds.position.x / 2.0), floori(bounds.end.x / 2.0) + 1):
+			for z in range(floori(bounds.position.y / 2.0), floori(bounds.end.y / 2.0) + 1):
+				var clipped := _clip_polygon_to_rect(patch, Rect2(x * 2.0, z * 2.0, 2.0, 2.0))
+				if clipped.size() < 3 or _polygon_area(clipped) < 0.001:
+					continue
+				var key := Vector2i(x, z)
+				var bucket: Array = cells.get(key, [])
+				var i := 0
+				while i < bucket.size():
+					var merged := Geometry2D.merge_polygons(clipped, bucket[i])
+					if merged.size() == 1:
+						clipped = merged[0]
+						bucket.remove_at(i)
+						i = 0
+					else:
+						i += 1
+				bucket.append(clipped)
+				cells[key] = bucket
+	b.push_layer("street_pavement")
+	var keys := cells.keys()
+	keys.sort()
+	for key in keys:
+		for polygon: PackedVector2Array in cells[key]:
+			var heights := PackedFloat32Array()
+			for point in polygon:
+				heights.append((world_plan.surface_height_at(point) if world_plan != null else 0.0) + 0.152)
+			b.add_visual_polygon_heights(polygon, heights, SIDEWALK_HISTORIC)
+	b.pop_layer()
 
 
 ## P2B-FIX lamp driver, called ONCE per _roads (function level, never per
@@ -737,13 +805,7 @@ static func _built_block_surfaces(b: MeshBatcher, plan: CityPlan, block: Diction
 		PackedVector2Array()) as PackedVector2Array
 	if block_poly.size() < 3:
 		return
-	var bounds: Rect2 = block.get("bounds", Rect2()) as Rect2
-	var district: StringName = block.get("district", CityPlan.DISTRICT_INNER) as StringName
-	var sidewalk_color := SIDEWALK_HISTORIC if district == CityPlan.DISTRICT_HISTORIC else SIDEWALK_INNER
-	var road_query := bounds.grow(WorldConstants.CITY_SIDEWALK_DEPTH_M + 8.0)
-	for edge: Dictionary in plan.city_road_segments_in(road_query):
-		_emit_block_sidewalks(b, block_poly, edge, chunk_rect, sidewalk_color,
-			world_plan)
+	# Continuous street-owned pavements are emitted once in _roads.
 	for region_variant in block.get("courtyard_regions", []) as Array:
 		var region: Dictionary = region_variant as Dictionary
 		var region_poly: PackedVector2Array = region.get("polygon",
@@ -946,12 +1008,24 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 	if world_plan != null:
 		ground_y = world_plan.surface_height_at(center)
 	var bounds := _polygon_bounds(poly)
-	var count := 4 + int(rng.randf() * 5.0)
+	var count := mini(24, maxi(4, int(_polygon_area(poly) / 1200.0))) \
+			+ int(rng.randf() * 3.0)
+	var footprints: Array[Rect2] = []
+	for spec_variant in block.get("buildings", []) as Array:
+		var spec: Dictionary = spec_variant as Dictionary
+		footprints.append(CityPlan._spec_world_bounds(spec).grow(1.0))
 	for i in count:
 		var p := Vector2(
-			rng.randf_range(bounds.position.x + 2.5, bounds.end.x - 2.5),
-			rng.randf_range(bounds.position.y + 2.5, bounds.end.y - 2.5))
+				rng.randf_range(bounds.position.x + 2.5, bounds.end.x - 2.5),
+				rng.randf_range(bounds.position.y + 2.5, bounds.end.y - 2.5))
 		if WorldSeed.chunk_coord(p.x, p.y) != coord or not _point_in_polygon(poly, p):
+			continue
+		var rooted := false
+		for fp in footprints:
+			if fp.has_point(p):
+				rooted = true
+				break
+		if rooted:
 			continue
 		var h := rng.randf_range(1.9, 2.6)
 		# One destructible wood prop: trunk (collides) + canopy (visual).
@@ -983,28 +1057,6 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		for dm in spec.get("doors", []):
 			var dp: Vector3 = dm["position"]
 			door_pts.append(Vector2(dp.x, dp.z))
-
-	# Wrecked cars follow actual city road tangents, never legacy X/Z lines.
-	var road_segments := plan.city_road_segments_in(rect.grow(10.0))
-	var car_count := rng.randi_range(0, 3)
-	for i in car_count:
-		if road_segments.is_empty():
-			break
-		var edge: Dictionary = road_segments[rng.randi_range(0, road_segments.size() - 1)]
-		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
-		if poly.size() < 2:
-			continue
-		var seg_i := rng.randi_range(0, poly.size() - 2)
-		var a: Vector2 = poly[seg_i]
-		var z: Vector2 = poly[seg_i + 1]
-		var tangent := (z - a).normalized()
-		var normal := Vector2(-tangent.y, tangent.x)
-		var p := a.lerp(z, rng.randf()) + normal * rng.randf_range(-1.5, 1.5)
-		if _inside_any_building(plan, p) or _near_door(door_pts, p):
-			continue
-		var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
-		_car(b, p, rng, CAR_COLORS[rng.randi_range(0, CAR_COLORS.size() - 1)],
-				tangent, ground_y)
 
 	# Debris piles.
 	for i in rng.randi_range(4, 10):
@@ -1050,29 +1102,6 @@ static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		})
 
 
-static func _car(b: MeshBatcher, p: Vector2, rng: RandomNumberGenerator,
-		color: Color, road_dir := Vector2.ZERO, ground_y := 0.0) -> void:
-	var yaw := atan2(road_dir.x, road_dir.y) if road_dir.length_squared() > 0.01 \
-			else rng.randf_range(-0.12, 0.12) + (PI * 0.5 if rng.randf() < 0.5 else 0.0)
-	# Cars align across streets: orient with the actual road tangent.
-	var basis := Basis(Vector3.UP, yaw)
-	# One destructible steel prop: body + cabin. Explosions bounce surviving
-	# debris off the blast center; sustained fire wrecks it in place.
-	var body_off: Vector3 = basis * Vector3(0, 0.45, 0)
-	var cabin_off: Vector3 = basis * Vector3(0, 1.05, 0)
-	b.add_prop_def({
-		"position": Vector3(p.x, ground_y, p.y),
-		"yaw": yaw,
-		"material": &"steel",
-		"parts": [
-			{"offset": body_off, "size": Vector3(1.85, 0.7, 4.2),
-					"color": color, "collide": true},
-			{"offset": cabin_off, "size": Vector3(1.65, 0.55, 2.1),
-					"color": color.darkened(0.25), "collide": true},
-		],
-	})
-
-
 static func _lamp_post(b: MeshBatcher, p: Vector2, ground_y := 0.0) -> void:
 	b.add_prop_def({
 		"position": Vector3(p.x, ground_y, p.y),
@@ -1080,8 +1109,16 @@ static func _lamp_post(b: MeshBatcher, p: Vector2, ground_y := 0.0) -> void:
 		"parts": [
 			{"offset": Vector3(0, 2.3, 0), "size": Vector3(0.16, 4.6, 0.16),
 					"color": Color("33363a"), "collide": true},
-			{"offset": Vector3(0, 4.65, 0), "size": Vector3(0.5, 0.18, 0.5),
-					"color": Color("d8cf9f"), "collide": false},
+			{"offset": Vector3(0, 0.30, 0), "size": Vector3(0.42, 0.60, 0.42),
+					"color": Color("292b29"), "collide": false},
+			{"offset": Vector3(0, 4.65, 0), "size": Vector3(0.36, 0.54, 0.36),
+					"color": Color("e5c884"), "collide": false},
+			{"offset": Vector3(0, 4.34, 0), "size": Vector3(0.52, 0.10, 0.52),
+					"color": Color("776143"), "collide": false},
+			{"offset": Vector3(0, 4.98, 0), "size": Vector3(0.62, 0.12, 0.62),
+					"color": Color("343932"), "collide": false},
+			{"offset": Vector3(0, 5.10, 0), "size": Vector3(0.30, 0.14, 0.30),
+					"color": Color("776143"), "collide": false},
 		],
 	})
 	# Phase S: real streetlamp spill light — DayNightController toggles these

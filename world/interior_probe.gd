@@ -53,6 +53,7 @@ static func evaluate(xz: Vector2, y: float, spec: Dictionary,
 
 	# Valid storey under the feet: slab top of level i sits at i*fh.
 	# A point belongs to storey i while y is in [i*fh - SLAB_T, (i+1)*fh).
+	y -= float(spec.get("building_ground_y", spec.get("ground_y", 0.0)))
 	var rel := y + SLAB_T * 0.5
 	if rel < 0.0:
 		return {"inside": false, "floor": -1}

@@ -389,9 +389,7 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
 			if str(style.get("room_type", "residential")) == "retail":
 				_shopfront(b, off, w, d, spec)
-		_furnish(b, off, w, d, fh, f, tag, zone,
-				door_edge if f == 0 else -1,
-				str(style.get("room_type", "residential")))
+
 		# Phase K: AC-style facade balconies on the upper storeys - a
 		# cantilevered concrete deck + steel railing lip that doubles as a
 		# grabbable parkour ledge. Deterministic per (floor, side, building),
@@ -2377,6 +2375,8 @@ static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 	var blocked: Array[Dictionary] = []
 	blocked.append(_rect_obb(zone))
 	if door_edge >= 0:
+		for aisle in _entry_aisles(w, d, zone, door_edge):
+			blocked.append(_rect_obb(aisle))
 		var mid_len := (w if door_edge == 0 or door_edge == 2 else d) * 0.5
 		var dp := _side_point(door_edge, w, d, mid_len)
 		match door_edge:
@@ -3333,29 +3333,32 @@ static func _rp_satellite_dish(b: MeshBatcher, off: Vector3, r: Rect2,
 			Vector3(0.05, 0.05, 0.34), Color("565d63"), &"steel")
 
 
+## Clear capsule-width ground-floor circulation beside the shaft and onto
+## its north landing. Furniture cannot seal the only door-to-stair route.
+static func _entry_aisles(w: float, d: float, zone: Rect2, door_edge: int) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	if zone.size == Vector2.ZERO or door_edge < 0:
+		return out
+	var inward := [Vector2.DOWN, Vector2.LEFT, Vector2.UP, Vector2.RIGHT][door_edge] as Vector2
+	var entry := _side_point(door_edge, w, d, (w if door_edge % 2 == 0 else d) * 0.5) + inward * 1.2
+	var corridor_x := (zone.end.x + w) * 0.5 if w - zone.end.x >= zone.position.x else zone.position.x * 0.5
+	var landing := Vector2(zone.position.x + LANE_W * 0.5, zone.position.y + LAND * 0.5)
+	var path: Array[Vector2] = [entry, Vector2(corridor_x, entry.y), Vector2(corridor_x, landing.y), landing]
+	for i in range(path.size() - 1):
+		out.append(Rect2(path[i].min(path[i + 1]), (path[i + 1] - path[i]).abs()).grow(0.55))
+	return out
+
+
 static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d: float, fh: float, n: int, tag: String, spec: Dictionary, zone: Rect2, has_stairs: bool) -> void:
-	# G9 M1 bounded slice: only residential ground floor interiors are materialized as city interior program.
-	# Other archetypes and upper floors remain shell-only for this milestone. Keeps budgets 320/240 within 1500/2480.
-	var use_val: String = str(spec.get("use", ""))
-	if use_val != "residential":
-		return
-	# Only ground floor
 	var InteriorPlanScript = load("res://world/generation/interior_plan.gd")
 	var manifest: Dictionary = InteriorPlanScript.build_for_building(spec)
+	var footprint: Rect2 = spec["rect"] as Rect2
+	var aisles: Array[Rect2] = []
+	if has_stairs:
+		aisles = _entry_aisles(w, d, zone, int(spec.get("door_edge", 0)))
 	for fl in manifest.get("floors", []):
 		var fi: int = int(fl.get("floor_i", 0))
-		if fi != 0:
-			continue
-		if fi >= n:
-			continue
-		# Center gate: building must be inside URBAN_INNER to be city interior (task siting gate)
-		var center: Vector2 = (spec["rect"] as Rect2).get_center()
-		if center.length() >= WorldConstants.URBAN_INNER_M:
-			continue
-		# Caps per building: at most 2 partitions for this slice (task CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING)
 		var parts: Array = fl.get("partitions", [])
-		if parts.size() > WorldConstants.CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING:
-			parts = parts.slice(0, WorldConstants.CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING)
 		b.push_layer(tag + ":f%d" % fi)
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
 		var corridor := Rect2()
@@ -3365,9 +3368,9 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			var dm0: Dictionary = spec.get("doors", [])[0] if spec.get("doors", []).size() > 0 else {}
 			if dm0.has("position"):
 				var dp: Vector3 = dm0["position"]
-				mid = Vector2(dp.x, dp.z)
+				mid = CityPlan._rotate_plan_point(footprint.get_center(), Vector2(dp.x, dp.z), -float(spec.get("yaw", 0.0))) - footprint.position
 			else:
-				mid = (spec["rect"] as Rect2).get_center()
+				mid = footprint.size * 0.5
 			match door_edge2:
 				0: corridor = Rect2(mid.x - 1.1, mid.y, 2.2, 3.0)
 				1: corridor = Rect2(mid.x - 3.0, mid.y - 1.1, 3.0, 2.2)
@@ -3376,40 +3379,13 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		for p in parts:
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
-			# Skip any partition that would intersect stair zone (keep stair route clear)
-			if has_stairs and pr.intersects(zone):
-				continue
-			if fi == 0 and corridor.size != Vector2.ZERO and pr.intersects(corridor):
+			# InteriorPlan stores unrotated world-plan coordinates; geometry
+			# below adds `off` and the assembler applies parcel yaw exactly once.
+			pr.position -= footprint.position
+			op.position -= footprint.position
+			if not interior_partition_visible(p, spec, fi):
 				continue
 			# Partitions are along shared room edges: pr is 0.18 thick wall (WorldConstants.CITY_INTERIOR_WALL_T), op is 0.95 opening.
-			# G9 M2 Asset Pipeline: try wall_2m modular GLB at wall center, visual only 0 collider, scale 1.0, fallback to box.
-			# Caps per chunk 4, deterministic, byte-identical shuffled.
-			var asset_handled := false
-			if b.asset_instance_count() < WorldConstants.MAX_ASSET_RESOLVES_PER_CHUNK:
-				var resolve_info := _AC.resolve(&"wall", WorldConstants.ASSET_VOCAB_WALL_2M)
-				var has_asset: bool = bool(resolve_info.get("exists", false)) and resolve_info.get("scene", null) != null
-				if has_asset:
-					var ws_center2: Vector2 = pr.get_center()
-					var local_c: Vector2 = ws_center2 - (spec["rect"] as Rect2).position
-					var asset_pos: Vector3 = off + Vector3(local_c.x, float(fi) * fh + fh*0.5 + WorldConstants.ASSET_LIFT_M, local_c.y)
-					var is_vert_probe := pr.size.x < pr.size.y + 0.01
-					# wall_2m.glb is long on local X: vertical partition
-					# needs a quarter-turn, horizontal stays at zero.
-					var yaw_probe: float = PI * 0.5 if is_vert_probe else 0.0
-					var asset_size: Vector3 = Vector3(2.0, WorldConstants.CITY_INTERIOR_OPEN_H, WorldConstants.CITY_INTERIOR_WALL_T)
-					# A partition has two visible wall-facing sides. Keep the
-					# primary N/E side plus the opposite side so either matching
-					# camera-facing structural facade hides the same module.
-					var asset_facade := "E" if is_vert_probe else "N"
-					var asset_facades: Array = ["E", "W"] if is_vert_probe else ["N", "S"]
-					b.queue_asset_wall(asset_pos, asset_size, WorldConstants.COL_ASSET_FALLBACK, String(resolve_info.get("res_path", "")), float(resolve_info.get("scale", 1.0)), bool(resolve_info.get("has_collision", false)), yaw_probe, asset_facade, asset_facades)
-					asset_handled = true
-				if asset_handled and b.asset_instance_count() == 1:
-					print("[AssetPipeline] asset wall_2m resolve exists true fallback false at %s" % [str(resolve_info.get("res_path", ""))])
-				elif not has_asset and b.asset_instance_count() == 0 and p == parts[0]:
-					print("[AssetPipeline] asset wall_2m resolve exists false fallback true at %s" % [str(resolve_info.get("res_path", ""))])
-			if asset_handled:
-				continue
 			var y0 := float(fi) * fh
 			var wall_h := fh
 			if wall_h > WorldConstants.CITY_INTERIOR_OPEN_H:
@@ -3433,12 +3409,12 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var bot_h := maxf(0.0, py1 - ox1)
 				var cx := px + pw * 0.5
 				if top_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col)
 				if bot_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col)
 				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h > 0.05:
-					b.add_structural_box(off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
 			else:
 				var ph2 := pr.size.y
 				if absf(ph2 - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
@@ -3453,52 +3429,21 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var right_w := maxf(0.0, px1 - ox1b)
 				var cy := py + ph2 * 0.5
 				if left_w > 0.05:
-					b.add_structural_box(off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col)
 				if right_w > 0.05:
-					b.add_structural_box(off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col)
 				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h2 > 0.05:
-					b.add_structural_box(off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
-		# Furniture proxies for city interior: 1-2 per residential ground floor against walls (visual only)
-		# Deterministic via InteriorPlan stations + WorldSeed; we emit 1-2 boxes (bed/shelf/table) as visual.
-		var rng := WorldSeed.rng_for("interior", [WorldSeed.str_hash(tag), 0])
-		var furniture_kinds: Array[StringName] = WorldConstants.CITY_INTERIOR_FURNITURE_VOCAB
-		var fcount: int = 1 + (rng.randi() % 2) # 1-2
-		# Place against room walls using InteriorPlan rooms
-		var rooms: Array = fl.get("rooms", [])
-		for f_idx in fcount:
-			if f_idx >= rooms.size():
-				break
-			var room: Dictionary = rooms[f_idx % rooms.size()] as Dictionary
-			var rrect: Rect2 = room.get("rect", Rect2()) as Rect2
-			if rrect.size == Vector2.ZERO:
-				continue
-			var kind: StringName = furniture_kinds[int(rng.randi() % furniture_kinds.size())]
-			var fsize: Vector3 = Vector3.ONE
-			var fcol: Color = Color.WHITE
-			match kind:
-				&"bed":
-					fsize = WorldConstants.CITY_FURNITURE_SIZE_BED
-					fcol = WorldConstants.COL_CITY_BED
-				&"table":
-					fsize = WorldConstants.CITY_FURNITURE_SIZE_TABLE
-					fcol = WorldConstants.COL_CITY_TABLE
-				&"shelf":
-					fsize = WorldConstants.CITY_FURNITURE_SIZE_SHELF
-					fcol = WorldConstants.COL_CITY_SHELF
-				_:
-					fsize = WorldConstants.CITY_FURNITURE_SIZE_TABLE
-					fcol = WorldConstants.COL_CITY_TABLE
-			# Position: near room wall inset 0.35+0.15, deterministic offset 0.4
-			var fx: float = rrect.position.x + 0.9 + float(f_idx) * 0.4
-			var fz: float = rrect.position.y + 0.9
-			if fx + fsize.x*0.5 > rrect.end.x - 0.4:
-				fx = rrect.get_center().x
-			if fz + fsize.z*0.5 > rrect.end.y - 0.4:
-				fz = rrect.get_center().y
-			var fy: float = float(fi) * fh + fsize.y*0.5 + WorldConstants.CITY_INTERIOR_LIFT_M
-			# Visual only (no collider) to keep 1 collider per chunk — use add_visual_box
-			b.add_visual_box(off + Vector3(fx, fy, fz), fsize, fcol)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
+		for wall: Rect2 in fl.get("solid_walls", []):
+			var center := wall.get_center() - footprint.position
+			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL)
+		for item: Dictionary in fl.get("furniture", []):
+			var pos: Vector3 = item["position"]
+			pos.x -= footprint.position.x
+			pos.z -= footprint.position.y
+			_emit_room_furniture(b, off + pos, item, tag, fi)
+
 		b.pop_layer()
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
@@ -3536,3 +3481,80 @@ static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
 	b.add_roof_visual_box(off + Vector3(ch_x, total_h + rise * 0.55 + 0.75,
 					d * 0.5),
 			Vector3(0.65, 1.5, 0.65), PLINTH_COLOR.darkened(0.2))
+
+
+static func interior_partition_visible(part: Dictionary, spec: Dictionary, floor_i: int) -> bool:
+	if bool(part.get("planned_clearance", false)):
+		return true
+	var fp: Rect2 = spec["rect"]
+	var rect: Rect2 = part["rect"]
+	rect.position -= fp.position
+	var fh := float(spec.get("floor_h", 3.0))
+	var zone := _zone_rect(fp.size, fh, int(spec.get("door_edge", 0)))
+	if has_stairs_for(fp.size, fh, int(spec.get("floors", 1))):
+		if rect.intersects(zone):
+			return false
+		for aisle in _entry_aisles(fp.size.x, fp.size.y, zone, int(spec.get("door_edge", 0))):
+			if rect.intersects(aisle):
+				return false
+	if floor_i == 0:
+		var edge := int(spec.get("door_edge", 0))
+		var mid := fp.size * 0.5
+		var entry := Rect2()
+		match edge:
+			0: entry = Rect2(mid.x - 1.2, 0, 2.4, 3.2)
+			1: entry = Rect2(fp.size.x - 3.2, mid.y - 1.2, 3.2, 2.4)
+			2: entry = Rect2(mid.x - 1.2, fp.size.y - 3.2, 2.4, 3.2)
+			3: entry = Rect2(0, mid.y - 1.2, 3.2, 2.4)
+		if rect.intersects(entry):
+			return false
+	return true
+
+
+static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary, tag: String, fi: int) -> void:
+	var kind: String = item["kind"]
+	var size: Vector3 = item["size"]
+	if kind == "bed":
+		_f_bed(b, pos, 0.0, tag, fi)
+		return
+	if kind == "table" or kind == "documents":
+		_f_table(b, pos, tag, fi)
+		if kind == "documents":
+			b.add_visual_box(pos + Vector3(0.15, 0.84, 0), Vector3(0.4, 0.08, 0.3), Color("e0d1ad"))
+			b.add_visual_box(pos + Vector3(-0.35, 0.85, 0), Vector3(0.10, 0.13, 0.10), Color("27272b"))
+		return
+	if kind == "shelf":
+		_f_shelf(b, pos, 0.0, WorldSeed.rng_for("furnish", [WorldSeed.str_hash(item["id"])]), tag, fi)
+		return
+	var metal := kind in ["machine", "stove", "instruments", "examination"]
+	var ceramic := kind in ["sink", "toilet"]
+	var col := Color("353b38") if metal else (Color("ded4be") if ceramic else FURN_WALNUT)
+	b.add_destructible_box(pos + Vector3(0, size.y * 0.35, 0), Vector3(size.x, size.y * 0.7, size.z), col, &"steel" if metal else &"wood", true, tag, fi)
+	if kind in ["sofa", "bench"]:
+		b.add_visual_box(pos + Vector3(0, size.y * 0.72, -size.z * 0.4), Vector3(size.x, size.y * 0.5, 0.12), Color("56604c"))
+	elif ceramic:
+		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x * 0.8, 0.10, size.z * 0.8), Color("a6b8ae"))
+		b.add_visual_box(pos + Vector3(0, size.y * 0.9, -size.z * 0.35), Vector3(0.08, 0.20, 0.08), Color("b99a58"))
+	elif metal:
+		# Cast iron body, brass instrument housing and steam pipe.
+		b.add_visual_box(pos + Vector3(0, size.y * 0.8, 0), Vector3(size.x * 0.65, size.y * 0.25, size.z * 0.7), Color("aa8750"))
+		b.add_visual_box(pos + Vector3(-size.x * 0.3, size.y * 0.8, -size.z * 0.3), Vector3(0.12, size.y * 0.4, 0.12), Color("6d5941"))
+	else:
+		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x, 0.08, size.z), FURN_WOOD)
+		if kind == "workbench":
+			b.add_visual_box(pos + Vector3(0.25, size.y * 0.87, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
+
+
+static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color) -> void:
+	var bottom := pos.y - size.y * 0.5
+	var top := pos.y + size.y * 0.5
+	var split := ground + fi * fh + 1.05
+	if bottom < split:
+		var lower_h := minf(top, split) - bottom
+		b.add_structural_box(Vector3(pos.x, bottom + lower_h * 0.5, pos.z), Vector3(size.x, lower_h, size.z), col)
+	if top > split:
+		var upper_bottom := maxf(bottom, split)
+		var upper_h := top - upper_bottom
+		b.push_layer(tag + ":f%d:cutaway" % fi)
+		b.add_structural_box(Vector3(pos.x, upper_bottom + upper_h * 0.5, pos.z), Vector3(size.x, upper_h, size.z), col)
+		b.pop_layer()

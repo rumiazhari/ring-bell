@@ -136,6 +136,7 @@ func _ready() -> void:
 
 	add_to_group(&"interactables")
 	add_to_group(&"doors")
+	set_physics_process(false)
 	_update_prompt()
 
 
@@ -221,7 +222,7 @@ func is_solid() -> bool:
 ## True when the DOORWAY (the aperture) can be walked through right now:
 ## an open leaf swings clear of the opening, a closed one seals it.
 func is_passage_clear() -> bool:
-	return state == DoorState.OPEN or state == DoorState.OPENING
+	return _leaf != null and is_instance_valid(_leaf) and absf(wrapf(_leaf.rotation.y, -PI, PI)) >= deg_to_rad(75.0)
 
 
 func take_structural_damage(amount: float, source_id: StringName = &"") -> void:
@@ -275,12 +276,10 @@ func _physics_process(delta: float) -> void:
 			# P1-10: an open leaf STAYS collidable at its swung position.
 			_leaf.collision_layer = LAYER_ENVIRONMENT
 			state = DoorState.OPEN
+			set_physics_process(false)
 			_update_prompt()
 		else:
-			_leaf.freeze = true
-			_leaf.collision_layer = LAYER_ENVIRONMENT
-			state = DoorState.CLOSED
-			_update_prompt()
+			_force_settle()
 	elif absf(ang - _last_yaw) < 0.002 and absf(err) > SETTLE_EPS:
 		# Pinned by contact (actor/prop/geometry): reverse once, then give
 		# up - a jammed closing door bounces OPEN, a jammed opening door
@@ -305,23 +304,15 @@ func _physics_process(delta: float) -> void:
 ## Blocked while closing: reopen fully. The leaf stays PHYSICAL at its
 ## swung position (P1-10) - it juts into the room and that is the point.
 func _bounce_open() -> void:
-	_leaf.angular_velocity = Vector3.ZERO
-	_leaf.freeze = true
-	_leaf.collision_layer = LAYER_ENVIRONMENT
-	state = DoorState.OPEN
-	_update_prompt()
+	_drive_to(_open_angle)
 
 
-## Jam fallback: declare victory at the current pose. A jammed HALF-OPEN
-## door must NOT become intangible - keep the collision on (P1-10).
 func _force_settle() -> void:
 	_leaf.angular_velocity = Vector3.ZERO
 	_leaf.freeze = true
-	if state == DoorState.CLOSING:
-		state = DoorState.CLOSED
-	else:
-		state = DoorState.OPEN
 	_leaf.collision_layer = LAYER_ENVIRONMENT
+	state = DoorState.OPEN if is_passage_clear() else DoorState.CLOSED
+	set_physics_process(false)
 	_update_prompt()
 
 

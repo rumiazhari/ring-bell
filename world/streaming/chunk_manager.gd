@@ -34,6 +34,8 @@ const MAX_INFLIGHT_BUILDS := 6           # concurrent worker-thread batch jobs (
 var plan: CityPlan
 var world_plan: WorldPlan
 var _worker_city_plan: CityPlan
+var _available_city_plans: Array[CityPlan] = []
+var _available_world_plans: Array[WorldPlan] = []
 var synchronous := false                # tests: build inline, no workers
 var _terrain_vertices_total := 0
 var _terrain_triangles_total := 0
@@ -135,6 +137,7 @@ var _total_cave_gen_ms := 0.0           # cave manifest generation
 var _total_vertical_gen_ms := 0.0       # vertical manifest generation
 var _stream_timer := STREAM_UPDATE_INTERVAL
 var _player_chunk_changed := true
+var _retired_collision_bodies: Array[StaticBody3D] = []
 
 
 func setup(city_plan: CityPlan) -> void:
@@ -154,9 +157,42 @@ func setup_world(city_plan: CityPlan, wplan: WorldPlan) -> void:
 ## snapshot once so every worker does not regenerate the entire city for one
 ## 64 m chunk. Chunk-local WorldPlan manifests remain private to workers.
 func _prepare_worker_city_plan() -> void:
+	if not _inflight.is_empty():
+		reset_stream()
 	_worker_city_plan = plan
+	_available_city_plans.clear()
+	_available_world_plans.clear()
 	if _worker_city_plan != null:
+		# Reuse the generated city on the main-thread WorldPlan too. Its
+		# fringe queries otherwise lazily generate a second identical city.
+		if world_plan != null and world_plan.seed_used == _worker_city_plan.seed_used:
+			world_plan.city_plan = _worker_city_plan
+			world_plan.fringe.city_plan = _worker_city_plan
 		_worker_city_plan.city_extent()
+		# Allocate isolated snapshots once at world setup, not whenever the
+		# player crosses a chunk boundary. Each lease belongs to one job until
+		# completion; workers never share a CityPlan instance.
+		if not synchronous:
+			for i in MAX_INFLIGHT_BUILDS:
+				var snapshot := _worker_city_plan.clone_generated()
+				var worker_world := WorldPlan.new(snapshot.seed_used)
+				worker_world.city_plan = snapshot
+				worker_world.fringe.city_plan = snapshot
+				_available_city_plans.append(snapshot)
+				_available_world_plans.append(worker_world)
+
+
+func _return_city_plan(job: Dictionary) -> void:
+	var snapshot: CityPlan = job.get("city_plan_lease") as CityPlan
+	if snapshot != null and _worker_city_plan != null \
+			and snapshot.seed_used == _worker_city_plan.seed_used:
+		_available_city_plans.append(snapshot)
+	job.erase("city_plan_lease")
+	var worker_world: WorldPlan = job.get("world_plan_lease") as WorldPlan
+	if worker_world != null and _worker_city_plan != null \
+			and worker_world.seed_used == _worker_city_plan.seed_used:
+		_available_world_plans.append(worker_world)
+	job.erase("world_plan_lease")
 
 
 func set_player(node: Node3D) -> void:
@@ -171,6 +207,7 @@ func reset_stream() -> void:
 		var task_id: int = job["task_id"]
 		if task_id >= 0:
 			WorkerThreadPool.wait_for_task_completion(task_id)
+		_return_city_plan(job)
 	_inflight.clear()
 	_terrain_vertices_total = 0
 	_terrain_triangles_total = 0
@@ -267,7 +304,12 @@ static func chebyshev_distance(a: Vector2i, b: Vector2i) -> int:
 # --- Streaming loop ----------------------------------------------------------
 
 func _process(delta: float) -> void:
+	var profile := OS.get_cmdline_user_args().has("--streaming-walk-performance")
+	var stage := Time.get_ticks_usec() if profile else 0
+	_dispose_retired_collision()
+	stage = _trace_stream_cost("retire_collision", stage)
 	_flush_rebuilds()
+	stage = _trace_stream_cost("rebuild", stage)
 
 	_stream_timer += delta
 	var pc := _player_chunk()
@@ -279,6 +321,7 @@ func _process(delta: float) -> void:
 	# materialization before considering the periodic streaming update. This
 	# keeps the player-visible frame from absorbing a completed-job burst.
 	_collect_finished_jobs(pc)
+	stage = _trace_stream_cost("materialize", stage)
 
 	if _stream_timer < STREAM_UPDATE_INTERVAL and not _player_chunk_changed:
 		return
@@ -288,8 +331,45 @@ func _process(delta: float) -> void:
 	var desired := _desired_set(pc)
 	_enqueue_missing(desired, pc)
 	_launch_batch_jobs()
+	stage = _trace_stream_cost("schedule", stage)
 	_unload_far(desired, pc)
+	stage = _trace_stream_cost("unload", stage)
 	_update_chunk_states(pc)
+	_trace_stream_cost("active_warm", stage)
+
+
+func _trace_stream_cost(phase: String, start: int) -> int:
+	if start == 0:
+		return 0
+	var now := Time.get_ticks_usec()
+	if now - start > 20000:
+		print("[StreamingCost] ", phase, " ms=", (now - start) / 1000.0, " chunk=", _last_player_chunk)
+	return now
+
+
+func _retire_collision(batcher: MeshBatcher) -> void:
+	var body := batcher.release_collision_cache()
+	if body != null:
+		_retired_collision_bodies.append(body)
+
+
+func _dispose_retired_collision() -> void:
+	# Catch up during sustained movement without releasing whole dense bodies
+	# in one frame. Detached nodes have no gameplay or physics participation.
+	var deadline := Time.get_ticks_usec() + (4000 if _retired_collision_bodies.size() > 3 else 2000)
+	while not _retired_collision_bodies.is_empty() and Time.get_ticks_usec() < deadline:
+		var body := _retired_collision_bodies[0]
+		if body.get_child_count() > 0:
+			body.get_child(body.get_child_count() - 1).free()
+		else:
+			body.free()
+			_retired_collision_bodies.pop_front()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		for body in _retired_collision_bodies:
+			body.free()
 
 
 func _player_chunk() -> Vector2i:
@@ -415,12 +495,16 @@ func _launch_batch_jobs() -> void:
 			# concurrent GDScript jobs caused an engine access violation despite the
 			# plan being logically immutable.
 			var worker_city_plan: CityPlan = null
+			var worker_world_plan: WorldPlan = null
 			if _worker_city_plan != null:
-				worker_city_plan = _worker_city_plan.clone_generated()
+				assert(not _available_city_plans.is_empty(), "city worker snapshot pool exhausted")
+				assert(not _available_world_plans.is_empty(), "world worker snapshot pool exhausted")
+				worker_city_plan = _available_city_plans.pop_back()
+				worker_world_plan = _available_world_plans.pop_back()
 			var task_id := WorkerThreadPool.add_task(
-					_thread_build.bind(batcher, c, holder, seed_used, worker_city_plan), false,
+					_thread_build.bind(batcher, c, holder, seed_used, worker_city_plan, worker_world_plan), false,
 					"chunk_%d_%d" % [c.x, c.y])
-			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id,
+			_inflight[c] = {"batcher": batcher, "terrain_holder": holder, "task_id": task_id, "city_plan_lease": worker_city_plan, "world_plan_lease": worker_world_plan,
 					"gen_ms": 0.0, "terrain_gen_ms": 0.0, "water_gen_ms": 0.0, "biome_gen_ms": 0.0, "road_gen_ms": 0.0, "rural_gen_ms": 0.0, "fringe_gen_ms": 0.0, "cave_gen_ms": 0.0, "vertical_gen_ms": 0.0}
 
 
@@ -428,9 +512,12 @@ func _launch_batch_jobs() -> void:
 ## Builds city batcher + terrain manifest (if holder has terrain key). The
 ## shared city plan is read-only after setup; world manifests stay private.
 func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary,
-		seed_used: int, city_plan_override: CityPlan = null) -> void:
+		seed_used: int, city_plan_override: CityPlan = null,
+		world_plan_override: WorldPlan = null) -> void:
 	var t_all := Time.get_ticks_usec()
-	var shared_world: WorldPlan = WorldPlan.new(seed_used)
+	# A lease is exclusive until job completion. Reuse private support plans
+	# instead of re-entering expensive static-cache constructors every 64 m.
+	var shared_world: WorldPlan = world_plan_override if world_plan_override != null else WorldPlan.new(seed_used)
 	var composition: Dictionary = shared_world.chunk_composition(coord)
 	# CityPlan is generated once during setup and then read-only in workers. A
 	# fallback private plan preserves direct legacy callers that never call setup.
@@ -513,6 +600,7 @@ func _thread_build(batcher: MeshBatcher, coord: Vector2i, holder: Dictionary,
 		holder["vertical"] = {}
 		holder["vertical_gen_ms"] = 0.0
 	holder["composition"] = composition
+	batcher.prepare_mesh_data()
 	holder["gen_ms"] = float(Time.get_ticks_usec() - t_all) / 1000.0
 
 ## Legacy helper kept for direct sync tests. It obeys the same WorldPlan
@@ -549,6 +637,7 @@ func _collect_finished_jobs(pc: Vector2i) -> void:
 			continue
 		if job["task_id"] >= 0:
 			WorkerThreadPool.wait_for_task_completion(job["task_id"])
+		_return_city_plan(job)
 		_inflight.erase(c)
 		if stale:
 			continue
@@ -1282,6 +1371,7 @@ func _unload_far(desired: Dictionary, pc: Vector2i) -> void:
 		var batcher: MeshBatcher = rec.get("batcher")
 		if batcher != null:
 			batcher.disable_collision()
+			_retire_collision(batcher)
 		var node := get_node_or_null(NodePath("Chunk_%d_%d" % [c.x, c.y]))
 		if node != null:
 			node.queue_free()
@@ -1394,6 +1484,8 @@ func _update_chunk_states(pc: Vector2i) -> void:
 				batcher.disable_collision()
 				rec["static"] = null
 				rec["colliders"] = 0
+			if batcher != null and desired_state == &"cold":
+				_retire_collision(batcher)
 			# Water ACTIVE-only physics: warm retains WaterMesh visual but disables collision
 			var water_body := get_node_or_null(NodePath("Chunk_%d_%d/Water_%d_%d/WaterBody" % [coord.x, coord.y, coord.x, coord.y]))
 			if water_body != null and is_instance_valid(water_body):
@@ -1597,6 +1689,11 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 			changed = true
 	if changed or not rec.has("layer_hidden"):
 		rec["layer_hidden"] = applied
+	var chunk_node := get_node_or_null(NodePath("Chunk_%d_%d" % [coord.x, coord.y]))
+	if chunk_node != null:
+		for child in chunk_node.get_children():
+			if child is Node3D and child.has_meta("interior_floor"):
+				child.visible = max_floor < 0 or str(child.get_meta("interior_building_id", "")) != tag or int(child.get_meta("interior_floor")) <= max_floor
 
 
 # --- Voxel destruction -------------------------------------------------------

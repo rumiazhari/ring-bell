@@ -24,6 +24,12 @@ extends RefCounted
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
 var _polygon_specs: Array[Dictionary] = [] # visual ground polygons: {points,y,color,layer}
+var _prepared_layers: Dictionary = {}
+var _box_shapes: Dictionary = {} # immutable size -> BoxShape3D, per batcher
+var _inactive_body: StaticBody3D
+static var _opaque_material: StandardMaterial3D
+static var _transparent_material: StandardMaterial3D
+static var _paving_materials: Dictionary = {}
 var _asset_instances: Array[Dictionary] = [] # {pos,size,color,res_path,scale,has_collision,yaw,layer,building_id,floor_i}
 var _asset_nodes: Array[Node3D] = []     # materialized asset nodes, keyed by layer metadata
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city streetlamp OmniLight positions
@@ -54,6 +60,7 @@ var _building_transform_stack: Array[Dictionary] = []
 # and is destroyed only when it reaches its integrity. Deterministic - no
 # random destruction of untouched geometry.
 var _cell_damage := {}                 # id -> accumulated effective damage
+var _dirty_layers := {}
 var _cracked := {}                     # id -> true (glass visual crack state)
 
 
@@ -88,6 +95,7 @@ func add_visual_box(pos: Vector3, size: Vector3, color: Color) -> void:
 ## blocks/plazas; it carries no collision and remains outside the building
 ## destruction ledger.
 func add_visual_polygon(points: PackedVector2Array, y: float, color: Color) -> void:
+	_prepared_layers.clear()
 	if points.size() < 3:
 		return
 	_polygon_specs.append({
@@ -96,6 +104,15 @@ func add_visual_polygon(points: PackedVector2Array, y: float, color: Color) -> v
 		"color": color,
 		"layer": _layers.back(),
 	})
+
+
+func add_visual_polygon_heights(points: PackedVector2Array, heights: PackedFloat32Array, color: Color) -> void:
+	_prepared_layers.clear()
+	assert(points.size() == heights.size())
+	if points.size() < 3:
+		return
+	_polygon_specs.append({"points": points.duplicate(), "heights": heights.duplicate(),
+		"y": 0.0, "color": color, "layer": _layers.back()})
 
 
 ## Roof dressing (pitched shells, membranes, dormers) - flushed into a
@@ -147,6 +164,7 @@ func add_box_rotated(pos: Vector3, size: Vector3, basis: Basis,
 func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 		collide: bool, roof_layer: bool, material: StringName,
 		owner_tag := "", floor_i := -1) -> void:
+	_prepared_layers.clear()
 	if not _building_transform_stack.is_empty():
 		var transform: Dictionary = _building_transform_stack.back()
 		var origin: Vector3 = transform["origin"] as Vector3
@@ -276,7 +294,7 @@ static func reveal_layer_hidden(layer_key: String, tag: String,
 	var bucket_sep := facade_name.find("|")
 	if bucket_sep >= 0:
 		facade_name = facade_name.substr(0, bucket_sep)
-	return fl > max_floor or (fl == max_floor and faded.has(facade_name))
+	return fl > max_floor or (fl == max_floor and (facade_name == "cutaway" or faded.has(facade_name)))
 
 
 static func reveal_asset_hidden(asset: Dictionary, tag: String,
@@ -477,7 +495,8 @@ func flush_into(parent: Node3D, body_layer := 1,
 	_asset_nodes.clear()
 	var stats := {"mesh_nodes": 0, "colliders": _colliders.size()}
 
-	var groups := _build_layers()
+	var groups := _prepared_layers if not _prepared_layers.is_empty() else _build_layers()
+	_prepared_layers = {}
 	for key: String in groups.keys():
 		var mi := MeshInstance3D.new()
 		mi.name = "L_%s" % (key.replace(":", "_").replace("|", "_")
@@ -493,6 +512,7 @@ func flush_into(parent: Node3D, body_layer := 1,
 	# Each asset is a MeshInstance from wall_2m.glb or fallback BoxMesh if GLB missing/invalid.
 	# ACTIVE-only visual: ChunkManager disables via queue_free on unload; warm retains visuals disabled.
 	var asset_count := 0
+	var asset_scenes: Dictionary = {}
 	for a in _asset_instances:
 		var res_path: String = a.get("res_path", "") as String
 		var a_pos: Vector3 = a.get("pos", Vector3.ZERO) as Vector3
@@ -501,10 +521,14 @@ func flush_into(parent: Node3D, body_layer := 1,
 		var a_scale: float = float(a.get("scale", 1.0))
 		var a_yaw: float = float(a.get("yaw", 0.0))
 		var scene: PackedScene = null
-		if FileAccess.file_exists(res_path) or ResourceLoader.exists(res_path, "PackedScene"):
-			var loaded = ResourceLoader.load(res_path)
-			if loaded != null and loaded is PackedScene:
-				scene = loaded as PackedScene
+		if not asset_scenes.has(res_path):
+			if FileAccess.file_exists(res_path) or ResourceLoader.exists(res_path, "PackedScene"):
+				var loaded = ResourceLoader.load(res_path)
+				if loaded is PackedScene:
+					scene = loaded as PackedScene
+			asset_scenes[res_path] = scene
+		else:
+			scene = asset_scenes[res_path]
 		var node3d: Node3D = null
 		if scene != null:
 			var inst = scene.instantiate()
@@ -572,6 +596,16 @@ func enable_collision(body_layer := 1) -> void:
 			existing.free()
 		else:
 			return
+	if _inactive_body != null:
+		for id: int in _destroyed:
+			if _shape_nodes.has(id):
+				var shape_node: CollisionShape3D = _shape_nodes[id]
+				_shape_nodes.erase(id)
+				shape_node.free()
+		_inactive_body.collision_layer = body_layer
+		_parent.add_child(_inactive_body)
+		_inactive_body = null
+		return
 	_flush_collision_into(_parent, body_layer)
 
 
@@ -579,14 +613,28 @@ func enable_collision(body_layer := 1) -> void:
 ## Destructible metadata stays in the RefCounted batcher for persistence and
 ## is rebuilt if the chunk becomes active again.
 func disable_collision() -> void:
-	_shape_nodes.clear()
 	if _parent == null or not is_instance_valid(_parent):
 		return
 	var body := _parent.get_node_or_null(NodePath("Static"))
 	if body != null:
 		if body.get_parent() != null:
 			body.get_parent().remove_child(body)
-		body.free()
+		_inactive_body = body
+
+
+## Warm collision is detached from the scene/physics world, ready for reuse.
+## Cold/unloaded chunks transfer it to the manager's budgeted disposal queue.
+func release_collision_cache() -> StaticBody3D:
+	var body := _inactive_body
+	_inactive_body = null
+	if body != null:
+		_shape_nodes.clear()
+	return body
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE and _inactive_body != null:
+		_inactive_body.free()
 
 
 func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
@@ -600,13 +648,16 @@ func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
 	body.name = "Static"
 	body.collision_layer = body_layer
 	body.collision_mask = 0
-	parent.add_child(body)
 	for col in _colliders:
 		if _destroyed.has(int(col["id"])):
 			continue   # destroyed cell: no collider resurrection
 		var shape_node := CollisionShape3D.new()
-		var shape := BoxShape3D.new()
-		shape.size = col["size"]
+		var size: Vector3 = col["size"]
+		if not _box_shapes.has(size):
+			var shared_shape := BoxShape3D.new()
+			shared_shape.size = size
+			_box_shapes[size] = shared_shape
+		var shape: BoxShape3D = _box_shapes[size]
 		shape_node.shape = shape
 		shape_node.position = col["pos"]
 		shape_node.basis = col["basis"]
@@ -628,6 +679,9 @@ func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
 			shape_node.set_meta("vox_tag", StringName(feat_tag))
 		_shape_nodes[int(col["id"])] = shape_node
 		body.add_child(shape_node)
+	# Register the complete body once, rather than mutating live physics
+	# registration for each of its thousands of collision children.
+	parent.add_child(body)
 
 
 # --- Destruction -------------------------------------------------------------
@@ -635,13 +689,15 @@ func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
 ## Marks a box destroyed. Returns its spec ({pos,size,color,...}) so callers
 ## can spawn matching debris, or {} when the id is unknown/gone.
 func destroy_box(id: int) -> Dictionary:
+	_prepared_layers.clear()
 	if _destroyed.has(id):
 		return {}
+	if id <= 0 or id > _specs.size():
+		return {}
 	_destroyed[id] = true
-	for spec in _specs:
-		if int(spec["id"]) == id:
-			return spec.duplicate()
-	return {}
+	var spec: Dictionary = _specs[id - 1]
+	_dirty_layers[_layer_key(spec)] = true
+	return spec.duplicate()
 
 
 ## Stable, materialization-order-independent cell key: quantized world
@@ -656,10 +712,10 @@ static func cell_key(pos: Vector3, size: Vector3) -> String:
 
 
 func cell_key_for_id(id: int) -> String:
-	for spec in _specs:
-		if int(spec["id"]) == id:
-			return cell_key(spec["pos"], spec["size"])
-	return ""
+	if id <= 0 or id > _specs.size():
+		return ""
+	var spec: Dictionary = _specs[id - 1]
+	return cell_key(spec["pos"], spec["size"])
 
 
 ## Damage snapshot for persistence: {cell_key: {"damage": float}} for every
@@ -680,7 +736,10 @@ func damage_state() -> Dictionary:
 ## cells whose restored raw damage already meets their integrity as
 ## destroyed WITHOUT spawning debris again.
 func load_damage_state(data: Dictionary) -> void:
+	if not data.is_empty():
+		_prepared_layers.clear()
 	_cell_damage.clear()
+	_cracked.clear()
 	for spec in _specs:
 		var key := cell_key(spec["pos"], spec["size"])
 		if not data.has(key):
@@ -692,6 +751,8 @@ func load_damage_state(data: Dictionary) -> void:
 				_destroyed[id] = true
 		else:
 			_cell_damage[id] = dmg
+			if spec["material"] == &"glass" and dmg >= cell_integrity(spec["size"], &"glass") * 0.4:
+				_cracked[id] = true
 
 
 ## Applies damage to a structural cell. `amount` is the RAW incoming
@@ -705,37 +766,42 @@ func load_damage_state(data: Dictionary) -> void:
 func damage_box(id: int, amount: float) -> Dictionary:
 	if _destroyed.has(id) or amount <= 0.0:
 		return {}
-	for spec in _specs:
-		if int(spec["id"]) == id:
-			var material: StringName = spec["material"]
-			if material == &"":
-				return {}   # indestructible plain structural box
-			# Accumulate RAW damage; the strength ladder lives only in
-			# cell_integrity(), so concrete/wood/steel differ by their
-			# thresholds instead of a double-applied divisor.
-			var total := float(_cell_damage.get(id, 0.0)) + amount
-			_cell_damage[id] = total
-			var integ := cell_integrity(spec["size"], material)
-			if total >= integ:
-				var info := destroy_box(id)
-				info["shattered"] = true
-				return info
-			# Cracked-glass visual feedback only.
-			if material == &"glass" and not _cracked.has(id) \
-					and total >= integ * 0.4:
-				_cracked[id] = true
-				var info2: Dictionary = spec.duplicate()
-				info2["cracked"] = true
-				return info2
-			return {}
-	return {}
+	if id <= 0 or id > _specs.size():
+		return {}
+	var spec: Dictionary = _specs[id - 1]
+	var material: StringName = spec["material"]
+	if material == &"":
+		return {}   # indestructible plain structural box
+	# Accumulate RAW damage; the strength ladder lives only in
+	# cell_integrity(), so concrete/wood/steel differ by their
+	# thresholds instead of a double-applied divisor.
+	var total := float(_cell_damage.get(id, 0.0)) + amount
+	_cell_damage[id] = total
+	var integ := cell_integrity(spec["size"], material)
+	if total >= integ:
+		var info := destroy_box(id)
+		info["shattered"] = true
+		return info
+	# Cracked-glass visual feedback only.
+	if material == &"glass" and not _cracked.has(id) \
+			and total >= integ * 0.4:
+		_cracked[id] = true
+		_dirty_layers[_layer_key(spec)] = true
+		_prepared_layers.clear()
+		var info2: Dictionary = spec.duplicate()
+		info2["cracked"] = true
+		return info2
+	return {"damaged": true}
 
 
-## Re-bakes EVERY layer mesh from live (non-destroyed) specs. Deferred by
+
+## Re-bakes only damaged material/facade layers from live specs. Deferred by
 ## the caller so several boxes destroyed in one frame cost ONE rebuild.
 ## Also removes destroyed CollisionShape3D nodes from the scene tree.
 func refresh_meshes() -> void:
 	if _parent == null or not is_instance_valid(_parent):
+		return
+	if _dirty_layers.is_empty():
 		return
 	# Clean up destroyed collision shapes so they don't accumulate.
 	for id: int in _destroyed:
@@ -744,8 +810,10 @@ func refresh_meshes() -> void:
 			if is_instance_valid(shape_node):
 				shape_node.queue_free()
 			_shape_nodes.erase(id)
-	var groups := _build_layers()
+	var groups := _build_layers(_dirty_layers)
 	for key: String in layer_nodes.keys():
+		if not _dirty_layers.has(key):
+			continue
 		var mi: MeshInstance3D = layer_nodes[key]
 		if not is_instance_valid(mi):
 			continue
@@ -755,13 +823,24 @@ func refresh_meshes() -> void:
 			mi.queue_free()   # every box in this layer was destroyed
 			layer_nodes.erase(key)
 
+	_dirty_layers.clear()
 
 # --- Geometry generation -----------------------------------------------------
 
 ## Groups live specs into vertex buffers, split by reveal LAYER (street,
 ## per-building storeys, per-building roof dressing). Glass gets its own
 ## surface per layer for transparency.
-func _build_layers() -> Dictionary:
+## Pure packed-array work, called by the chunk's exclusive worker before
+## handoff. Scene objects and rendering/physics resources stay main-thread.
+func prepare_mesh_data() -> void:
+	_prepared_layers = _build_layers()
+
+
+func _layer_key(spec: Dictionary) -> String:
+	return String(spec["layer"]) + ("|g" if spec["material"] == &"glass" else ("|r" if spec["roof"] else ""))
+
+
+func _build_layers(only: Dictionary = {}) -> Dictionary:
 	var groups := {}
 	for spec in _specs:
 		if _destroyed.has(spec["id"]):
@@ -769,26 +848,22 @@ func _build_layers() -> Dictionary:
 		# Composite key: building/floor tag + separate bucket for roof
 		# dressing so legacy roof hiding keeps working within a tag.
 		# Glass gets its own bucket ("|g") so it can use a transparent material.
-		var key: String = spec["layer"]
-		key += "|g" if spec["material"] == &"glass" \
-				else ("|r" if spec["roof"] else "")
-		var buf: Dictionary = groups.get_or_add(key, {
-			"color": spec["color"],
-			"verts": PackedVector3Array(),
-			"normals": PackedVector3Array(),
-			"colors": PackedColorArray(),
-			"idx": PackedInt32Array(),
-		})
+		var key := _layer_key(spec)
+		if not only.is_empty() and not only.has(key):
+			continue
+		if not groups.has(key):
+			groups[key] = {"color": spec["color"], "verts": PackedVector3Array(),
+				"normals": PackedVector3Array(), "colors": PackedColorArray(), "idx": PackedInt32Array()}
+		var buf: Dictionary = groups[key]
 		_emit_box(buf, spec)
 	for polygon: Dictionary in _polygon_specs:
 		var polygon_key: String = String(polygon.get("layer", ""))
-		var polygon_buf: Dictionary = groups.get_or_add(polygon_key, {
-			"color": polygon.get("color", Color.WHITE),
-			"verts": PackedVector3Array(),
-			"normals": PackedVector3Array(),
-			"colors": PackedColorArray(),
-			"idx": PackedInt32Array(),
-		})
+		if not only.is_empty() and not only.has(polygon_key):
+			continue
+		if not groups.has(polygon_key):
+			groups[polygon_key] = {"color": polygon.get("color", Color.WHITE), "verts": PackedVector3Array(),
+				"normals": PackedVector3Array(), "colors": PackedColorArray(), "idx": PackedInt32Array()}
+		var polygon_buf: Dictionary = groups[polygon_key]
 		_emit_polygon(polygon_buf, polygon)
 	return groups
 
@@ -802,9 +877,11 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 	var colors: PackedColorArray = buf["colors"]
 	var base := verts.size()
 	var y: float = float(polygon.get("y", 0.0))
+	var heights: PackedFloat32Array = polygon.get("heights", PackedFloat32Array())
 	var col: Color = polygon.get("color", Color.WHITE) as Color
-	for p: Vector2 in points:
-		verts.append(Vector3(p.x, y, p.y))
+	for point_i in points.size():
+		var p := points[point_i]
+		verts.append(Vector3(p.x, heights[point_i] if heights.size() == points.size() else y, p.y))
 		normals.append(Vector3.UP)
 		colors.append(col)
 	# NOTE: never `(buf["verts"] as PackedVector3Array).append(...)` — the
@@ -817,9 +894,10 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 		var ta: int = tris[ti]
 		var tb: int = tris[ti + 1]
 		var tc: int = tris[ti + 2]
-		# XZ points are CCW in plan space; reverse indices for +Y front faces.
+		# CCW XY triangles become clockwise when viewed from above in XZ.
+		# Godot uses clockwise front faces; reversing here hides ground paving.
 		buf["idx"].append_array(PackedInt32Array([
-			base + ta, base + tc, base + tb,
+			base + ta, base + tb, base + tc,
 		]))
 
 
@@ -892,24 +970,37 @@ func _mesh_from(groups: Dictionary) -> ArrayMesh:
 		var surf_idx := mesh.get_surface_count() - 1
 		if key.ends_with("|g"):
 			mesh.surface_set_material(surf_idx, _glass_material())
+		elif key == "street_setts" or key == "street_pavement":
+			if not _paving_materials.has(key):
+				var paving := ShaderMaterial.new()
+				paving.shader = preload("res://world/streaming/urban_paving.gdshader")
+				paving.set_shader_parameter("stone_size", Vector2(0.16, 0.16) if key == "street_pavement" else Vector2(0.32, 0.22))
+				_paving_materials[key] = paving
+			mesh.surface_set_material(surf_idx, _paving_materials[key])
 		else:
 			mesh.surface_set_material(surf_idx, _shared_material())
 	return mesh
 
 
 static func _shared_material() -> StandardMaterial3D:
+	if _opaque_material != null:
+		return _opaque_material
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 1.0
 	mat.metallic = 0.0
+	_opaque_material = mat
 	return mat
 
 
 static func _glass_material() -> StandardMaterial3D:
+	if _transparent_material != null:
+		return _transparent_material
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.roughness = 0.1
 	mat.metallic = 0.0
+	_transparent_material = mat
 	return mat

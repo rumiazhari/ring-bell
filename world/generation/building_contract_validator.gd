@@ -333,7 +333,9 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 			for o in opens:
 				var oc: float = float(o["c"])
 				var wp := BuildingBuilder._side_point(side, w, d, oc)
-				var y0 := f * fh
+				# Local normalization removes yaw only; emitted boxes retain the
+				# building's vertical datum, including a raised foundation.
+				var y0 := ground + f * fh
 				# _side_point returns BUILDING-LOCAL coords. Keep that point
 				# in the local frame used by _building_specs_local(); unlike a
 				# door manifest, it has not been rotated into world space.

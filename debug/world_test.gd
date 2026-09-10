@@ -5757,8 +5757,8 @@ func _test_society_plan() -> bool:
 	if workers_a.is_empty():
 		print("[CityTest] society: no workers generated for seed %d (expected at least 1)" % seed0)
 		return false
-	if WorldSeed.GENERATOR_VERSION != 2:
-		print("[CityTest] society: GENERATOR_VERSION !=2 is %d" % WorldSeed.GENERATOR_VERSION)
+	if WorldSeed.GENERATOR_VERSION != 3:
+		print("[CityTest] society: GENERATOR_VERSION !=3 is %d" % WorldSeed.GENERATOR_VERSION)
 		return false
 	var test_p: Vector2 = workers_a[0].get("home_pos", Vector2.ZERO) as Vector2
 	var nearest: Dictionary = wp_a.nearest_society_worker(test_p)

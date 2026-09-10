@@ -53,16 +53,30 @@ func _run() -> void:
 			await _wall_ray_blocks(mgr, player))
 
 	# --- 3. Zombies populate ACTIVE chunks ------------------------------------
-	ok = await _until(func() -> bool:
-		return get_tree().get_nodes_in_group(&"zombies").size() \
-				>= CitySpawner.MIN_PER_CHUNK, 30.0)
-	_check("city zombies spawned", ok,
-			"zombies=%d" % get_tree().get_nodes_in_group(&"zombies").size())
+	# DEV MODE (P2B): zombies default OFF (CitySpawner.dev_disable_zombies).
+	# With `--with-zombies`, expect live population; otherwise expect zero.
+	var _zombies_on := CitySpawner.zombies_enabled()
+	if _zombies_on:
+		ok = await _until(func() -> bool:
+			return get_tree().get_nodes_in_group(&"zombies").size() \
+					>= CitySpawner.MIN_PER_CHUNK, 30.0)
+		_check("city zombies spawned", ok,
+				"zombies=%d" % get_tree().get_nodes_in_group(&"zombies").size())
+	else:
+		await _wait(2.0)
+		_check("city zombies disabled in dev (expect 0)",
+				get_tree().get_nodes_in_group(&"zombies").is_empty(),
+				"zombies=%d" % get_tree().get_nodes_in_group(&"zombies").size())
 	var spawners := get_tree().get_nodes_in_group(&"city_spawner")
 	var spawner: CitySpawner = spawners[0] if not spawners.is_empty() else null
-	_check("city spawner tracks population",
-			spawner != null and spawner.live_total() > 0,
-			str(spawner.live_total()) if spawner != null else "no spawner")
+	if _zombies_on:
+		_check("city spawner tracks population",
+				spawner != null and spawner.live_total() > 0,
+				str(spawner.live_total()) if spawner != null else "no spawner")
+	else:
+		_check("city spawner tracks population (dev: expect 0)",
+				spawner != null and spawner.live_total() == 0,
+				str(spawner.live_total()) if spawner != null else "no spawner")
 
 	# --- 4. Doors are dynamic entities ---------------------------------------
 	var doors := get_tree().get_nodes_in_group(&"doors")
@@ -171,6 +185,14 @@ func _run() -> void:
 			await get_tree().physics_frame
 			door.call("close")
 		_check("door closes via API", closed_ok)
+	if OS.get_cmdline_user_args().has("--building-repair-focus"):
+		_check("stair probe reaches upper floor", await _stair_probe_reaches_floor(mgr))
+		var focused_rig := _camera_rig()
+		_check("camera rig found", focused_rig != null)
+		if focused_rig != null:
+			await _camera_sector_and_zoom(focused_rig, player, mgr)
+		_finish()
+		return
 
 	# --- 5. Deterministic ids survive unload/reload ---------------------------
 	var far := player.global_position + Vector3(320.0, 0, 96.0)
@@ -273,7 +295,8 @@ func _wall_ray_blocks(mgr: ChunkManager, player: Node3D) -> bool:
 	# real doorway and therefore correctly returned no wall hit.
 	var door_edge := int(spec.get("door_edge", -1))
 	var wall_edge := 0 if door_edge != 0 else 1
-	var wall_y := 0.45
+	var grounded := ChunkBuilder._grounded_spec(spec, mgr.world_plan)
+	var wall_y := float(grounded.get("building_ground_y", grounded.get("ground_y", 0.0))) + 0.45
 	var building_center := lr.get_center()
 	var yaw := float(spec.get("yaw", 0.0))
 	var local_point := Vector2.ZERO
@@ -364,7 +387,9 @@ func _stair_probe_reaches_floor(mgr: ChunkManager) -> bool:
 			zone.position.y + BuildingBuilder.LAND * 0.5)
 	var entry_plan := CityPlan._rotate_plan_point(footprint.get_center(), local_entry, yaw)
 	var local_direction := CityPlan._rotate_plan_vector(Vector2(0, 1), yaw)
-	var entry := Vector3(entry_plan.x, 0.4, entry_plan.y)
+	var grounded := ChunkBuilder._grounded_spec(target, mgr.world_plan)
+	var base_y := float(grounded.get("building_ground_y", grounded.get("ground_y", 0.0)))
+	var entry := Vector3(entry_plan.x, base_y + 0.4, entry_plan.y)
 
 	_probe = CharacterBody3D.new()
 	_probe.collision_layer = 0
@@ -393,8 +418,8 @@ func _stair_probe_reaches_floor(mgr: ChunkManager) -> bool:
 		if not _probe.is_on_floor():
 			_probe.velocity.y -= 18.0 * get_physics_process_delta_time()
 		_probe.move_and_slide()
-		if _probe.global_position.y >= fh * 0.85:
-			var reached: bool = _probe.global_position.y >= fh * 0.85
+		if _probe.global_position.y >= base_y + fh * 0.85:
+			var reached: bool = _probe.global_position.y >= base_y + fh * 0.85
 			_probe.queue_free()
 			_probe = null
 			return reached
@@ -468,7 +493,8 @@ func _camera_sector_and_zoom(rig: FollowCamera, player: Node3D,
 		return
 	var c_in: Vector2 = (spec_in["rect"] as Rect2).get_center()
 	var saved_pos: Vector3 = player.global_position
-	player.global_position = Vector3(c_in.x, 0.3, c_in.y)
+	var grounded := ChunkBuilder._grounded_spec(spec_in, mgr.world_plan)
+	player.global_position = Vector3(c_in.x, float(grounded.get("building_ground_y", grounded.get("ground_y", 0.0))) + 0.3, c_in.y)
 	var ok_enter := await _until(func() -> bool:
 		return bool(rig.is_interior()), 6.0)
 	var ok_in := await _until(func() -> bool:
@@ -481,7 +507,7 @@ func _camera_sector_and_zoom(rig: FollowCamera, player: Node3D,
 			"entered=%s presentation=%.2f" % [str(ok_enter), pres_in])
 	_check("interior keeps user zoom preference (~18 m)",
 			absf(user_kept - 18.0) < 0.01, "user=%.2f" % user_kept)
-	player.global_position = Vector3(saved_pos.x, 0.3, saved_pos.z)
+	player.global_position = saved_pos
 	var ok_out := await _until(func() -> bool:
 		return not bool(rig.is_interior()) \
 				and float(rig.get("_presentation_distance")) >= 17.5, 12.0)

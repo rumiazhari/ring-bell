@@ -228,19 +228,6 @@ static func _build_park(root: Node3D) -> void:
 
 
 static func _build_props(root: Node3D) -> void:
-	# Wrecked cars on the roads.
-	var cars := [
-		[Vector3(-4, 0.5, 6), Color(0.5, 0.2, 0.18)],
-		[Vector3(3.5, 0.5, -9), Color(0.2, 0.3, 0.45)],
-		[Vector3(14, 0.5, -2), Color(0.6, 0.6, 0.58)],
-		[Vector3(-9, 0.5, 20), Color(0.35, 0.35, 0.3)],
-	]
-	for i in cars.size():
-		var car: Array = cars[i]
-		add_box(root, "Car%d" % i, car[0], Vector3(2.0, 1.0, 4.2), car[1])
-		add_box(root, "CarRoof%d" % i, car[0] + Vector3(0, 0.85, 0),
-				Vector3(1.6, 0.7, 2.2), car[1].darkened(0.2))
-
 	# Street lamps with real lights (DayNightController toggles them at night).
 	for pos: Vector3 in [Vector3(5, 0, 5), Vector3(-5, 0, -5), Vector3(5, 0, -5), Vector3(-5, 0, 5)]:
 		add_box(root, "LampPost_%s_%s" % [pos.x, pos.z],

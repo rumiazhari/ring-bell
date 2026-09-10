@@ -543,8 +543,8 @@ func _run_all() -> void:
 		has_water_in_save = true
 	_check("save_state excludes water geometry", not has_water_in_save, save_str.substr(0, 200))
 
-	# GENERATOR_VERSION stays 2
-	_check("GENERATOR_VERSION stays 2", WorldSeed.GENERATOR_VERSION == 2, str(WorldSeed.GENERATOR_VERSION))
+	# GENERATOR_VERSION is 3 (urban revision)
+	_check("GENERATOR_VERSION is 3 (urban revision)", WorldSeed.GENERATOR_VERSION == 3, str(WorldSeed.GENERATOR_VERSION))
 	# WorldPlan pure: check that creating HydrologyPlan doesn't mutate CityPlan
 	var city_before := CityPlan.new()
 	var digest_before := _city_digest(city_before)

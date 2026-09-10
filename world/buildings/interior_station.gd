@@ -32,6 +32,9 @@ func _ready() -> void:
 		interactable.prompt = "Search" if not consumed else "Already searched"
 	interactable.interacted.connect(_on_interacted)
 	add_child(interactable)
+	if not bool(manifest.get("visual", true)):
+		_update_prompt()
+		return
 	# Visual marker: small box
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()

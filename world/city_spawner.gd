@@ -15,6 +15,19 @@ const MIN_PER_CHUNK := 2
 const MAX_PER_CHUNK := 8
 const SPAWN_Y := 0.2
 
+## DEV MODE (P2B dense-fabric construction): zombies are disabled by default
+## to remove combat distractions while the city is redesigned. Re-enable with
+## `--with-zombies`. No actor files are touched; all spawn sites gate here.
+static var dev_disable_zombies := true
+
+
+static func zombies_enabled() -> bool:
+	if OS.get_cmdline_user_args().has("--with-zombies"):
+		return true
+	if OS.get_cmdline_user_args().has("--no-zombies"):
+		return false
+	return not dev_disable_zombies
+
 var plan: CityPlan
 var manager: ChunkManager
 
@@ -41,6 +54,8 @@ func _on_chunk_unloaded(coord: Vector2i) -> void:
 
 
 func _spawn_for(coord: Vector2i) -> void:
+	if not CitySpawner.zombies_enabled():
+		return
 	if plan == null or manager == null or _live.has(coord):
 		return
 	# City ambient population belongs only to the WorldPlan-selected bounded

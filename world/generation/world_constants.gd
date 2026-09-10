@@ -86,13 +86,16 @@ const TRIB_UPSTREAM_JITTER_Z := 320.0
 # Meander phase seeded via unit_float("hydro_phi")
 # --- World-composition and realized-surface contract ---
 # WorldPlan is the only owner of the outdoor Y datum. CityPlan's historic
-# centre uses the flat terrace; the larger 300-930 m urban fabric is grounded
+# market approach uses a local terrace; the larger urban fabric is grounded
 # through WorldPlan's realized surface instead of creating a second terrain.
 const URBAN_INNER_M := 350.0
 const URBAN_OUTER_M := 600.0
 const URBAN_CITY_TERRACE_Y := 0.0
-# Organic city morphology bounds.  URBAN_INNER_M remains the flat historic
-# terrace; these values describe the larger city fabric and its stream ring.
+## Only the market approach retains a level civic datum. The rest of the
+## historic district follows the basin through continuous grading.
+const CITY_MARKET_TERRACE_RADIUS_M := 96.0
+# Organic city morphology bounds. URBAN_INNER_M remains the land-use and
+# rural-exclusion boundary, independent of the smaller civic grading pad.
 const CITY_HISTORIC_RADIUS_M := 300.0
 const CITY_DENSE_RADIUS_M := 820.0
 const CITY_BLOCK_RADIUS_M := 930.0
