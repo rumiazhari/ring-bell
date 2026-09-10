@@ -526,11 +526,13 @@ func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
 	var coord := WorldSeed.chunk_coord(
 			player.global_position.x, player.global_position.z)
 	if not mgr.is_resident(coord):
+		print("[CityRuntime] persistence: chunk %s not resident" % str(coord))
 		return false
 	var rec: Dictionary = mgr._chunks[coord]
 	var batcher: MeshBatcher = rec["batcher"]
 	var static_body: Node = rec["static"]
 	if static_body == null or not is_instance_valid(static_body):
+		print("[CityRuntime] persistence: no static body in chunk %s" % str(coord))
 		return false
 	var by_vox := {}
 	for sh in (static_body as Node).get_children():
@@ -562,7 +564,9 @@ func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
 			elif child is DestructibleProp:
 				props_before += 1
 	# Destroy through the runtime API.
-	if mgr.destroy_box(target_shape).is_empty():
+	var destroyed := mgr.destroy_box(target_shape)
+	if destroyed.is_empty():
+		print("[CityRuntime] persistence: destroy_box returned empty for cell %s" % target_key)
 		return false
 	# Leave far beyond the hysteresis ring so this chunk truly unloads.
 	var away := player.global_position + Vector3(480.0, 0, 0)

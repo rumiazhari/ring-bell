@@ -3592,6 +3592,47 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		b.add_visual_box(pos + Vector3(0, 1.0, 0), Vector3(0.1, 1.9, 0.1), FURN_WALNUT)
 		b.add_visual_box(pos + Vector3(0, 1.62, 0), Vector3(0.55, 0.07, 0.55), Color("aa8750"))
 		return
+	if kind == "wallclock":
+		# Round dial in a dark walnut case, japanned bezel, japanned hands.
+		b.add_visual_box(pos + Vector3(0, 1.55, 0), Vector3(size.x, size.y, 0.1), FURN_WALNUT)
+		b.add_visual_box(pos + Vector3(0, 1.55, 0.055), Vector3(0.44, 0.44, 0.02), Color("ece2c8"))
+		b.add_visual_box(pos + Vector3(0, 1.55, 0.075), Vector3(0.03, 0.18, 0.01), Color("26261f"))
+		b.add_visual_box(pos + Vector3(0, 1.55, 0.075), Vector3(0.16, 0.03, 0.01), Color("26261f"))
+		b.add_visual_box(pos + Vector3(0, 1.55, 0.08), Vector3(0.06, 0.06, 0.012), Color("aa8750"))
+		return
+	if kind == "print":
+		# Gilt-framed etching: thin brass frame around a paper ground.
+		b.add_visual_box(pos + Vector3(0, 1.6, 0.045), Vector3(size.x, size.y, 0.03), Color("aa8750"))
+		b.add_visual_box(pos + Vector3(0, 1.6, 0.07), Vector3(size.x - 0.12, size.y - 0.12, 0.02), Color("e6dcc0"))
+		b.add_visual_box(pos + Vector3(0, 1.6, 0.09), Vector3(size.x - 0.3, size.y - 0.45, 0.01), Color("6a6a72"))
+		return
+	if kind == "cabinet":
+		# Ledger/file cabinet: walnut carcass, brass drawer pulls, stone top.
+		b.add_destructible_box(pos + Vector3(0, size.y * 0.35, 0), Vector3(size.x, size.y * 0.7, size.z), FURN_WALNUT, &"wood", true, tag, fi)
+		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x, 0.08, size.z), Color("efe6d2"))
+		for dr in 4:
+			b.add_visual_box(pos + Vector3(-size.x * 0.28, size.y * 0.18 + 0.36 * dr, size.z * 0.52), Vector3(0.2, 0.05, 0.03), Color("aa8750"))
+		return
+	if kind == "umbrella":
+		# Umbrella stand: riveted copper cylinder with folded umbrellas.
+		b.add_visual_box(pos + Vector3(0, 0.3, 0), Vector3(0.35, 0.6, 0.35), Color("8a5b33"))
+		for u in 3:
+			var ux := (u - 1) * 0.08
+			b.add_visual_box(pos + Vector3(ux, 0.45, 0.02 * (u - 1)), Vector3(0.05, 0.75, 0.05), Color("3f4a3c") if u != 1 else Color("55403a"))
+		b.add_visual_box(pos + Vector3(0, 0.62, 0), Vector3(0.37, 0.08, 0.37), Color("aa8750"))
+		return
+	if kind == "gauge":
+		# Brass-cased pressure gauge with dial face on a short pipe stub.
+		b.add_visual_box(pos + Vector3(0, 1.15, 0), Vector3(0.08, 1.1, 0.08), Color("8a5b33"))
+		b.add_visual_box(pos + Vector3(0, 1.75, 0.1), Vector3(0.42, 0.5, 0.16), Color("aa8750"))
+		b.add_visual_box(pos + Vector3(0, 1.75, 0.19), Vector3(0.3, 0.36, 0.03), Color("ece2c8"))
+		b.add_visual_box(pos + Vector3(0, 1.75, 0.21), Vector3(0.02, 0.24, 0.012), Color("26261f"))
+		return
+	if kind == "crate":
+		# Pine shipping crate with stencilled band, stackable look.
+		b.add_destructible_box(pos + Vector3(0, size.y * 0.4, 0), Vector3(size.x, size.y * 0.8, size.z), Color("a9743e"), &"wood", true, tag, fi)
+		b.add_visual_box(pos + Vector3(0, size.y * 0.4, size.z * 0.5), Vector3(size.x, 0.09, 0.03), Color("8a5b33"))
+		return
 	if kind == "rug":
 		# Edge-worn Axminster: deep madder red field, ochre border.
 		var ry := size.y * 0.5

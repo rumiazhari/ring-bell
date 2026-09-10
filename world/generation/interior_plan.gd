@@ -579,14 +579,14 @@ const ROOM_FURNITURE := {
 ## hospitals get waiting benches (no ledgers). All props are small-footprint
 ## Victorian dressing rendered visual-only by BuildingBuilder.
 const LOBBY_PROGRAMS := {
-	"retail": ["counter", "shelf", "counter", "fern", "gaslamp", "gaslamp", "rug"],
-	"hospital": ["bench", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug"],
-	"police": ["counter", "bench", "documents", "coatstand", "gaslamp", "gaslamp", "rug"],
-	"government": ["counter", "bench", "documents", "fern", "coatstand", "gaslamp", "rug"],
-	"office": ["counter", "documents", "bench", "fern", "gaslamp", "gaslamp", "rug"],
-	"workshop": ["workbench", "machine", "shelf", "gaslamp", "gaslamp", "rug"],
+	"retail": ["counter", "shelf", "counter", "fern", "gaslamp", "gaslamp", "rug", "crate", "gauge", "wallclock"],
+	"hospital": ["bench", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print", "print"],
+	"police": ["counter", "bench", "documents", "coatstand", "gaslamp", "gaslamp", "rug", "cabinet", "wallclock", "umbrella"],
+	"government": ["counter", "bench", "documents", "fern", "coatstand", "gaslamp", "rug", "wallclock", "print", "print"],
+	"office": ["counter", "documents", "bench", "fern", "gaslamp", "gaslamp", "rug", "cabinet", "wallclock", "gauge"],
+	"workshop": ["workbench", "machine", "shelf", "gaslamp", "gaslamp", "rug", "crate", "crate", "gauge", "gauge"],
 }
-const LOBBY_PROGRAM_DEFAULT := ["counter", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug"]
+const LOBBY_PROGRAM_DEFAULT := ["counter", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print"]
 
 const FURNITURE_SIZES := {
 	"bed": Vector3(1.45, 0.65, 2.1), "table": Vector3(1.25, 0.8, 0.88),
@@ -599,6 +599,11 @@ const FURNITURE_SIZES := {
 	# Gaslight-era dressing props: small footprints so lobby corners hold them.
 	"gaslamp": Vector3(0.45, 2.4, 0.45), "fern": Vector3(0.7, 1.2, 0.7),
 	"coatstand": Vector3(0.4, 1.9, 0.4), "rug": Vector3(2.2, 0.04, 1.5),
+	# Round-3 period clutter: wall clocks, gilt-framed prints, ledger/file
+	# cabinets, umbrella stand, potted palm variants, brass mechanism case.
+	"wallclock": Vector3(0.55, 0.85, 0.12), "print": Vector3(0.75, 0.95, 0.08),
+	"cabinet": Vector3(1.1, 2.05, 0.5), "umbrella": Vector3(0.35, 0.6, 0.35),
+	"gauge": Vector3(0.5, 0.6, 0.2), "crate": Vector3(0.9, 0.75, 0.9),
 }
 
 static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
@@ -665,8 +670,14 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 			for corner in candidates:
 				var occupied := Rect2(corner, extent)
 				var clear := true
+				# Visitor clearance: taller props (ferns, coat stands, cabinets,
+				# lamps) keep a wider gap from neighbours so nothing reads as
+				# clipping; rugs keep 0.5 m off furniture for the border.
+				var halo := 0.45 if kind in ["fern", "coatstand", "gaslamp", "cabinet", "umbrella", "crate", "gauge"] else 0.12
+				if kind == "rug":
+					halo = 0.5
 				for obstacle: Rect2 in blocked:
-					if occupied.grow(0.12).intersects(obstacle):
+					if occupied.grow(halo).intersects(obstacle):
 						clear = false
 						break
 				if not clear:

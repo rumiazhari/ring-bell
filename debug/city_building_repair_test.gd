@@ -23,8 +23,11 @@ func _run() -> void:
 			check("city generates " + use, uses.has(use))
 		print("[BuildingRepair] city buildings=%d uses=%s" % [buildings.size(), str(uses.keys())])
 	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-65, -30, 0)
-	light.light_energy = 1.5
+	# Warming pass (round-3): tungsten-ish sun + softer ambient so walnut/
+	# ochre/brass hues actually read (raw white ambient washed them out).
+	light.rotation_degrees = Vector3(-58, -34, 0)
+	light.light_energy = 1.1
+	light.light_color = Color(1.0, 0.93, 0.82)
 	add_child(light)
 	var camera := Camera3D.new()
 	add_child(camera)
@@ -36,8 +39,10 @@ func _run() -> void:
 	environment.environment.background_mode = Environment.BG_COLOR
 	environment.environment.background_color = Color("85867b")
 	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.environment.ambient_light_color = Color.WHITE
-	environment.environment.ambient_light_energy = 0.65
+	# Warm ambient to match the tungsten sun (washed-white ambient is why
+	# round-2 wainscot read as white).
+	environment.environment.ambient_light_color = Color(1.0, 0.94, 0.86)
+	environment.environment.ambient_light_energy = 0.45
 	add_child(environment)
 	for use: String in InteriorPlan.ROOM_PROGRAMS:
 		for edge in 4:
@@ -101,6 +106,14 @@ func _run() -> void:
 			var dir := "res://captures/building-repair"
 			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 			get_viewport().get_texture().get_image().save_png(dir + "/" + use + ".png")
+			# Eye-level interior view so wall dressing (wainscot/ochre/gaslamp)
+			# is judged as the player sees it, not from the top-down audit cam.
+			camera.position = Vector3(1.2, 1.65, 18.6)
+			camera.look_at(Vector3(13.0, 1.5, 4.0))
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(dir + "/" + use + "_eye.png")
+			camera.position = Vector3(10, 25, 21)
+			camera.look_at(Vector3(8, 0, 10))
 		holder.queue_free()
 		await get_tree().process_frame
 	# Ground datum and rotated footprints.
