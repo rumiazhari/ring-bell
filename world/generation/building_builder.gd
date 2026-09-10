@@ -3359,6 +3359,9 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 	for fl in manifest.get("floors", []):
 		var fi: int = int(fl.get("floor_i", 0))
 		var parts: Array = fl.get("partitions", [])
+		# Victorian dressing: lobby ground floors (per InteriorPlan topology)
+		# get wainscot + ochre plaster; other interior walls stay plain.
+		var dressed: bool = fi == 0 and str(fl.get("topology", "")) == "lobby"
 		b.push_layer(tag + ":f%d" % fi)
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
 		var corridor := Rect2()
@@ -3409,9 +3412,9 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var bot_h := maxf(0.0, py1 - ox1)
 				var cx := px + pw * 0.5
 				if top_h > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col, dressed)
 				if bot_h > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col, dressed)
 				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
@@ -3429,20 +3432,48 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var right_w := maxf(0.0, px1 - ox1b)
 				var cy := py + ph2 * 0.5
 				if left_w > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col, dressed)
 				if right_w > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col)
+					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col, dressed)
 				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h2 > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
 		for wall: Rect2 in fl.get("solid_walls", []):
 			var center := wall.get_center() - footprint.position
-			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL)
+			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
 		for item: Dictionary in fl.get("furniture", []):
 			var pos: Vector3 = item["position"]
 			pos.x -= footprint.position.x
 			pos.z -= footprint.position.y
 			_emit_room_furniture(b, off + pos, item, tag, fi)
+		if dressed:
+			# Victorian-Prague dressed lobby (visual only, no collider changes):
+			# 0.9 m parquet boards alternate walnut/oak with a plank-gap gap
+			# tone difference; copper steam riser in the toilet corner with a
+			# brass junction collar; ochre ceiling beam with a warm gas lamp.
+			var w0 := footprint.size.x
+			var d0 := footprint.size.y
+			var strip_w := 0.9
+			var nx := int(ceil(w0 / strip_w))
+			for si in nx:
+				var sx := strip_w * (si + 0.5)
+				var col_p := Color("6e451f") if si % 2 == 0 else Color("8f5c28")
+				b.add_visual_box(off + Vector3(minf(sx, w0 - strip_w * 0.5), 0.02, d0 * 0.5), Vector3(strip_w - 0.03, 0.025, d0), col_p)
+			b.add_visual_box(off + Vector3(0.25, fh * 0.5, d0 - 0.25), Vector3(0.13, fh, 0.13), Color("9a5b2a"))
+			b.add_visual_box(off + Vector3(0.25, fh * 0.78, d0 - 0.25), Vector3(0.3, 0.16, 0.3), Color("c8913c"))
+			b.add_visual_box(off + Vector3(w0 * 0.5, fh - 0.14, d0 * 0.5), Vector3(w0 * 0.6, 0.16, 0.26), Color("8a5a28"))
+			b.add_visual_box(off + Vector3(w0 * 0.5, fh - 0.55, d0 * 0.5), Vector3(0.16, 0.14, 0.16), Color("ffd27a"))
+			b.add_visual_box(off + Vector3(w0 * 0.5, fh - 0.66, d0 * 0.5), Vector3(0.08, 0.34, 0.08), Color("6b4b26"))
+			# Facade lining: walnut panelling + plaster band along the four
+			# inner faces (facade walls stay untextured outside; the interior
+			# reads dressed from inside the lobby).
+			var lin_h := 1.25
+			var lin_t := 0.1
+			var WALL_INSET := 0.18
+			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
+			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, d0 - WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
+			b.add_visual_box(off + Vector3(WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
+			b.add_visual_box(off + Vector3(w0 - WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
 
 		b.pop_layer()
 
@@ -3511,6 +3542,18 @@ static func interior_partition_visible(part: Dictionary, spec: Dictionary, floor
 	return true
 
 
+static func _f_gaslamp(b: MeshBatcher, pos: Vector3, tag: String, fi: int) -> void:
+	# Cast-iron newel post, copper stalk, glass lantern housing, brass finial
+	# and a warm lamp head so gaslight reads at player height.
+	b.add_visual_box(pos + Vector3(0, 0.08, 0), Vector3(0.45, 0.16, 0.45), Color("2f2f33"))
+	b.add_visual_box(pos + Vector3(0, 1.15, 0), Vector3(0.09, 2.3, 0.09), Color("383b40"))
+	b.add_visual_box(pos + Vector3(0, 1.35, 0), Vector3(0.16, 0.1, 0.16), Color("8a6d3f"))
+	b.add_visual_box(pos + Vector3(0, 1.98, 0), Vector3(0.26, 0.36, 0.26), Color("cfd6d2"))
+	b.add_visual_box(pos + Vector3(0, 2.22, 0), Vector3(0.3, 0.08, 0.3), Color("6b4b26"))
+	b.add_visual_box(pos + Vector3(0, 2.4, 0), Vector3(0.1, 0.24, 0.1), Color("aa8750"))
+	b.add_visual_box(pos + Vector3(0, 2.02, 0), Vector3(0.12, 0.1, 0.12), Color("ffd27a"))
+
+
 static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary, tag: String, fi: int) -> void:
 	var kind: String = item["kind"]
 	var size: Vector3 = item["size"]
@@ -3528,6 +3571,36 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		return
 	var metal := kind in ["machine", "stove", "instruments", "examination"]
 	var ceramic := kind in ["sink", "toilet"]
+	# ---- Victorian gaslight-era dressing props (visual-only, no collider) ----
+	if kind == "gaslamp":
+		_f_gaslamp(b, pos, tag, fi)
+		return
+	if kind == "fern":
+		# Palm/fern in riveted brass planter - Victorian parlour staple.
+		var planter: Color = Color("8a6d3f")
+		b.add_visual_box(pos + Vector3(0, 0.25, 0), Vector3(0.6, 0.5, 0.6), planter)
+		for frond in 4:
+			var fx := (frond % 2) * 0.24 - 0.12
+			var fz := (frond / 2) * 0.24 - 0.12
+			b.add_visual_box(pos + Vector3(fx, 0.95, fz), Vector3(0.1, 0.95, 0.1) if frond % 2 == 0 else Vector3(0.12, 1.1, 0.12), Color("4e7043"))
+		b.add_visual_box(pos + Vector3(0, 1.75, 0), Vector3(0.85, 0.09, 0.4), Color("5b7a4f"))
+		b.add_visual_box(pos + Vector3(0, 1.75, 0), Vector3(0.4, 0.09, 0.85), Color("527346"))
+		return
+	if kind == "coatstand":
+		# Turned walnut post on a cast-iron tripod base with brass peg ring.
+		b.add_visual_box(pos + Vector3(0, 0.1, 0), Vector3(0.42, 0.2, 0.42), Color("33333a"))
+		b.add_visual_box(pos + Vector3(0, 1.0, 0), Vector3(0.1, 1.9, 0.1), FURN_WALNUT)
+		b.add_visual_box(pos + Vector3(0, 1.62, 0), Vector3(0.55, 0.07, 0.55), Color("aa8750"))
+		return
+	if kind == "rug":
+		# Edge-worn Axminster: deep madder red field, ochre border.
+		var ry := size.y * 0.5
+		b.add_visual_box(pos + Vector3(0, ry, 0), Vector3(size.x, 0.03, size.z), Color("7a2e2b"))
+		b.add_visual_box(pos + Vector3(0, ry + 0.012, 0), Vector3(size.x, 0.02, 0.14), Color("b58a3c"))
+		b.add_visual_box(pos + Vector3(0, ry + 0.012, 0), Vector3(0.14, 0.02, size.z), Color("b58a3c"))
+		b.add_visual_box(pos + Vector3(0, ry + 0.012, 0), Vector3(size.x, 0.02, 0.14), Color("b58a3c"))
+		b.add_visual_box(pos + Vector3(0, ry + 0.012, 0), Vector3(0.14, 0.02, size.z), Color("b58a3c"))
+		return
 	var col := Color("353b38") if metal else (Color("ded4be") if ceramic else FURN_WALNUT)
 	b.add_destructible_box(pos + Vector3(0, size.y * 0.35, 0), Vector3(size.x, size.y * 0.7, size.z), col, &"steel" if metal else &"wood", true, tag, fi)
 	if kind in ["sofa", "bench"]:
@@ -3545,14 +3618,29 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 			b.add_visual_box(pos + Vector3(0.25, size.y * 0.87, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
 
 
-static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color) -> void:
+static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color, dressed: bool = false) -> void:
 	var bottom := pos.y - size.y * 0.5
 	var top := pos.y + size.y * 0.5
 	var split := ground + fi * fh + 1.05
 	if bottom < split:
 		var lower_h := minf(top, split) - bottom
+		var lower_col := col
+		# Victorian wainscot: walnut lower band + ochre plaster above (dressed
+		# surfaces only), with an oak cap rail at the 1.05 m picture rail line.
+		if dressed:
+			lower_col = Color("4b361f")
+			var plaster := Color("c4965a")
+			var upper_bottom := maxf(bottom, split)
+			var upper_h := top - split
+			if upper_h > 0.02:
+				b.add_structural_box(Vector3(pos.x, split + upper_h * 0.5, pos.z), Vector3(size.x, upper_h, size.z), plaster)
+			b.add_structural_box(Vector3(pos.x, bottom + lower_h * 0.5, pos.z), Vector3(size.x, lower_h, size.z), lower_col)
+			# Dark skirting at the base + oak cap rail at the picture line.
+			b.add_visual_box(Vector3(pos.x, bottom + 0.07, pos.z), Vector3(size.x + 0.05, 0.14, size.z + 0.05), Color("3a2a1a"))
+			b.add_visual_box(Vector3(pos.x, split + 0.025, pos.z), Vector3(size.x + 0.06, 0.06, size.z + 0.06), Color("5d452c"))
+			return
 		b.add_structural_box(Vector3(pos.x, bottom + lower_h * 0.5, pos.z), Vector3(size.x, lower_h, size.z), col)
-	if top > split:
+	if top > split and not (dressed and bottom < split):
 		var upper_bottom := maxf(bottom, split)
 		var upper_h := top - upper_bottom
 		b.push_layer(tag + ":f%d:cutaway" % fi)

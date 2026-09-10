@@ -137,7 +137,10 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 		# Leaf span equals the aperture span along the wall.
 		tdm["width"] = topen.size.x if horiz_sep else topen.size.y
 		doors.append(tdm)
-		return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors, "stations": [], "corridor_layout": true, "solid_walls": [], "topology": "lobby"}
+		# Lobby dressing: per-use Victorian program replaces the generic hall
+		# furniture list; keep the room id in sync so blocked/sweep keepouts hit.
+		return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors, "stations": [], "corridor_layout": true, "solid_walls": [], "topology": "lobby",
+			"lobby_use": use_val}
 	# ---- Upper floors: three depth profiles (see comment below) + room row
 	# with a door on every hall edge. Pantry dropped from generic middle rooms.
 	var kinds: Array = ROOM_PROGRAMS[use_val]
@@ -570,6 +573,21 @@ const ROOM_FURNITURE := {
 	"council": ["documents", "bench", "shelf"], "entry": ["bench"],
 	"lobby": ["bench", "documents", "shelf"],
 }
+
+## Lobby house programs vary by building use (Victorian taste): civic lobbies
+## get reception + waiting benches + gaslight; shopfronts get display counters;
+## hospitals get waiting benches (no ledgers). All props are small-footprint
+## Victorian dressing rendered visual-only by BuildingBuilder.
+const LOBBY_PROGRAMS := {
+	"retail": ["counter", "shelf", "counter", "fern", "gaslamp", "gaslamp", "rug"],
+	"hospital": ["bench", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug"],
+	"police": ["counter", "bench", "documents", "coatstand", "gaslamp", "gaslamp", "rug"],
+	"government": ["counter", "bench", "documents", "fern", "coatstand", "gaslamp", "rug"],
+	"office": ["counter", "documents", "bench", "fern", "gaslamp", "gaslamp", "rug"],
+	"workshop": ["workbench", "machine", "shelf", "gaslamp", "gaslamp", "rug"],
+}
+const LOBBY_PROGRAM_DEFAULT := ["counter", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug"]
+
 const FURNITURE_SIZES := {
 	"bed": Vector3(1.45, 0.65, 2.1), "table": Vector3(1.25, 0.8, 0.88),
 	"documents": Vector3(1.25, 0.9, 0.88), "shelf": Vector3(1.6, 2.0, 0.34),
@@ -578,6 +596,9 @@ const FURNITURE_SIZES := {
 	"sofa": Vector3(1.7, 0.85, 0.75), "bench": Vector3(1.5, 0.7, 0.55),
 	"machine": Vector3(1.6, 1.6, 1.0), "workbench": Vector3(1.6, 1.0, 0.8),
 	"examination": Vector3(0.9, 0.9, 1.9), "instruments": Vector3(1.2, 1.0, 0.65),
+	# Gaslight-era dressing props: small footprints so lobby corners hold them.
+	"gaslamp": Vector3(0.45, 2.4, 0.45), "fern": Vector3(0.7, 1.2, 0.7),
+	"coatstand": Vector3(0.4, 1.9, 0.4), "rug": Vector3(2.2, 0.04, 1.5),
 }
 
 static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
@@ -609,19 +630,39 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 	for room: Dictionary in fl["rooms"]:
 		var bounds: Rect2 = (room["rect"] as Rect2).grow(-0.22)
 		var rkind := String(room["kind"])
-		# Program lookup: explicit room programs first, fallbacks for new
-		# variation kinds; kinds without a program (hall/lobby stay unfurnished
-		# via empty lists) simply skip.
-		var program: Array = ROOM_FURNITURE.get(rkind, ROOM_PROGRAM_FALLBACKS.get(rkind, []))
+		# Program lookup: lobby ground floors use the per-use Victorian dressing
+		# program; other kinds use room programs then fallbacks.
+		var program: Array
+		if rkind == "lobby":
+			program = LOBBY_PROGRAMS.get(String(fl.get("lobby_use", "residential")), LOBBY_PROGRAM_DEFAULT)
+		else:
+			program = ROOM_FURNITURE.get(rkind, ROOM_PROGRAM_FALLBACKS.get(rkind, []))
 		if program.is_empty():
 			continue
+		var large := bounds.size.x > 6.0 and bounds.size.y > 6.0
 		for kind: String in program:
 			var size: Vector3 = FURNITURE_SIZES[kind]
 			var extent := Vector2(size.x, size.z)
 			if bounds.size.x < extent.x or bounds.size.y < extent.y:
 				continue
-			var candidates := [bounds.position, Vector2(bounds.end.x - extent.x, bounds.position.y), bounds.end - extent, Vector2(bounds.position.x, bounds.end.y - extent.y)]
-			for corner: Vector2 in candidates:
+			# Candidate spots: four corners first, then a 2.2 m interior
+			# lattice for large rooms so lobby dressing is not corner-only.
+			var candidates: Array[Vector2] = [
+				bounds.position,
+				Vector2(bounds.end.x - extent.x, bounds.position.y),
+				bounds.end - extent,
+				Vector2(bounds.position.x, bounds.end.y - extent.y),
+			]
+			if large:
+				var step := 2.2
+				var gy := bounds.position.y + 1.1
+				while gy < bounds.end.y - extent.y:
+					var gx := bounds.position.x + 1.1
+					while gx < bounds.end.x - extent.x:
+						candidates.append(Vector2(gx, gy))
+						gx += step
+					gy += step
+			for corner in candidates:
 				var occupied := Rect2(corner, extent)
 				var clear := true
 				for obstacle: Rect2 in blocked:
