@@ -97,6 +97,19 @@ const CITY_MARKET_TERRACE_RADIUS_M := 96.0
 # Organic city morphology bounds. URBAN_INNER_M remains the land-use and
 # rural-exclusion boundary, independent of the smaller civic grading pad.
 const CITY_HISTORIC_RADIUS_M := 300.0
+## Historic-core plot frontage floor. The Prague grammar allows narrow 6-15 m
+## frontages (spec item 3); the generic city fabric assumes a 10 m lot. 6 m is
+## still wider than the 4.7 m stair minimum, so narrow houses keep their stairs.
+const CITY_HISTORIC_MIN_FRONTAGE_M := 6.0
+## Parcel fitting floors. Frontage is preserved and depth yields first, so a deep
+## parcel meeting a shallow or oblique block edge loses depth instead of facade.
+## The fitter may yield this far; the ACCEPTED lot standard is separate (below) -
+## a fitted lot shallower than the district standard is rejected by the gate.
+const CITY_LOT_FIT_MIN_FRONTAGE_M := 10.0
+const CITY_LOT_FIT_MIN_DEPTH_M := 10.0
+## Accepted lot standard for the generic fabric (frontage floor, depth floor).
+## The city's generated buildings must satisfy it - see --buildingrepairtest.
+const CITY_LOT_MIN_DEPTH_M := 14.0
 const CITY_DENSE_RADIUS_M := 820.0
 const CITY_BLOCK_RADIUS_M := 930.0
 const CITY_MATERIALIZATION_RADIUS_M := 980.0

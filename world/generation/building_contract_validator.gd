@@ -160,10 +160,12 @@ static func _entrances_of(spec: Dictionary) -> Array[Dictionary]:
 static func _check_city_entrances(spec: Dictionary, ents: Array[Dictionary]) -> Array[String]:
 	var errs: Array[String] = []
 	var r: Rect2 = spec["rect"] as Rect2
-	var door_edge: int = int(spec.get("door_edge", 0))
 	var yaw := float(spec.get("yaw", 0.0))
 	var center := r.get_center()
 	for e in ents:
+		var door_edge := int(e.get("edge", spec.get("door_edge", 0)))
+		if door_edge != int(spec.get("door_edge", 0)) and not (spec.get("extra_door_edges", []) as Array).has(door_edge):
+			errs.append("entrance on undeclared facade %d" % door_edge)
 		var w: float = float(e.get("width", 0.0))
 		var h: float = float(e.get("height", 0.0))
 		if w < WorldConstants.CONTRACT_DOOR_W_MIN or w > WorldConstants.CONTRACT_DOOR_W_MAX:
@@ -328,7 +330,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 	for f in floors:
 		for side in 4:
 			var length := w if horiz[side] else d
-			var is_entrance := side == int(spec.get("door_edge", 0)) and f == 0
+			var is_entrance := (side == int(spec.get("door_edge", 0)) or (spec.get("extra_door_edges", []) as Array).has(side)) and f == 0
 			var opens: Array[Dictionary] = BuildingSpec.city_window_openings(length, is_entrance)
 			for o in opens:
 				var oc: float = float(o["c"])

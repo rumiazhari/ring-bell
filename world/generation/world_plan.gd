@@ -109,7 +109,7 @@ func quarry_feature_at(p: Vector2) -> Dictionary:
 	}
 
 func surface_height_at(p: Vector2) -> float:
-	var surface := lerpf(WorldConstants.URBAN_CITY_TERRACE_Y, terrain_height_at(p), urban_weight_at(p))
+	var surface := urban_base_height_at(terrain, p)
 	# Grading is shared by roads, terrain collision, sidewalks and building
 	# foundations. Keep only a small level market approach, not the entire
 	# 350 m historic core. Hydrology remains authoritative wherever it occurs.
@@ -119,6 +119,10 @@ func surface_height_at(p: Vector2) -> float:
 		if bool(quarry.get("inside", false)):
 			surface -= float(quarry.get("depth", 0.0))
 	return surface
+
+static func urban_base_height_at(terrain_plan: TerrainPlan, p: Vector2) -> float:
+	var t := clampf((p.length() - WorldConstants.CITY_MARKET_TERRACE_RADIUS_M) / (WorldConstants.URBAN_OUTER_M - WorldConstants.CITY_MARKET_TERRACE_RADIUS_M), 0.0, 1.0)
+	return lerpf(WorldConstants.URBAN_CITY_TERRACE_Y, terrain_plan.height_at(p), t * t * (3.0 - 2.0 * t))
 
 func surface_normal_at(p: Vector2) -> Vector3:
 	var e := WorldConstants.SURFACE_SAMPLE_EPSILON_M

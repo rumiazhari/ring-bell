@@ -23,6 +23,11 @@ extends RefCounted
 ## boxes in plan-derived order only (never iterating unsorted dictionaries).
 
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
+var generation_seed: int = WorldSeed.get_world_seed()
+
+func rng_for(purpose: String, parts: Array = []) -> RandomNumberGenerator:
+	return WorldSeed.rng_for_seed(generation_seed, purpose, parts)
+
 var _polygon_specs: Array[Dictionary] = [] # visual ground polygons: {points,y,color,layer}
 var _prepared_layers: Dictionary = {}
 var _box_shapes: Dictionary = {} # immutable size -> BoxShape3D, per batcher
@@ -266,6 +271,15 @@ func add_visual_polygon_heights(points: PackedVector2Array, heights: PackedFloat
 ## the player is inside a building. Never carries collision.
 func add_roof_visual_box(pos: Vector3, size: Vector3, color: Color) -> void:
 	add_box_rotated(pos, size, Basis.IDENTITY, color, false, true)
+
+func add_visual_face(vertices: PackedVector3Array, color: Color) -> void:
+	_prepared_layers.clear()
+	var world := vertices.duplicate()
+	for transform: Dictionary in _building_transform_stack:
+		for i in world.size():
+			world[i] = transform.basis * (world[i] - transform.origin) + transform.origin
+	_polygon_specs.append({"vertices": world, "color": color, "layer": _layers.back(),
+		"tile": int(_surface_stack.back()) if not _surface_stack.is_empty() else TILE_SLATE})
 
 
 ## STRUCTURAL geometry - carries collision. Walls, slabs, ramps, landings,
@@ -1053,6 +1067,18 @@ func _build_layers(only: Dictionary = {}) -> Dictionary:
 
 
 func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
+	if polygon.has("vertices"):
+		var face: PackedVector3Array = polygon.vertices
+		var base: int = buf.verts.size()
+		var normal := (face[2] - face[0]).cross(face[1] - face[0]).normalized()
+		for vertex in face:
+			buf.verts.append(vertex)
+			buf.normals.append(normal)
+			buf.colors.append(polygon.color)
+			buf.uvs.append(Vector2(float(polygon.tile), tile_span(int(polygon.tile))))
+		for i in range(1, face.size() - 1):
+			buf.idx.append_array(PackedInt32Array([base, base + i, base + i + 1]))
+		return
 	var points: PackedVector2Array = polygon.get("points", PackedVector2Array()) as PackedVector2Array
 	if points.size() < 3:
 		return

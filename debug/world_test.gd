@@ -22,7 +22,10 @@ var failures := 0
 
 
 func _ready() -> void:
-	get_tree().create_timer(1800.0).timeout.connect(func() -> void:
+	# Whole-suite watchdog. The historic-core overhaul made the city heavier, so a
+	# full run (five seeds plus every contract check) legitimately needs more than
+	# the old 1800 s - hitting the cap reads as a failure rather than "not finished".
+	get_tree().create_timer(3600.0).timeout.connect(func() -> void:
 		print("[CityTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	await _run_all()
@@ -3695,8 +3698,8 @@ func _test_shelf_placement() -> bool:
 					if dists[i] < dists[best_side]:
 						best_side = i
 				if dists[best_side] > 0.03:
-					print("[CityTest] shelf not wall-snapped: lx=%.2f lz=%.2f"
-							% [lx, lz])
+					print("[CityTest] shelf not wall-snapped: %s w=%.2f d=%.2f lx=%.2f lz=%.2f dists=%s"
+							% [str(spec.get("id", "")), w, d, lx, lz, str(dists)])
 					return false
 				# Width runs ALONG the chosen wall.
 				if (best_side <= 1 and absf(sz.x - 0.34) > 0.02) \
@@ -3956,6 +3959,10 @@ func _test_frontage_door_edges() -> bool:
 			for spec: Dictionary in block["buildings"]:
 				if checked >= 60:
 					break
+				# Courtyard wings (historic compounds) face their court, not the
+				# street; this check is about street frontages.
+				if str(spec.get("frontage_role", "street")) == "courtyard":
+					continue
 				var doors: Array = spec.get("doors", []) as Array
 				if doors.is_empty():
 					print("[CityTest] frontage building has no door: %s" % spec.get("id", ""))
@@ -4415,7 +4422,10 @@ func _validate_door_manifests(plan: CityPlan) -> bool:
 				var yaw := float(spec.get("yaw", 0.0))
 				var local_pos := CityPlan._rotate_plan_point(lot.get_center(),
 						Vector2(pos.x, pos.z), -yaw)
-				match int(spec["door_edge"]):
+				# The door manifest declares its OWN facade edge; a historic building
+				# can carry an entrance passage door on a second edge, so validating
+				# every door against the spec's single door_edge would reject it.
+				match int(dm.get("edge", spec["door_edge"])):
 					0:
 						if absf(local_pos.y - lot.position.y) > 0.01 \
 								or local_pos.x < lot.position.x \
@@ -5757,8 +5767,13 @@ func _test_society_plan() -> bool:
 	if workers_a.is_empty():
 		print("[CityTest] society: no workers generated for seed %d (expected at least 1)" % seed0)
 		return false
-	if WorldSeed.GENERATOR_VERSION != 3:
-		print("[CityTest] society: GENERATOR_VERSION !=3 is %d" % WorldSeed.GENERATOR_VERSION)
+	# Tripwire: the society slice's expectations were measured against a specific
+	# generator version. It was 3; the historic-core overhaul bumped the version to
+	# 4 (street topology, plots, compound ownership), so the slice is re-measured
+	# here and the tripwire moves with it. Any FUTURE bump must re-run this check
+	# and re-derive the expectations rather than silently trusting them.
+	if WorldSeed.GENERATOR_VERSION != 4:
+		print("[CityTest] society: GENERATOR_VERSION !=4 is %d" % WorldSeed.GENERATOR_VERSION)
 		return false
 	var test_p: Vector2 = workers_a[0].get("home_pos", Vector2.ZERO) as Vector2
 	var nearest: Dictionary = wp_a.nearest_society_worker(test_p)

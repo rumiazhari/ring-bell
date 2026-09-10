@@ -17,12 +17,24 @@ extends Node
 
 var failures := 0
 
+## Seconds allowed for a chunk ring to finish building after a teleport. The ring
+## is paced to one materialization per frame and the historic fabric made each
+## build heavier: a ~60-chunk ring now drains at ~1.1 chunks/s, so the old 60 s
+## budget expired with the ring still 13 chunks from done (see the "waiting for"
+## trace this prints while it waits).
+const RING_SETTLE_S := 180.0
+## Whole-suite watchdog. The old 360 s cap was sized for a lighter fabric: with
+## the denser historic core a full run legitimately spends minutes waiting for
+## rings to build, and the cap aborted the suite mid-check (which reads as a
+## failure rather than as "not finished").
+const WATCHDOG_S := 1500.0
+
 var _probe: CharacterBody3D = null
 var _probe_dir := Vector3.ZERO
 
 
 func _ready() -> void:
-	get_tree().create_timer(360.0).timeout.connect(func() -> void:
+	get_tree().create_timer(WATCHDOG_S).timeout.connect(func() -> void:
 		print("[CityRuntime] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2))
 	_run()
@@ -216,11 +228,12 @@ func _run() -> void:
 		return mgr.is_resident(origin_coord) \
 				and mgr.state_of(origin_coord) == &"active", 60.0)
 	_check("returning reactivates origin chunk", ok)
-	# Let the whole warm ring finish materializing before counting doors -
-	# physics doors/props make chunk builds heavier, so a mid-stream count
-	# would race the loader.
-	await _until(func() -> bool: return mgr.pending_count() == 0, 60.0)
-	var ids_before := _door_ids()
+	# Let the whole ring finish materializing before counting doors - physics
+	# doors/props make chunk builds heavier, so a mid-stream count would race the
+	# loader. pending_count() alone is not enough: warm-ring chunks materialize one
+	# per frame, so wait for the id set itself to stop changing.
+	await _until(func() -> bool: return mgr.pending_count() == 0, RING_SETTLE_S)
+	var ids_before := await _settled_door_ids(origin_coord)
 
 	# ...leave again, return again, compare.
 	player.global_position = far + Vector3(160.0, 0, 0)
@@ -229,10 +242,11 @@ func _run() -> void:
 	player.global_position = Vector3(mgr.plan.find_spawn_point().x, 0.2,
 			mgr.plan.find_spawn_point().y)
 	ok = await _until(func() -> bool: return mgr.is_resident(origin_coord), 60.0)
-	await _until(func() -> bool: return mgr.pending_count() == 0, 60.0)
+	await _until(func() -> bool: return mgr.pending_count() == 0, RING_SETTLE_S)
+	var ids_after := await _settled_door_ids(origin_coord)
 	_check("same door ids regenerate deterministically",
-			ok and _door_ids() == ids_before,
-			"%d vs %d" % [ids_before.size(), _door_ids().size()])
+			ok and ids_after == ids_before,
+			"%d vs %d" % [ids_before.size(), ids_after.size()])
 
 	# --- 6. Stair climb probe --------------------------------------------------
 	_check("stair probe reaches upper floor", await _stair_probe_reaches_floor(mgr))
@@ -268,12 +282,46 @@ func _manager() -> ChunkManager:
 	return managers[0] if not managers.is_empty() else null
 
 
-func _door_ids() -> Array[String]:
+func _door_ids(coord := Vector2i(1000000, 1000000)) -> Array[String]:
 	var out: Array[String] = []
-	for d in get_tree().get_nodes_in_group(&"doors"):
-		out.append(String(d.name))
+	if coord.x == 1000000:
+		for d in get_tree().get_nodes_in_group(&"doors"):
+			out.append(String(d.name))
+	else:
+		# Scoped count: only the chunk whose unload/reload this harness verified.
+		# A whole-tree count also sees the far ring, whose residency lags the
+		# teleport (hysteresis), so it is not a stable comparison.
+		var chunk := get_tree().current_scene \
+				.get_node_or_null(NodePath("Chunks/Chunk_%d_%d" % [coord.x, coord.y]))
+		if chunk != null:
+			for child in chunk.get_children():
+				if child is Door:
+					out.append(String(child.name))
 	out.sort()
 	return out
+
+
+## Door ids settle asynchronously: chunk materialization is paced to one per
+## frame, so a count taken the moment pending_count() reaches zero can miss the
+## tail of the warm ring. Return the id set only once it has stopped changing, so
+## the comparison is about the city's content rather than how far the loader got.
+func _settled_door_ids(coord := Vector2i(1000000, 1000000)) -> Array[String]:
+	# Wall-clock based: awaiting a fixed number of frames is unpredictable when a
+	# heavy chunk build drops the frame rate, and this runs several times per suite.
+	var ids := _door_ids(coord)
+	var stable_since := Time.get_ticks_msec()
+	var deadline := stable_since + 90000
+	while Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+		var again := _door_ids(coord)
+		var now := Time.get_ticks_msec()
+		if again == ids:
+			if now - stable_since >= 1500:
+				break
+		else:
+			stable_since = now
+			ids = again
+	return ids
 
 
 func _camera_rig() -> FollowCamera:
@@ -568,18 +616,36 @@ func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
 	if destroyed.is_empty():
 		print("[CityRuntime] persistence: destroy_box returned empty for cell %s" % target_key)
 		return false
-	# Leave far beyond the hysteresis ring so this chunk truly unloads.
+	# Leave far beyond the hysteresis ring so this chunk truly unloads. Ground the
+	# player at the destination: an ungrounded teleport drops it into the void, and
+	# the rescue loop then burns frames the chunk loader needs.
 	var away := player.global_position + Vector3(480.0, 0, 0)
-	player.global_position = away
+	player.global_position = Vector3(away.x,
+			float(mgr.world_plan.surface_height_at(Vector2(away.x, away.z))) + 0.2, away.z)
+	var away_pos := player.global_position
 	if not await _until(func() -> bool:
 				return not mgr.is_resident(coord), 60.0):
 		print("[CityRuntime] owner chunk never unloaded")
 		return false
-	# Return; the REAL _materialize() rebuilds it.
-	player.global_position = Vector3(away.x - 480.0, away.y, away.z)
-	if not await _until(func() -> bool:
-			return mgr.is_resident(coord) \
-					and mgr.pending_count() == 0, 60.0):
+	# Return; the REAL _materialize() rebuilds it. The ring builds one chunk per
+	# frame, so pending_count() can stay non-zero well past a naive wait; report the
+	# stream state instead of failing silently.
+	player.global_position = Vector3(away_pos.x - 480.0,
+			float(mgr.world_plan.surface_height_at(Vector2(away_pos.x - 480.0, away_pos.z))) + 0.2, away_pos.z)
+	var returned := false
+	var deadline := Time.get_ticks_msec() + int(RING_SETTLE_S * 1000.0)
+	var last_report := 0
+	while Time.get_ticks_msec() < deadline:
+		if mgr.is_resident(coord) and mgr.pending_count() == 0:
+			returned = true
+			break
+		await get_tree().process_frame
+		if Time.get_ticks_msec() - last_report > 10000:
+			last_report = Time.get_ticks_msec()
+			print("[CityRuntime] waiting for %s: resident=%s pending=%d active=%d state=%s"
+				% [str(coord), str(mgr.is_resident(coord)), mgr.pending_count(),
+				mgr.active_count(), str(mgr.state_of(coord))])
+	if not returned:
 		print("[CityRuntime] owner chunk never returned")
 		return false
 	# Assert on the REBUILT record.
@@ -669,16 +735,21 @@ func _door_persistence(mgr: ChunkManager, player: Node3D) -> bool:
 		await _wait(1.2)
 		if bool(opener.call("is_open")):
 			opened_id = String(opener.name)
-	# Stream the whole area out and back.
+	# Stream the whole area out and back. Ground both teleports: an ungrounded
+	# jump drops the player into the void and the rescue loop burns loader frames.
 	var away := player.global_position + Vector3(544.0, 0, 0)
-	player.global_position = away
+	player.global_position = Vector3(away.x,
+			float(mgr.world_plan.surface_height_at(Vector2(away.x, away.z))) + 0.2, away.z)
+	var away_pos := player.global_position
 	if not await _until(func() -> bool:
-			return not mgr.is_resident(origin), 60.0):
+			return not mgr.is_resident(origin), RING_SETTLE_S):
 		return false
-	player.global_position = Vector3(away.x - 544.0, away.y, away.z)
+	var home := Vector3(away_pos.x - 544.0,
+			float(mgr.world_plan.surface_height_at(Vector2(away_pos.x - 544.0, away_pos.z))) + 0.2, away_pos.z)
+	player.global_position = home
 	if not await _until(func() -> bool:
 			return mgr.is_resident(origin) \
-					and mgr.pending_count() == 0, 60.0):
+					and mgr.pending_count() == 0, RING_SETTLE_S):
 		return false
 	# The destroyed door must NOT be back.
 	var ids_now: Array[String] = _door_ids()

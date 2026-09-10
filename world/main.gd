@@ -109,6 +109,16 @@ func _ready() -> void:
 		spawn_probe.name = "G10P2BSpawnProbe"
 		add_child(spawn_probe)
 		return
+	if args.has("--praguetest"):
+		# A parse error in the harness must fail the suite, not hang it: without
+		# this guard nothing quits the tree and the runner burns its timeout.
+		var prague_script: Variant = load("res://debug/prague_test.gd")
+		if prague_script == null or not (prague_script is GDScript) or not (prague_script as GDScript).can_instantiate():
+			push_error("[PragueTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((prague_script as GDScript).new())
+		return
 	if args.has("--g10p2b-morphologytest"):
 		var morphology_tester: Node = load("res://debug/g10p2b_morphology_test.gd").new()
 		morphology_tester.name = "G10P2BMorphologyTest"

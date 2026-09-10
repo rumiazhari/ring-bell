@@ -17,7 +17,16 @@ func _run() -> void:
 		var buildings := city.city_buildings()
 		for spec: Dictionary in buildings:
 			var size: Vector2 = (spec["rect"] as Rect2).size
-			check("generated minimum footprint " + str(spec["id"]), size.x >= 10.0 and size.y >= 14.0)
+			# Compound wings are held to the building contract (2.5 m side, 12 m2
+			# area - enforced by BuildingContractValidator), because a Prague
+			# compound has genuinely narrow service wings. Everything else keeps
+			# the generic 10x14 lot standard.
+			var ok := size.x >= 10.0 and size.y >= 14.0
+			if spec.has("compound_id"):
+				ok = size.x >= WorldConstants.CONTRACT_MIN_FOOTPRINT_SIDE_M \
+						and size.y >= WorldConstants.CONTRACT_MIN_FOOTPRINT_SIDE_M \
+						and size.x * size.y >= WorldConstants.CONTRACT_MIN_FOOTPRINT_AREA_M2
+			check("generated minimum footprint " + str(spec["id"]), ok)
 			uses[str(spec["use"])] = true
 		for use: String in InteriorPlan.ROOM_PROGRAMS:
 			check("city generates " + use, uses.has(use))

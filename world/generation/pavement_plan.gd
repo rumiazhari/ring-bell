@@ -17,7 +17,7 @@ static func surfaces(edges: Array[Dictionary], buildings: Array, query: Rect2) -
 			if road.size() < 3:
 				continue
 			cutters.append({"polygon": road, "bounds": bounds(road)})
-			patches.append(CityPlan._road_strip_polygon(line[i], line[i + 1], width + WorldConstants.CITY_SIDEWALK_DEPTH_M))
+			patches.append(CityPlan._road_strip_polygon(line[i], line[i + 1], width + (0.25 if bool(edge.get("shared_surface", false)) else WorldConstants.CITY_SIDEWALK_DEPTH_M)))
 	for connector in connectors(streets, query):
 		patches.append_array(connector.polygons)
 	for spec: Dictionary in houses:

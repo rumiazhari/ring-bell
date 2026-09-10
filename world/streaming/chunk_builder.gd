@@ -78,6 +78,15 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 			_:
 				_park(b, plan, block, rect, coord, world_plan)
 	var _t_blocks := Time.get_ticks_usec()
+	for plot: Dictionary in plan.plots_owned_by(coord):
+		for courtyard: Dictionary in plot.courtyards:
+			var local: Rect2 = courtyard.local_rect
+			var center := CityPlan._rotate_plan_point((plot.rect as Rect2).get_center(), (plot.rect as Rect2).position + local.get_center(), plot.yaw)
+			b.push_layer(str(plot.id) + ":court")
+			b.push_surface(MeshBatcher.TILE_PAVING_SLAB)
+			b.add_box_rotated(Vector3(center.x, float(plot.ground_y) - 0.11, center.y), Vector3(local.size.x, 0.22, local.size.y), Basis(Vector3.UP, -float(plot.yaw)), COURTYARD_SERVICE, true)
+			b.pop_surface()
+			b.pop_layer()
 	var owned_buildings: Array = _owned_buildings(plan, rect, coord)
 	var _t_owned := Time.get_ticks_usec()
 	var _slow: Array = []
@@ -350,10 +359,12 @@ static func _foundation_data(spec: Dictionary, world_plan: WorldPlan,
 		"foundation_enabled": false,
 		"foundation_height": 0.0,
 		"foundation_modules": [],
-		"building_ground_y": center_ground,
+		"building_ground_y": float(spec.get("planned_ground_y", center_ground)),
 		"access": {},
 	}
-	if relief < BuildingBuilder.FOUNDATION_TRIGGER_RELIEF:
+	if spec.has("planned_ground_y"):
+		relief = maxf(relief, float(spec.planned_ground_y) - min_ground)
+	if relief < (0.18 if spec.has("planned_ground_y") else BuildingBuilder.FOUNDATION_TRIGGER_RELIEF):
 		return out
 
 	var edge := int(spec.get("door_edge", 0))
@@ -367,6 +378,8 @@ static func _foundation_data(spec: Dictionary, world_plan: WorldPlan,
 
 	var building_ground_y := max_ground + BuildingBuilder.FOUNDATION_TOP_CLEARANCE \
 			+ BuildingBuilder.FOUNDATION_ACCESS_MIN_RISE
+	if spec.has("planned_ground_y"):
+		building_ground_y = float(spec.planned_ground_y)
 	var foundation_top := building_ground_y - BuildingBuilder.SLAB_T - 0.02
 	var foundation_bottom := min_ground - BuildingBuilder.FOUNDATION_BURY
 	var over := BuildingBuilder.FOUNDATION_OVERHANG
@@ -492,9 +505,9 @@ static func _translate_interior_manifest_y(manifest: Dictionary, ground_y: float
 static func _owned_buildings(plan: CityPlan, rect: Rect2,
 		coord: Vector2i) -> Array:
 	var out: Array = []
-	for spec in plan.buildings_in_rect(rect):
+	for spec in plan.buildings_in_rect(rect.grow(WorldSeed.CHUNK_SIZE)):
 		var center: Vector2 = (spec["rect"] as Rect2).get_center()
-		if WorldSeed.chunk_coord(center.x, center.y) == coord:
+		if spec.get("owner_chunk", WorldSeed.chunk_coord(center.x, center.y)) == coord:
 			out.append(spec)
 	return out
 
@@ -611,6 +624,8 @@ static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 static func _emit_street_pavements(b: MeshBatcher, edge: Dictionary,
 		street_edges: Array[Dictionary], mid: Vector2, road_y: float,
 		length: float, width: float, basis: Basis, emit_surface := true) -> void:
+	if bool(edge.get("shared_surface", false)):
+		return # Historic shared streets have no raised vehicle curb corridor.
 	# Streets own the reserved 2.4 m band. Intersecting that band with a
 	# block already inset by 2.4 m produced no pavement at all.
 	var depth := WorldConstants.CITY_SIDEWALK_DEPTH_M

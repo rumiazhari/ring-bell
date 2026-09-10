@@ -319,6 +319,7 @@ static func ramp_height_at(z: float, base_y: float, fh: float,
 
 
 static func build(b: MeshBatcher, spec: Dictionary) -> void:
+	b.generation_seed = int(spec.get("seed_used", WorldSeed.get_world_seed()))
 	var fp: Rect2 = spec["rect"]
 	var style: Dictionary = spec["style"]
 	var wall_c: Color = WALL_COLORS[style["wall"] % WALL_COLORS.size()]
@@ -399,7 +400,7 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		_storey_walls(b, off, w, d, y0, fh, col, f,
 				door_edge if f == 0 else -1, tag,
 				str(spec.get("district", "")) == "historic",
-				door_w, door_h)
+				door_w, door_h, spec.get("extra_door_edges", []) if f == 0 else [])
 		if f == 0:
 			# Room-side casing on the street entrance (interior trim).
 			if dress_ok:
@@ -746,12 +747,12 @@ static func _access_outward(edge: int) -> Vector2:
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
 		y0: float, fh: float, col: Color, floor_i: int, door_edge: int,
 		tag: String, is_historic: bool = false,
-		door_w := DOOR_W, door_h := DOOR_H) -> void:
+		door_w := DOOR_W, door_h := DOOR_H, extra_edges: Array = []) -> void:
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
 		b.push_layer("%s:f%d:%s" % [tag, floor_i, facades[side]])
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
-				door_edge == side, is_historic, tag, door_w, door_h)
+				door_edge == side or extra_edges.has(side), is_historic, tag, door_w, door_h)
 		b.pop_layer()
 
 
@@ -781,7 +782,7 @@ static func _balconies(b: MeshBatcher, off: Vector3, w: float, d: float,
 		var length := w if (side == 0 or side == 2) else d
 		if length < BAL_MIN_SIDE:
 			continue   # balcony needs a believable run of facade
-		var rng := WorldSeed.rng_for("balcony",
+		var rng := b.rng_for("balcony",
 			[WorldSeed.str_hash(tag), f * 7, side])
 		if rng.randf() >= BAL_PROB:
 			continue   # ~30% of eligible facades get one - avoids total coverage
@@ -860,7 +861,7 @@ static func _awnings(b: MeshBatcher, off: Vector3, w: float, d: float,
 	var length := w if (facade_side == 0 or facade_side == 2) else d
 	if length < AWN_MIN_SIDE:
 		return   # facade too short to host a believable marquee
-	var rng := WorldSeed.rng_for("awning",
+	var rng := b.rng_for("awning",
 		[WorldSeed.str_hash(tag), facade_side])
 	if rng.randf() >= AWN_PROB:
 		return   # ~45% of eligible street walls get one - avoids total cover
@@ -943,7 +944,7 @@ static func _scaffolds(b: MeshBatcher, off: Vector3, w: float, d: float,
 		return
 	if n < 2:
 		return
-	var rng := WorldSeed.rng_for("scaffold", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("scaffold", [WorldSeed.str_hash(tag)])
 	if rng.randf() >= SCAFF_PROB:
 		return
 	# Shuffle side order deterministically, then pick first eligible long facade.
@@ -1037,7 +1038,7 @@ static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: f
 		var length := w if (side == 0 or side == 2) else d
 		if length < CORN_MIN_SIDE:
 			continue
-		var rng := WorldSeed.rng_for("cornice", [WorldSeed.str_hash(tag), side])
+		var rng := b.rng_for("cornice", [WorldSeed.str_hash(tag), side])
 		if rng.randf() >= CORN_PROB:
 			continue
 		var horizontal := side == 0 or side == 2
@@ -1067,7 +1068,7 @@ static func _cornices_and_pilasters(b: MeshBatcher, off: Vector3, w: float, d: f
 		var length2 := w if (side == 0 or side == 2) else d
 		if length2 < PIL_MIN_SIDE:
 			continue
-		var rng2 := WorldSeed.rng_for("pilaster", [WorldSeed.str_hash(tag), side])
+		var rng2 := b.rng_for("pilaster", [WorldSeed.str_hash(tag), side])
 		if rng2.randf() >= PIL_PROB:
 			continue
 		var count := maxi(1, floori((length2 - 0.8) / PIL_SPACING))
@@ -1124,7 +1125,7 @@ static func _facade_decay(b: MeshBatcher, off: Vector3, w: float, d: float,
 		var length := w if (side == 0 or side == 2) else d
 		if length < DECAY_MIN_SIDE:
 			continue
-		var rng_g := WorldSeed.rng_for("decay_graff", [WorldSeed.str_hash(tag), side])
+		var rng_g := b.rng_for("decay_graff", [WorldSeed.str_hash(tag), side])
 		if rng_g.randf() < DECAY_GRAFF_PROB:
 			var gw := rng_g.randf_range(DECAY_GRAFF_W_MIN, DECAY_GRAFF_W_MAX)
 			var gh := rng_g.randf_range(DECAY_GRAFF_H_MIN, DECAY_GRAFF_H_MAX)
@@ -1148,7 +1149,7 @@ static func _facade_decay(b: MeshBatcher, off: Vector3, w: float, d: float,
 			b.add_box_rotated(off + Vector3(cx, cy, cz), Vector3(aw, gh, ad),
 					Basis.IDENTITY, c, false, false, &"", "decay", layer_f)
 			b.pop_layer()
-		var rng_r := WorldSeed.rng_for("decay_rust", [WorldSeed.str_hash(tag), side])
+		var rng_r := b.rng_for("decay_rust", [WorldSeed.str_hash(tag), side])
 		if rng_r.randf() < DECAY_RUST_PROB:
 			var rw := DECAY_RUST_W
 			var rh := rng_r.randf_range(DECAY_RUST_H_MIN, DECAY_RUST_H_MAX)
@@ -1171,7 +1172,7 @@ static func _facade_decay(b: MeshBatcher, off: Vector3, w: float, d: float,
 			b.add_box_rotated(off + Vector3(cx2, cy2, cz2), Vector3(aw2, rh, ad2),
 					Basis.IDENTITY, rc, false, false, &"", "decay", layer_f2)
 			b.pop_layer()
-		var rng_m := WorldSeed.rng_for("decay_moss", [WorldSeed.str_hash(tag), side])
+		var rng_m := b.rng_for("decay_moss", [WorldSeed.str_hash(tag), side])
 		if rng_m.randf() < DECAY_MOSS_PROB:
 			var mw := length - 0.7
 			var mh := DECAY_MOSS_H
@@ -1210,7 +1211,7 @@ static func _street_litter(b: MeshBatcher, off: Vector3, w: float, d: float,
 		var length := w if (side == 0 or side == 2) else d
 		if length < LITTER_MIN_SIDE:
 			continue
-		var rng := WorldSeed.rng_for("litter", [WorldSeed.str_hash(tag), side])
+		var rng := b.rng_for("litter", [WorldSeed.str_hash(tag), side])
 		if rng.randf() >= LITTER_PROB:
 			continue
 		var count := rng.randi_range(2, 4)
@@ -1268,7 +1269,7 @@ static func _facade_signage(b: MeshBatcher, off: Vector3, w: float, d: float,
 		if length < SIGNAGE_MIN_SIDE:
 			continue
 		if side == door_edge:
-			var rng_h := WorldSeed.rng_for("house_num", [WorldSeed.str_hash(tag), side])
+			var rng_h := b.rng_for("house_num", [WorldSeed.str_hash(tag), side])
 			if rng_h.randf() >= SIGNAGE_HOUSE_PROB:
 				continue
 			var s := SIGNAGE_HOUSE_S
@@ -1294,7 +1295,7 @@ static func _facade_signage(b: MeshBatcher, off: Vector3, w: float, d: float,
 					Vector3(aw_h, s, ad_h), Basis.IDENTITY, c_plaque, false, false, &"", "signage", 0)
 			b.pop_layer()
 		else:
-			var rng_s := WorldSeed.rng_for("shop_sign", [WorldSeed.str_hash(tag), side])
+			var rng_s := b.rng_for("shop_sign", [WorldSeed.str_hash(tag), side])
 			if rng_s.randf() >= SIGNAGE_SHOP_PROB:
 				continue
 			var sw := rng_s.randf_range(SIGNAGE_SHOP_W_MIN, SIGNAGE_SHOP_W_MAX)
@@ -1339,7 +1340,7 @@ static func _facade_drainpipes(b: MeshBatcher, off: Vector3, w: float, d: float,
 		var length := w if (side == 0 or side == 2) else d
 		if length < DRAIN_MIN_SIDE:
 			continue
-		var rng := WorldSeed.rng_for("drainpipe", [WorldSeed.str_hash(tag), side])
+		var rng := b.rng_for("drainpipe", [WorldSeed.str_hash(tag), side])
 		if rng.randf() >= DRAIN_PIPE_PROB:
 			continue
 		# Lateral position: 32% or 68% along facade, jittered, clamped away from door.
@@ -1421,7 +1422,7 @@ static func _facade_shutters(b: MeshBatcher, off: Vector3, w: float, d: float,
 				win_centers.append(t)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("shutter", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("shutter", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= SHUTTER_PROB:
 					continue
 				var col: Color = shutter_colors[rng.randi_range(0, shutter_colors.size() - 1)]
@@ -1487,7 +1488,7 @@ static func _facade_flower_boxes(b: MeshBatcher, off: Vector3, w: float, d: floa
 				win_centers.append(t)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("flowerbox", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("flowerbox", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= FLOWER_PROB:
 					continue
 				var trough_c: Color = trough_base.lightened(rng.randf_range(-0.06, 0.06))
@@ -1557,7 +1558,7 @@ static func _facade_window_trim(b: MeshBatcher, off: Vector3, w: float, d: float
 				win_centers.append(t)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("window_trim", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("window_trim", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= WINDOW_TRIM_PROB:
 					continue
 				var stone_c := Color("9e968a").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.02)
@@ -1610,7 +1611,7 @@ static func _facade_sill_ledges(b: MeshBatcher, off: Vector3, w: float, d: float
 				win_centers.append(t)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("sill_stone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("sill_stone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= SILL_PROB:
 					continue
 				var stone_c := Color("a8a098").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -1664,7 +1665,7 @@ static func _facade_window_jambs(b: MeshBatcher, off: Vector3, w: float, d: floa
 				win_centers.append(t)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("window_jamb", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("window_jamb", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= JAMB_PROB:
 					continue
 				var stone_c := Color("b0a898").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -1720,7 +1721,7 @@ static func _facade_window_keystones(b: MeshBatcher, off: Vector3, w: float, d: 
 				win_centers.append(tr)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("window_keystone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("window_keystone", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= KEYSTONE_PROB:
 					continue
 				var stone_c := Color("c4b8a0").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.02)
@@ -1770,7 +1771,7 @@ static func _facade_sill_corbels(b: MeshBatcher, off: Vector3, w: float, d: floa
 				win_centers.append(tr)
 			for win_idx in win_centers.size():
 				var t_center: float = win_centers[win_idx]
-				var rng := WorldSeed.rng_for("sill_corbel", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
+				var rng := b.rng_for("sill_corbel", [WorldSeed.str_hash(tag), side * 1000 + f_idx * 100 + win_idx])
 				if rng.randf() >= CORBEL_PROB:
 					continue
 				var stone_c := Color("b8a898").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -1810,7 +1811,7 @@ static func _facade_door_portals(b: MeshBatcher, off: Vector3, w: float, d: floa
 	var length := w if (door_edge == 0 or door_edge == 2) else d
 	if length < PORTAL_MIN_SIDE:
 		return
-	var rng := WorldSeed.rng_for("door_portal", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("door_portal", [WorldSeed.str_hash(tag)])
 	if rng.randf() >= PORTAL_PROB:
 		return
 	var stone_c := Color("b9aa90").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -1868,7 +1869,7 @@ static func _facade_quoins(b: MeshBatcher, off: Vector3, w: float, d: float,
 		return
 	if w < QUOIN_MIN_SIDE or d < QUOIN_MIN_SIDE:
 		return
-	var rng := WorldSeed.rng_for("quoin", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("quoin", [WorldSeed.str_hash(tag)])
 	if rng.randf() >= QUOIN_PROB:
 		return
 	var stone_c := Color("aba090").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -1928,7 +1929,7 @@ static func _facade_plinth(b: MeshBatcher, off: Vector3, w: float, d: float,
 		return
 	if w < PLINTH_MIN_SIDE or d < PLINTH_MIN_SIDE:
 		return
-	var rng := WorldSeed.rng_for("plinth", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("plinth", [WorldSeed.str_hash(tag)])
 	if rng.randf() >= PLINTH_PROB:
 		return
 	var stone_c := Color("aca090").lightened(rng.randf_range(-0.05, 0.06)).darkened(0.03)
@@ -2025,7 +2026,7 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 			if is_historic and tag != "":
 				var length_b := w if horizontal else d
 				if length_b >= BROKEN_MIN_SIDE:
-					var rng_br := WorldSeed.rng_for("broken_win",
+					var rng_br := b.rng_for("broken_win",
 							[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + cur_idx])
 					if rng_br.randf() < BROKEN_WIN_PROB:
 						is_broken = true
@@ -2077,7 +2078,7 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 				if is_historic and tag != "":
 					var length_g := w if horizontal else d
 					if length_g >= WINDOW_GLOW_MIN_SIDE:
-						var rng_glow := WorldSeed.rng_for("window_glow",
+						var rng_glow := b.rng_for("window_glow",
 								[WorldSeed.str_hash(tag), side * 1000 + floor_i * 100 + cur_idx])
 						if rng_glow.randf() < WINDOW_GLOW_PROB:
 							var glow_inside := WINDOW_GLOW_INSET
@@ -2434,7 +2435,7 @@ const COUNTER_DEPTH := 0.62
 static func _furnish(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, floor_i: int, tag: String, zone: Rect2,
 		door_edge: int, room_type := "residential") -> void:
-	var rng := WorldSeed.rng_for("furnish",
+	var rng := b.rng_for("furnish",
 			[WorldSeed.str_hash(tag), floor_i])
 	var floor_y := float(floor_i) * fh   # THE floor this furniture lives on
 	var usable := Rect2(WALL_T + 0.45, WALL_T + 0.45,
@@ -2972,7 +2973,19 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 				Vector3(0.4, 0.06, 0.09), ladder_color,
 				&"steel", true, "bhladder", -1)
 
-	if style.get("attic", false):
+	if style.has("roof_plan"):
+		var roof: Dictionary = style.roof_plan
+		for local_face: PackedVector3Array in roof.faces:
+			var face := local_face.duplicate()
+			for i in face.size():
+				face[i] += off + Vector3(0, total_h, 0)
+			b.add_visual_face(face, roof_c)
+		b.add_roof_visual_box(off + Vector3(0, total_h, 0) + (roof.chimney as Vector3), Vector3(0.6, 1.2, 0.6), PLINTH_COLOR)
+		if (roof.dormer as Vector3).is_finite():
+			var dormer: Vector3 = off + Vector3(0, total_h, 0) + (roof.dormer as Vector3)
+			b.add_roof_visual_box(dormer, Vector3(1.2, 1.1, 1.1), wall_c)
+			b.add_roof_visual_box(dormer + Vector3(0, 0.6, 0), Vector3(1.4, 0.15, 1.3), roof_c)
+	elif style.get("attic", false):
 		_pitched_shell(b, off, w, d, total_h, roof_c, style)
 	else:
 		# Flat roof variant: VISUAL membrane only. The walkable deck is the
@@ -3042,7 +3055,7 @@ static func _tower_landmark(b: MeshBatcher, off: Vector3, usable: Rect2,
 	if usable.size.x < TOWER_FOOTPRINT.x + 0.6 \
 			or usable.size.y < TOWER_FOOTPRINT.y + 0.6:
 		return
-	var rng := WorldSeed.rng_for("tower",
+	var rng := b.rng_for("tower",
 		[int(usable.position.x * 13.0), int(usable.position.y * 13.0),
 		 int(usable.size.x * 7.0)])
 	var half := TOWER_FOOTPRINT * 0.5
@@ -3117,7 +3130,7 @@ static func _roof_props(b: MeshBatcher, off: Vector3, fp: Rect2,
 	# the roof-exit lane.
 	var keepout := zone.grow(BULKHEAD_RING + PROP_CLEARANCE) \
 			if has_stairs else Rect2()
-	var rng := WorldSeed.rng_for("roofprops",
+	var rng := b.rng_for("roofprops",
 			[int(style["wall"]), int(style["roof"]), int(round(d * 10))])
 	var budget := mini(int(usable.get_area() / 18.0), 4)
 	var target := 1 + rng.randi_range(0, maxi(budget - 1, 0))
@@ -3632,7 +3645,7 @@ static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
 	b.add_roof_visual_box(off + Vector3(dx, total_h + rise * 0.45, dz + 0.48),
 			Vector3(0.7, 0.8, 0.12), WINDOW_COLOR)
 	# Chimney on the ridge (seeded by style for stable placement).
-	var rng_pos := WorldSeed.rng_for("chimney",
+	var rng_pos := b.rng_for("chimney",
 			[int(style["wall"]), int(style["roof"]), int(round(d * 10))])
 	var ch_x := lerpf(w * 0.25, w * 0.75, rng_pos.randf())
 	b.add_roof_visual_box(off + Vector3(ch_x, total_h + rise * 0.55 + 0.75,
@@ -3703,7 +3716,7 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 			b.add_visual_box(pos + Vector3(-0.35, 0.85, 0), Vector3(0.10, 0.13, 0.10), Color("27272b"))
 		return
 	if kind == "shelf":
-		_f_shelf(b, pos, 0.0, WorldSeed.rng_for("furnish", [WorldSeed.str_hash(item["id"])]), tag, fi)
+		_f_shelf(b, pos, 0.0, b.rng_for("furnish", [WorldSeed.str_hash(item["id"])]), tag, fi)
 		return
 	var metal := kind in ["machine", "stove", "instruments", "examination"]
 	var ceramic := kind in ["sink", "toilet"]
@@ -3831,7 +3844,7 @@ static func pl_lath_col(rng: RandomNumberGenerator) -> Color:
 ## Dressed (LOD-gated) buildings only, bounded box counts.
 static func _period_interior_details(b: MeshBatcher, off: Vector3, w: float,
 		d: float, fh: float, tag: String) -> void:
-	var rng := WorldSeed.rng_for("period", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("period", [WorldSeed.str_hash(tag)])
 	var inset := WALL_T + 0.06
 	# --- Kachelofen: glazed tile body, iron door, stone plinth, soot crown -----
 	var tile_cols := [Color("d8d2c0"), Color("9aa88f"), Color("7f8fa0"), Color("c9bda6")]
@@ -3879,7 +3892,7 @@ static func _decay_decals(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, tag: String, decay: float, ruin: float) -> void:
 	if decay < 0.3:
 		return
-	var rng := WorldSeed.rng_for("decals", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("decals", [WorldSeed.str_hash(tag)])
 	# Higher-contrast palette: in gloom, near-black smears vanish, so the mix
 	# includes pale lime-wash loss and grey-green mould alongside the soot.
 	var wall_cols := [Color("1f1d19"), Color("2b231c"), Color("5b6152"), Color("141312"),
@@ -3963,7 +3976,7 @@ static func _decay_decals(b: MeshBatcher, off: Vector3, w: float, d: float,
 ## several rubble heaps; weathered ones get a token amount.
 static func _ruin_features(b: MeshBatcher, off: Vector3, w: float, d: float,
 		tag: String, spec: Dictionary, decay: float, ruin: float) -> void:
-	var rng := WorldSeed.rng_for("ruin", [WorldSeed.str_hash(tag)])
+	var rng := b.rng_for("ruin", [WorldSeed.str_hash(tag)])
 	var plank := Color("4a3a26")
 	# Boarded windows: ruined buildings board most ground openings.
 	var boards := 2 + int(decay * 3.0)

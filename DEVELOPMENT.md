@@ -92,6 +92,15 @@ python tools/run_suite.py --smoke 180
 
 # 12) Day/night + sleep AI + zombie wandering soak (legacy block)
 & $G --headless --path $P -- --soak
+
+# 13) Historic-core morphology (Prague overhaul): structural fixtures + real-city
+#     distributions for street widths, junctions, blocks, plots, courtyards,
+#     passages, storeys, roof types, mixed use, stair reachability, determinism.
+#     One seed by default; --dist measures 19041207/08/09.
+python tools/run_suite.py --praguetest 540
+python tools/run_suite.py --praguetest 600 --dist
+# Full-plan counts only (blocks / plots / wings, no distribution assertions):
+python tools/run_suite.py --praguetest 300 --full
 ```
 
 The project wrappers `tools/run_suite.py` invoke `godot --headless --path <proj> -- --<flag>` and judge by the `finished with 0 failure(s)` marker printed by each harness (Windows `3221225477` with marker is a pass). Long Godot runs can hang past the shell timeout and lose partial output — `run_suite.py` redirects to a file so timeouts still yield diagnostics. Do not launch a second Godot instance while one may still be alive (`tasklist /FI IMAGENAME eq Godot*`).

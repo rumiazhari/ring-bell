@@ -13,7 +13,7 @@ extends RefCounted
 ## never silently regenerated into something else.
 
 const CHUNK_SIZE := 64                 # meters per streaming chunk edge
-const GENERATOR_VERSION := 3 # urban frontage anchoring and basin grading; RNG domains unchanged
+const GENERATOR_VERSION := 4 # historic street topology, plots and compound ownership change generated worlds
 
 # ProjectSettings key so a seed can be forced via override files / CLI.
 const SEED_SETTING := "world/generation/seed"
@@ -75,7 +75,10 @@ static func combine(parts: Array) -> int:
 ## purposes or coordinates; derive a new one instead so evaluation order of
 ## unrelated systems can never change each other's streams.
 static func rng_for(purpose: String, parts: Array = []) -> RandomNumberGenerator:
-	var all_parts := [get_world_seed(), str_hash(purpose)]
+	return rng_for_seed(get_world_seed(), purpose, parts)
+
+static func rng_for_seed(seed_used: int, purpose: String, parts: Array = []) -> RandomNumberGenerator:
+	var all_parts := [seed_used, str_hash(purpose)]
 	all_parts.append_array(parts)
 	var gen := RandomNumberGenerator.new()
 	gen.seed = combine(all_parts)

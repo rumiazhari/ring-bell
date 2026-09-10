@@ -1,5 +1,6 @@
 class_name InteriorPlan
 extends RefCounted
+const HistoricInterior = preload("res://world/generation/historic_interior_plan.gd")
 
 const ROOM_PROGRAMS := {
 	"residential": [&"living", &"kitchen", &"sleeping", &"toilet"],
@@ -9,6 +10,9 @@ const ROOM_PROGRAMS := {
 	"police": [&"reception", &"office", &"holding", &"toilet"],
 	"hospital": [&"ward", &"surgery", &"dispensary", &"toilet"],
 	"government": [&"reception", &"council", &"archive", &"toilet"],
+	"tavern": [&"taproom", &"kitchen", &"store_room", &"toilet"],
+	"storage": [&"warehouse", &"store_room", &"loading", &"toilet"],
+	"caretaker": [&"living", &"kitchen", &"store_room", &"toilet"],
 }
 
 ## Fallback room kinds when a program row slot has no furniture program:
@@ -48,7 +52,9 @@ static func build_for_building(spec: Dictionary) -> Dictionary:
 	}
 	for fi in floors:
 		var floor_dict: Dictionary
-		if rect.size.x >= 9.0 and rect.size.y >= 12.0:
+		if spec.has("compound_id"):
+			floor_dict = HistoricInterior.floor_plan(spec, fi)
+		elif rect.size.x >= 9.0 and rect.size.y >= 12.0:
 			floor_dict = _corridor_floor(bid, fi, use_val, inner, spec, fh)
 		else:
 			floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
@@ -77,7 +83,7 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 	var parts: Array = []
 	var solid_walls: Array = []
 	var doors: Array = []
-	var rng := WorldSeed.rng_for("interior", [WorldSeed.str_hash(bid), fi])
+	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior", [WorldSeed.str_hash(bid), fi])
 	# ---- Ground floor: one big LOBBY (the whole inner minus a toilet strip) —
 	# "mainly lobby" per G10 steering. The toilet strip sits at the end
 	# OPPOSITE the stairwell zone so it never overlaps stairs/risers:
@@ -144,7 +150,7 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 	# ---- Upper floors: three depth profiles (see comment below) + room row
 	# with a door on every hall edge. Pantry dropped from generic middle rooms.
 	var kinds: Array = ROOM_PROGRAMS[use_val]
-	var prof := int(WorldSeed.rng_for("interior_topo", [WorldSeed.str_hash(bid)]).randf_range(0, 3.0))
+	var prof := int(WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior_topo", [WorldSeed.str_hash(bid)]).randf_range(0, 3.0))
 	var inner_y: float = inner.size.y
 	var cut1: float
 	var cut2: float
@@ -189,7 +195,7 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 	return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors, "stations": [], "corridor_layout": true, "solid_walls": solid_walls}
 
 static func _floor_manifest(bid: String, fi: int, use_val: String, inner: Rect2, lot: Rect2, spec: Dictionary, small: bool, fh: float) -> Dictionary:
-	var rng := WorldSeed.rng_for("interior", [WorldSeed.str_hash(bid), fi])
+	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior", [WorldSeed.str_hash(bid), fi])
 	var rooms: Array = []
 	var partitions: Array = []
 	var doors: Array = []
@@ -572,6 +578,11 @@ const ROOM_FURNITURE := {
 	"surgery": ["examination", "sink", "instruments"], "dispensary": ["shelf", "instruments"],
 	"council": ["documents", "bench", "shelf"], "entry": ["bench"],
 	"lobby": ["bench", "documents", "shelf"],
+	# Prague ground programmes (spec item 8) need their own furniture, not just
+	# their own room names: a taproom gets tables and a counter, a store room
+	# shelves and crates, a loading bay crates, a warehouse racks.
+	"taproom": ["table", "bench", "counter"], "store_room": ["shelf", "crate", "shelf"],
+	"warehouse": ["crate", "shelf", "crate"], "loading": ["crate", "bench"],
 }
 
 ## Lobby house programs vary by building use (Victorian taste): civic lobbies
@@ -635,6 +646,8 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 			3: blocked.append(Rect2(fp.position.x, mid.y - 1.2, 3.2, 2.4))
 	var items: Array = []
 	for room: Dictionary in fl["rooms"]:
+		if str(room.get("kind", "")) in ["stair_hall", "landing"]:
+			continue
 		var bounds: Rect2 = (room["rect"] as Rect2).grow(-0.22)
 		var rkind := String(room["kind"])
 		# Program lookup: lobby ground floors use the per-use Victorian dressing
