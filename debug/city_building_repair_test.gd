@@ -108,8 +108,10 @@ func _run() -> void:
 			get_viewport().get_texture().get_image().save_png(dir + "/" + use + ".png")
 			# Eye-level interior view so wall dressing (wainscot/ochre/gaslamp)
 			# is judged as the player sees it, not from the top-down audit cam.
-			camera.position = Vector3(1.2, 1.65, 18.6)
-			camera.look_at(Vector3(13.0, 1.5, 4.0))
+			# Aimed slightly UP so the ceiling line (cornice + joists) is in
+			# frame together with the far wall and door casing.
+			camera.position = Vector3(7.2, 1.6, 15.2)
+			camera.look_at(Vector3(10.5, 2.6, 2.6))
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(dir + "/" + use + "_eye.png")
 			camera.position = Vector3(10, 25, 21)

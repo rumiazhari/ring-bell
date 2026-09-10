@@ -386,6 +386,8 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 				str(spec.get("district", "")) == "historic",
 				door_w, door_h)
 		if f == 0:
+			# Room-side casing on the street entrance (interior trim).
+			_interior_entry_casing(b, off, w, d, y0, door_edge, door_w, door_h)
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
 			if str(style.get("room_type", "residential")) == "retail":
 				_shopfront(b, off, w, d, spec)
@@ -1995,6 +1997,21 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 				b.add_destructible_box(
 						off + Vector3(p.x, y0 + obot + oh * 0.5, p.y), gsize,
 						WINDOW_COLOR, &"glass", true, "", -1)
+				# Victorian sash glazing bars: one centre muntin + one transom per
+				# ground-floor window of historic buildings (bounded cost, visual
+				# only) so windows read as sash joinery instead of dark holes.
+				if is_historic and floor_i == 0 and is_entrance:
+					var bar_c := Color("ded6c4")
+					var bar_t := 0.055
+					var bar_d := 0.12
+					var cw := owd - 0.06
+					var chh := oh - 0.04
+					if horizontal:
+						b.add_visual_box(off + Vector3(p.x, y0 + obot + chh * 0.5, p.y), Vector3(bar_t, chh, bar_d), bar_c)
+						b.add_visual_box(off + Vector3(p.x, y0 + obot + chh * 0.5, p.y), Vector3(cw, bar_t, bar_d), bar_c)
+					else:
+						b.add_visual_box(off + Vector3(p.x, y0 + obot + chh * 0.5, p.y), Vector3(bar_d, chh, bar_t), bar_c)
+						b.add_visual_box(off + Vector3(p.x, y0 + obot + chh * 0.5, p.y), Vector3(bar_d, bar_t, cw), bar_c)
 				# Phase U: faint warm interior glow behind intact historic glass.
 				# Night-only OmniLight via MeshBatcher.window_glows() -> ChunkBuilder.
 				# Deterministic per (building, side, floor, window) via WorldSeed,
@@ -3418,6 +3435,7 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
+				_interior_architrave(b, off, fi, fh, Vector3(px, 0.0, 0.0), pr, op, true)
 			else:
 				var ph2 := pr.size.y
 				if absf(ph2 - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
@@ -3438,6 +3456,7 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
 				if lintel_h2 > 0.05:
 					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
+				_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
 		for wall: Rect2 in fl.get("solid_walls", []):
 			var center := wall.get_center() - footprint.position
 			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
@@ -3453,7 +3472,7 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			# brass junction collar; ochre ceiling beam with a warm gas lamp.
 			var w0 := footprint.size.x
 			var d0 := footprint.size.y
-			var strip_w := 0.9
+			var strip_w := 2.7   # wide bands: 0.9 m strips cost ~18 boxes/building
 			var nx := int(ceil(w0 / strip_w))
 			for si in nx:
 				var sx := strip_w * (si + 0.5)
@@ -3467,14 +3486,41 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			# Facade lining: walnut panelling + plaster band along the four
 			# inner faces (facade walls stay untextured outside; the interior
 			# reads dressed from inside the lobby).
-			var lin_h := 1.25
+			var lin_h := 0.78   # MUST stay below WIN_SILL (0.85) or it blinds windows
 			var lin_t := 0.1
-			var WALL_INSET := 0.18
+			# Interior face of a facade wall sits at WALL_T (0.35). Panelling must
+			# sit FLUSH against that face and protrude into the room; a smaller
+			# inset buried it inside the wall (and it read as a free low wall).
+			var WALL_INSET := WALL_T + lin_t * 0.5
 			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
 			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, d0 - WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
 			b.add_visual_box(off + Vector3(WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
 			b.add_visual_box(off + Vector3(w0 - WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
+			# Panelled joinery: a dado rail at 0.82 m and vertical stiles every
+			# ~2.4 m read as recessed panels without any extra machinery.
+			# Panelling only on generous footprints; small lots keep the plain
+			# wainscot band so per-chunk box counts stay bounded.
+			var panel_col := _dressed_joinery_col(tag).lightened(0.12)
+			var dado_y := 0.72
+			var panelled := w0 >= 12.0 and d0 >= 16.0
+			if panelled:
+				b.add_visual_box(off + Vector3(w0 * 0.5, dado_y, WALL_INSET + 0.012), Vector3(w0, 0.07, 0.03), panel_col)
+				b.add_visual_box(off + Vector3(w0 * 0.5, dado_y, d0 - WALL_INSET - 0.012), Vector3(w0, 0.07, 0.03), panel_col)
+			var stile := 4.8
+			var sx := stile
+			while panelled and sx < w0 - 0.3:
+				b.add_visual_box(off + Vector3(sx, lin_h * 0.5, WALL_INSET + 0.012), Vector3(0.07, lin_h, 0.03), panel_col)
+				b.add_visual_box(off + Vector3(sx, lin_h * 0.5, d0 - WALL_INSET - 0.012), Vector3(0.07, lin_h, 0.03), panel_col)
+				sx += stile
+			var sz := stile
+			while panelled and sz < d0 - 0.3:
+				b.add_visual_box(off + Vector3(WALL_INSET + 0.012, lin_h * 0.5, sz), Vector3(0.03, lin_h, 0.07), panel_col)
+				b.add_visual_box(off + Vector3(w0 - WALL_INSET - 0.012, lin_h * 0.5, sz), Vector3(0.03, lin_h, 0.07), panel_col)
+				sz += stile
 
+		# Round-4 interior architecture: crown moulding at every ceiling line
+		# (visual-only, skipped over nothing - it hugs the wall faces).
+		_interior_cornice(b, off, w, d, fh, fi, dressed)
 		b.pop_layer()
 
 static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
@@ -3542,6 +3588,11 @@ static func interior_partition_visible(part: Dictionary, spec: Dictionary, floor
 	return true
 
 
+static func _rbox(b: MeshBatcher, basis: Basis, pos: Vector3, off: Vector3,
+		size: Vector3, col: Color) -> void:
+	b.add_box_rotated(pos + basis * off, size, basis, col)
+
+
 static func _f_gaslamp(b: MeshBatcher, pos: Vector3, tag: String, fi: int) -> void:
 	# Cast-iron newel post, copper stalk, glass lantern housing, brass finial
 	# and a warm lamp head so gaslight reads at player height.
@@ -3557,6 +3608,9 @@ static func _f_gaslamp(b: MeshBatcher, pos: Vector3, tag: String, fi: int) -> vo
 static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary, tag: String, fi: int) -> void:
 	var kind: String = item["kind"]
 	var size: Vector3 = item["size"]
+	# Directional props carry a yaw so they face into the room they stand in.
+	var yaw := float(item.get("yaw", 0.0))
+	var basis := Basis(Vector3.UP, yaw)
 	if kind == "bed":
 		_f_bed(b, pos, 0.0, tag, fi)
 		return
@@ -3594,17 +3648,17 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		return
 	if kind == "wallclock":
 		# Round dial in a dark walnut case, japanned bezel, japanned hands.
-		b.add_visual_box(pos + Vector3(0, 1.55, 0), Vector3(size.x, size.y, 0.1), FURN_WALNUT)
-		b.add_visual_box(pos + Vector3(0, 1.55, 0.055), Vector3(0.44, 0.44, 0.02), Color("ece2c8"))
-		b.add_visual_box(pos + Vector3(0, 1.55, 0.075), Vector3(0.03, 0.18, 0.01), Color("26261f"))
-		b.add_visual_box(pos + Vector3(0, 1.55, 0.075), Vector3(0.16, 0.03, 0.01), Color("26261f"))
-		b.add_visual_box(pos + Vector3(0, 1.55, 0.08), Vector3(0.06, 0.06, 0.012), Color("aa8750"))
+		_rbox(b, basis, pos, Vector3(0, 1.55, 0), Vector3(size.x, size.y, 0.1), FURN_WALNUT)
+		_rbox(b, basis, pos, Vector3(0, 1.55, 0.055), Vector3(0.44, 0.44, 0.02), Color("ece2c8"))
+		_rbox(b, basis, pos, Vector3(0, 1.55, 0.075), Vector3(0.03, 0.18, 0.01), Color("26261f"))
+		_rbox(b, basis, pos, Vector3(0, 1.55, 0.075), Vector3(0.16, 0.03, 0.01), Color("26261f"))
+		_rbox(b, basis, pos, Vector3(0, 1.55, 0.08), Vector3(0.06, 0.06, 0.012), Color("aa8750"))
 		return
 	if kind == "print":
 		# Gilt-framed etching: thin brass frame around a paper ground.
-		b.add_visual_box(pos + Vector3(0, 1.6, 0.045), Vector3(size.x, size.y, 0.03), Color("aa8750"))
-		b.add_visual_box(pos + Vector3(0, 1.6, 0.07), Vector3(size.x - 0.12, size.y - 0.12, 0.02), Color("e6dcc0"))
-		b.add_visual_box(pos + Vector3(0, 1.6, 0.09), Vector3(size.x - 0.3, size.y - 0.45, 0.01), Color("6a6a72"))
+		_rbox(b, basis, pos, Vector3(0, 1.6, 0.045), Vector3(size.x, size.y, 0.03), Color("aa8750"))
+		_rbox(b, basis, pos, Vector3(0, 1.6, 0.07), Vector3(size.x - 0.12, size.y - 0.12, 0.02), Color("e6dcc0"))
+		_rbox(b, basis, pos, Vector3(0, 1.6, 0.09), Vector3(size.x - 0.3, size.y - 0.45, 0.01), Color("6a6a72"))
 		return
 	if kind == "cabinet":
 		# Ledger/file cabinet: walnut carcass, brass drawer pulls, stone top.
@@ -3633,6 +3687,28 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		b.add_destructible_box(pos + Vector3(0, size.y * 0.4, 0), Vector3(size.x, size.y * 0.8, size.z), Color("a9743e"), &"wood", true, tag, fi)
 		b.add_visual_box(pos + Vector3(0, size.y * 0.4, size.z * 0.5), Vector3(size.x, 0.09, 0.03), Color("8a5b33"))
 		return
+	if kind == "fireplace":
+		# Victorian hearth: limestone surround, oak mantel shelf, slate hearth
+		# slab, cast-iron grate with a warm firebox glow behind it. Rotated so
+		# the opening always faces into the room (never into the wall).
+		var fw := size.x
+		var fh2 := size.y
+		_rbox(b, basis, pos, Vector3(-fw * 0.5 + 0.15, fh2 * 0.5, 0), Vector3(0.3, fh2, size.z), Color("b9b1a0"))
+		_rbox(b, basis, pos, Vector3(fw * 0.5 - 0.15, fh2 * 0.5, 0), Vector3(0.3, fh2, size.z), Color("b9b1a0"))
+		_rbox(b, basis, pos, Vector3(0, fh2 - 0.16, 0), Vector3(fw, 0.32, size.z), Color("b9b1a0"))
+		_rbox(b, basis, pos, Vector3(0, fh2 + 0.06, 0.03), Vector3(fw + 0.24, 0.09, size.z + 0.12), Color("5d452c"))
+		_rbox(b, basis, pos, Vector3(0, 0.06, 0.36), Vector3(fw + 0.2, 0.12, 0.72), Color("3b3b40"))
+		_rbox(b, basis, pos, Vector3(0, fh2 * 0.42, 0), Vector3(fw - 0.6, fh2 * 0.62, size.z - 0.24), Color("1d1d20"))
+		_rbox(b, basis, pos, Vector3(0, fh2 * 0.26, 0.06), Vector3(fw - 0.72, fh2 * 0.3, 0.2), Color("e0761f"))
+		_rbox(b, basis, pos, Vector3(0, fh2 * 0.3, 0.2), Vector3(fw - 0.8, 0.06, 0.06), Color("c9c3b4"))
+		for bar in 3:
+			_rbox(b, basis, pos, Vector3(-0.28 + 0.28 * bar, fh2 * 0.22, 0.16), Vector3(0.05, 0.42, 0.05), Color("2a2a2e"))
+		return
+	if kind == "hearth":
+		# Slate hearth slab only (used where a full surround would crowd a shop).
+		_rbox(b, basis, pos, Vector3(0, 0.06, 0), Vector3(size.x, 0.12, size.z), Color("3b3b40"))
+		_rbox(b, basis, pos, Vector3(0, 0.13, 0), Vector3(size.x - 0.2, 0.02, size.z - 0.2), Color("4a4a50"))
+		return
 	if kind == "rug":
 		# Edge-worn Axminster: deep madder red field, ochre border.
 		var ry := size.y * 0.5
@@ -3659,6 +3735,96 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 			b.add_visual_box(pos + Vector3(0.25, size.y * 0.87, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
 
 
+## Victorian wall palettes. The renderer is flat vertex colour (no textures), so
+## per-building tone variety is how interiors avoid looking stamped from one
+## mould: ochre, olive-gold, dusty rose, sage and buff plaster; walnut, oak and
+## near-ebony joinery.
+static func _dressed_plaster_col(tag: String) -> Color:
+	var pal := [Color("c4965a"), Color("bfae7a"), Color("c19185"), Color("a9b39a"), Color("bfa987")]
+	return pal[absi(int(WorldSeed.str_hash(tag + "plaster"))) % pal.size()]
+
+
+static func _dressed_joinery_col(tag: String) -> Color:
+	var pal := [Color("4b361f"), Color("5d452c"), Color("3a2a1a"), Color("6b4a2f")]
+	return pal[absi(int(WorldSeed.str_hash(tag + "joinery"))) % pal.size()]
+
+
+## Victorian door casing: oak jambs + header standing proud of the wall on
+## both faces, so interior doorways read as framed openings at eye level
+## (visual only; the aperture and its collision are owned by the wall boxes).
+static func _interior_architrave(b: MeshBatcher, off: Vector3, fi: int, fh: float,
+		wall_origin: Vector3, pr: Rect2, op: Rect2, is_vertical: bool) -> void:
+	var y0 := float(fi) * fh
+	var casing_col := Color("5d452c")
+	var fr := 0.12                       # casing width (visible face: reads at eye level)
+	var h := WorldConstants.CITY_INTERIOR_OPEN_H + 0.07
+	if is_vertical:
+		var pw := maxf(pr.size.x, 0.18) + 0.14
+		var cxx := wall_origin.x + maxf(pr.size.x, 0.18) * 0.5
+		var oy0 := op.position.y
+		var oy1 := op.end.y
+		b.add_visual_box(off + Vector3(cxx, y0 + h * 0.5, oy0 - fr * 0.5), Vector3(pw, h, fr), casing_col)
+		b.add_visual_box(off + Vector3(cxx, y0 + h * 0.5, oy1 + fr * 0.5), Vector3(pw, h, fr), casing_col)
+		b.add_visual_box(off + Vector3(cxx, y0 + h + fr * 0.5, (oy0 + oy1) * 0.5), Vector3(pw, fr, (oy1 - oy0) + fr * 2.0), casing_col)
+	else:
+		var ph := maxf(pr.size.y, 0.18) + 0.14
+		var czz := wall_origin.z + maxf(pr.size.y, 0.18) * 0.5
+		var ox0 := op.position.x
+		var ox1 := op.end.x
+		b.add_visual_box(off + Vector3(ox0 - fr * 0.5, y0 + h * 0.5, czz), Vector3(fr, h, ph), casing_col)
+		b.add_visual_box(off + Vector3(ox1 + fr * 0.5, y0 + h * 0.5, czz), Vector3(fr, h, ph), casing_col)
+		b.add_visual_box(off + Vector3((ox0 + ox1) * 0.5, y0 + h + fr * 0.5, czz), Vector3((ox1 - ox0) + fr * 2.0, fr, ph), casing_col)
+
+
+## Crown moulding: a dark band hugging the ceiling line of one storey.
+static func _interior_cornice(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, fi: int, dressed: bool) -> void:
+	var band_h := 0.17
+	var band_d := 0.13
+	var y := float(fi + 1) * fh - band_h * 0.5 - 0.03
+	var col := Color("5d452c") if dressed else Color("7a6a52")
+	var span_x := maxf(w - 2.0 * WALL_T, 0.2)
+	var span_z := maxf(d - 2.0 * WALL_T, 0.2)
+	b.add_visual_box(off + Vector3(w * 0.5, y, WALL_T + band_d * 0.5), Vector3(span_x, band_h, band_d), col)
+	b.add_visual_box(off + Vector3(w * 0.5, y, d - WALL_T - band_d * 0.5), Vector3(span_x, band_h, band_d), col)
+	b.add_visual_box(off + Vector3(WALL_T + band_d * 0.5, y, d * 0.5), Vector3(band_d, band_h, span_z), col)
+	b.add_visual_box(off + Vector3(w - WALL_T - band_d * 0.5, y, d * 0.5), Vector3(band_d, band_h, span_z), col)
+
+
+## Victorian casing on the ROOM side of the street entrance. The exterior
+## stone portal is Phase AG; this is the interior trim the player walks past.
+## The facade always centres its doorway on the wall, so the casing can be
+## derived from the edge alone (visual only, no collision).
+static func _interior_entry_casing(b: MeshBatcher, off: Vector3, w: float, d: float,
+		y0: float, door_edge: int, door_w: float, door_h: float) -> void:
+	var fr := 0.15          # casing face width
+	var th := 0.11          # how far the casing stands proud into the room
+	var h := door_h + fr * 0.6
+	var col := Color("5d452c")
+	var half := door_w * 0.5 + fr * 0.5
+	match door_edge:
+		0:   # entrance on the north wall
+			var z := WALL_T + th * 0.5
+			b.add_visual_box(off + Vector3(w * 0.5 - half, y0 + h * 0.5, z), Vector3(fr, h, th), col)
+			b.add_visual_box(off + Vector3(w * 0.5 + half, y0 + h * 0.5, z), Vector3(fr, h, th), col)
+			b.add_visual_box(off + Vector3(w * 0.5, y0 + h + fr * 0.5, z), Vector3(door_w + fr * 2.0, fr, th), col)
+		2:   # entrance on the south wall
+			var z2 := d - WALL_T - th * 0.5
+			b.add_visual_box(off + Vector3(w * 0.5 - half, y0 + h * 0.5, z2), Vector3(fr, h, th), col)
+			b.add_visual_box(off + Vector3(w * 0.5 + half, y0 + h * 0.5, z2), Vector3(fr, h, th), col)
+			b.add_visual_box(off + Vector3(w * 0.5, y0 + h + fr * 0.5, z2), Vector3(door_w + fr * 2.0, fr, th), col)
+		1:   # entrance on the east wall
+			var x1 := w - WALL_T - th * 0.5
+			b.add_visual_box(off + Vector3(x1, y0 + h * 0.5, d * 0.5 - half), Vector3(th, h, fr), col)
+			b.add_visual_box(off + Vector3(x1, y0 + h * 0.5, d * 0.5 + half), Vector3(th, h, fr), col)
+			b.add_visual_box(off + Vector3(x1, y0 + h + fr * 0.5, d * 0.5), Vector3(th, fr, door_w + fr * 2.0), col)
+		_:   # entrance on the west wall
+			var x3 := WALL_T + th * 0.5
+			b.add_visual_box(off + Vector3(x3, y0 + h * 0.5, d * 0.5 - half), Vector3(th, h, fr), col)
+			b.add_visual_box(off + Vector3(x3, y0 + h * 0.5, d * 0.5 + half), Vector3(th, h, fr), col)
+			b.add_visual_box(off + Vector3(x3, y0 + h + fr * 0.5, d * 0.5), Vector3(th, fr, door_w + fr * 2.0), col)
+
+
 static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color, dressed: bool = false) -> void:
 	var bottom := pos.y - size.y * 0.5
 	var top := pos.y + size.y * 0.5
@@ -3669,8 +3835,8 @@ static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, 
 		# Victorian wainscot: walnut lower band + ochre plaster above (dressed
 		# surfaces only), with an oak cap rail at the 1.05 m picture rail line.
 		if dressed:
-			lower_col = Color("4b361f")
-			var plaster := Color("c4965a")
+			lower_col = _dressed_joinery_col(tag)
+			var plaster := _dressed_plaster_col(tag)
 			var upper_bottom := maxf(bottom, split)
 			var upper_h := top - split
 			if upper_h > 0.02:

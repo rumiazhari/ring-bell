@@ -598,6 +598,7 @@ func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
 	var collider_absent := true
 	var static2: Node = rec2["static"]
 	if static2 == null or not is_instance_valid(static2):
+		print("[CityRuntime] persistence: no static body after reload (cell %s)" % target_key)
 		return false
 	for sh in static2.get_children():
 		if sh is CollisionShape3D and sh.has_meta("vox_id") \
@@ -613,6 +614,7 @@ func _persistence_roundtrip(mgr: ChunkManager, player: Node3D) -> bool:
 			.get_node_or_null(NodePath("Chunks/Chunk_%d_%d"
 					% [coord.x, coord.y]))
 	if chunk2 == null:
+		print("[CityRuntime] persistence: chunk node missing after reload (%s)" % str(coord))
 		return false
 	for child in chunk2.get_children():
 		if child is Door:

@@ -579,14 +579,14 @@ const ROOM_FURNITURE := {
 ## hospitals get waiting benches (no ledgers). All props are small-footprint
 ## Victorian dressing rendered visual-only by BuildingBuilder.
 const LOBBY_PROGRAMS := {
-	"retail": ["counter", "shelf", "counter", "fern", "gaslamp", "gaslamp", "rug", "crate", "gauge", "wallclock"],
-	"hospital": ["bench", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print", "print"],
-	"police": ["counter", "bench", "documents", "coatstand", "gaslamp", "gaslamp", "rug", "cabinet", "wallclock", "umbrella"],
-	"government": ["counter", "bench", "documents", "fern", "coatstand", "gaslamp", "rug", "wallclock", "print", "print"],
-	"office": ["counter", "documents", "bench", "fern", "gaslamp", "gaslamp", "rug", "cabinet", "wallclock", "gauge"],
-	"workshop": ["workbench", "machine", "shelf", "gaslamp", "gaslamp", "rug", "crate", "crate", "gauge", "gauge"],
+	"retail": ["counter", "shelf", "counter", "shelf", "crate", "crate", "fern", "gaslamp", "gaslamp", "rug", "gauge", "wallclock", "hearth"],
+	"hospital": ["fireplace", "bench", "bench", "bench", "documents", "fern", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print", "print"],
+	"police": ["fireplace", "counter", "bench", "bench", "documents", "documents", "coatstand", "umbrella", "gaslamp", "gaslamp", "rug", "cabinet", "wallclock"],
+	"government": ["fireplace", "counter", "bench", "bench", "documents", "documents", "fern", "fern", "coatstand", "gaslamp", "gaslamp", "rug", "wallclock", "print"],
+	"office": ["fireplace", "counter", "documents", "documents", "bench", "cabinet", "cabinet", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "gauge"],
+	"workshop": ["machine", "workbench", "workbench", "shelf", "shelf", "crate", "crate", "crate", "gaslamp", "gaslamp", "rug", "gauge", "gauge", "fireplace"],
 }
-const LOBBY_PROGRAM_DEFAULT := ["counter", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print"]
+const LOBBY_PROGRAM_DEFAULT := ["counter", "bench", "bench", "documents", "fern", "gaslamp", "gaslamp", "rug", "wallclock", "print", "cabinet"]
 
 const FURNITURE_SIZES := {
 	"bed": Vector3(1.45, 0.65, 2.1), "table": Vector3(1.25, 0.8, 0.88),
@@ -604,6 +604,8 @@ const FURNITURE_SIZES := {
 	"wallclock": Vector3(0.55, 0.85, 0.12), "print": Vector3(0.75, 0.95, 0.08),
 	"cabinet": Vector3(1.1, 2.05, 0.5), "umbrella": Vector3(0.35, 0.6, 0.35),
 	"gauge": Vector3(0.5, 0.6, 0.2), "crate": Vector3(0.9, 0.75, 0.9),
+	# Victorian hearth: cast-iron grate in a stone surround under an oak mantel.
+	"fireplace": Vector3(1.7, 1.55, 0.6), "hearth": Vector3(1.9, 0.12, 0.7),
 }
 
 static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
@@ -673,7 +675,7 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 				# Visitor clearance: taller props (ferns, coat stands, cabinets,
 				# lamps) keep a wider gap from neighbours so nothing reads as
 				# clipping; rugs keep 0.5 m off furniture for the border.
-				var halo := 0.45 if kind in ["fern", "coatstand", "gaslamp", "cabinet", "umbrella", "crate", "gauge"] else 0.12
+				var halo := 0.4 if kind in ["fern", "coatstand", "gaslamp", "cabinet", "umbrella", "crate", "gauge"] else 0.12
 				if kind == "rug":
 					halo = 0.5
 				for obstacle: Rect2 in blocked:
@@ -683,7 +685,11 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 				if not clear:
 					continue
 				var center := occupied.get_center()
-				items.append({"id": "%s_%s_%d" % [room["id"], kind, items.size()], "room_id": room["id"], "kind": kind, "size": size, "rect": occupied, "position": Vector3(center.x, fi * fh, center.y)})
+				# Facing: directional props (fireplace/clock/print) must look into
+				# the room, not into the wall they stand against.
+				var to_room := (room["rect"] as Rect2).get_center() - center
+				var yaw := atan2(to_room.x, to_room.y) if to_room.length() > 0.01 else 0.0
+				items.append({"id": "%s_%s_%d" % [room["id"], kind, items.size()], "room_id": room["id"], "kind": kind, "size": size, "rect": occupied, "position": Vector3(center.x, fi * fh, center.y), "yaw": yaw})
 				blocked.append(occupied.grow(0.25))
 				break
 	return items
