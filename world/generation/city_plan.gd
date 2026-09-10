@@ -61,6 +61,8 @@ var settlement: SettlementPlan
 
 var _support_ready := false
 var _generated := false
+var _city_edge_bounds: Array[Rect2] = []   # cached per-edge AABBs
+var _generating := false   # re-entrancy guard for the instrumented wrapper
 var _prof_interior_tries := 0
 var _prof_interior_no_fit := 0
 var _prof_interior_land := 0
@@ -159,13 +161,36 @@ func _ensure_support_plans() -> void:
 
 
 func _ensure_generated() -> void:
-	if _generated:
+	# PERF INSTRUMENT (2026-09-10): full-city generation measured ~85 s for one
+	# call. Chunk streaming calls this lazily, so a single slow generation stalls
+	# the ring past its 60 s regeneration wait ("owner chunk never returned").
+	# Report every generation so the number of times it happens is visible.
+	var _gen_t0 := Time.get_ticks_usec()
+	if _generated or _generating:
 		return
+	_generating = true
+	_ensure_generated_body()
+	_generating = false
+	var _gen_ms := float(Time.get_ticks_usec() - _gen_t0) / 1000.0
+	if _gen_ms >= 500.0:
+		print("[CityPlan] GENERATED in %.0f ms (seed %d)" % [_gen_ms, seed_used])
+
+
+func _ensure_generated_body() -> void:
+	var _p0 := Time.get_ticks_usec()
 	_ensure_support_plans()
+	var _p1 := Time.get_ticks_usec()
 	_generate_landmarks()
+	var _p2 := Time.get_ticks_usec()
 	_generate_city_roads()
+	var _p3 := Time.get_ticks_usec()
 	_generate_city_blocks()
+	var _p4 := Time.get_ticks_usec()
 	_generated = true
+	if float(_p4 - _p0) / 1000.0 >= 500.0:
+		print("[CityPlan]   phases support=%.0f landmarks=%.0f roads=%.0f blocks=%.0f ms" % [
+			float(_p1 - _p0) / 1000.0, float(_p2 - _p1) / 1000.0,
+			float(_p3 - _p2) / 1000.0, float(_p4 - _p3) / 1000.0])
 
 
 # -----------------------------------------------------------------------------
@@ -630,7 +655,7 @@ func _add_void_infill() -> void:
 		while gz <= 560.0:
 			var p := Vector2(gx, gz)
 			if p.length() < 560.0 and _is_valid_city_land(p) \
-					and _distance_to_city_road_raw(p) > 55.0:
+					and not _city_road_within_raw(p, 55.0, true):
 				pts.append(p)
 			gz += 64.0
 		gx += 64.0
@@ -758,7 +783,7 @@ func _roadless_macro_faces() -> Array[Dictionary]:
 			continue
 		if _near_rural_settlement(p):
 			continue
-		if _distance_to_city_road_raw(p) < 11.0:
+		if _city_road_within_raw(p, 11.0):
 			continue
 		var normalized_r := clampf(radius / WorldConstants.CITY_BLOCK_RADIUS_M, 0.0, 1.0)
 		var min_spacing := lerpf(40.0, 88.0, normalized_r)
@@ -804,7 +829,7 @@ func _roadless_macro_faces() -> Array[Dictionary]:
 		if absf(_polygon_area(poly)) < 6000.0:
 			continue
 		var center := _polygon_centroid(poly)
-		if _distance_to_city_road_raw(center) < 25.0:
+		if _city_road_within_raw(center, 25.0):
 			continue
 		out.append({"id": "city_block_%04d" % i, "center": center})
 	return out
@@ -1036,6 +1061,7 @@ func _is_valid_city_land(p: Vector2) -> bool:
 # Irregular block cells and parcels
 
 func _generate_city_blocks() -> void:
+	var _b_sites := Time.get_ticks_usec()
 	_blocks.clear()
 	_block_by_cell.clear()
 	_all_buildings.clear()
@@ -1070,7 +1096,7 @@ func _generate_city_blocks() -> void:
 			continue
 		# Sites stay clear of the actual road ribbon; their Voronoi boundaries
 		# then read as street fronts instead of streets through buildings.
-		if _distance_to_city_road_raw(p) < 11.0:
+		if _city_road_within_raw(p, 11.0):
 			continue
 		var normalized_r := clampf(radius / WorldConstants.CITY_BLOCK_RADIUS_M, 0.0, 1.0)
 		var min_spacing := lerpf(40.0, 88.0, normalized_r)
@@ -1114,7 +1140,9 @@ func _generate_city_blocks() -> void:
 	# actual road ribbons and promote the resulting land faces to block cells.
 	# This keeps the irregular macro boundary while making roads the block
 	# partition authority rather than merely drawing roads over unrelated cells.
+	var _b0 := Time.get_ticks_usec()
 	_blocks = _split_city_blocks_by_roads(_blocks)
+	var _b1 := Time.get_ticks_usec()
 
 	_blocks.sort_custom(_dict_id_cmp)
 	_block_by_cell.clear()
@@ -1135,10 +1163,18 @@ func _generate_city_blocks() -> void:
 			_building_by_id[String(spec["id"])] = spec
 		_block_by_cell[block["cell"]] = block
 	_append_global_road_frontage_fill()
+	var _b2 := Time.get_ticks_usec()
 	_fill_block_interiors()
+	var _b3 := Time.get_ticks_usec()
 	_guarantee_dense_block_minimum()
+	var _b4 := Time.get_ticks_usec()
 	_all_buildings.sort_custom(_dict_id_cmp)
 	_finalize_block_fabric()
+	var _b5 := Time.get_ticks_usec()
+	if float(_b5 - _b0) / 1000.0 >= 400.0:
+		print("[CityPlan]     BLOCKS sites_loop=%.0f split=%.0f frontage=%.0f interiors=%.0f dense_min=%.0f finalize=%.0f ms" % [
+			float(_b0 - _b_sites) / 1000.0, float(_b1 - _b0) / 1000.0, float(_b2 - _b1) / 1000.0,
+			float(_b3 - _b2) / 1000.0, float(_b4 - _b3) / 1000.0, float(_b5 - _b4) / 1000.0])
 
 
 ## G10-P2B-FIX2: finalize the parcel surface contract after every frontage
@@ -1631,7 +1667,7 @@ func _append_global_road_frontage_fill() -> void:
 					var passage: Dictionary = block.get("passage", {}) as Dictionary
 					if _lot_overlaps_passage(lot, yaw, passage):
 						continue
-					if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
+					if _city_road_within_raw(center, 5.0) or not _lot_clear_of_city_roads(lot, yaw):
 						continue
 					if _city_lot_overlaps_existing(lot, yaw):
 						continue
@@ -1746,7 +1782,7 @@ func _fill_block_interiors() -> void:
 						_prof_interior_land += 1
 					elif _lot_overlaps_passage(lot, yaw_used, passage):
 						_prof_interior_passage += 1
-					elif _distance_to_city_road_raw(c) < 5.0 \
+					elif _city_road_within_raw(c, 5.0) \
 							or not _lot_clear_of_city_roads(lot, yaw_used):
 						_prof_interior_road += 1
 					elif _city_lot_overlaps_existing(lot, yaw_used):
@@ -1763,7 +1799,7 @@ func _fill_block_interiors() -> void:
 						and _city_lot_has_valid_land(lot, yaw_used) \
 						and not _near_rural_settlement(c) \
 						and not _lot_overlaps_passage(lot, yaw_used, passage) \
-						and _distance_to_city_road_raw(c) >= 5.0 \
+						and not _city_road_within_raw(c, 5.0) \
 						and _lot_clear_of_city_roads(lot, yaw_used) \
 						and not _city_lot_overlaps_existing(lot, yaw_used):
 					var outward := c - center
@@ -2391,7 +2427,7 @@ func _append_road_frontage_lots(result: Array[Dictionary], block: Dictionary,
 						continue
 					if _lot_overlaps_passage(lot, yaw, passage):
 						continue
-					if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
+					if _city_road_within_raw(center, 5.0) or not _lot_clear_of_city_roads(lot, yaw):
 						continue
 					var duplicate := false
 					for existing: Dictionary in result:
@@ -2760,7 +2796,7 @@ func _append_rear_frontage_lot(result: Array[Dictionary], block: Dictionary,
 		return
 	if _lot_overlaps_passage(lot, yaw, passage):
 		return
-	if _distance_to_city_road_raw(center) < 5.0 or not _lot_clear_of_city_roads(lot, yaw):
+	if _city_road_within_raw(center, 5.0) or not _lot_clear_of_city_roads(lot, yaw):
 		return
 	for existing: Dictionary in result:
 		if _lots_overlap(lot, yaw, existing["rect"] as Rect2,
@@ -3246,6 +3282,62 @@ func city_road_hierarchy_at(p: Vector2) -> StringName:
 func distance_to_city_road(p: Vector2) -> float:
 	_ensure_generated()
 	return _distance_to_city_road_raw(p)
+
+
+## True when the nearest city road is within `limit` of p.
+##
+## PERF (2026-09-10): the block site-acceptance and lot-placement loops only
+## ever need a THRESHOLD from this query, but they called
+## _distance_to_city_road_raw(), which walks every point of every road edge to
+## build a global minimum. At 1,200 site candidates x the whole network, twice,
+## that measured ~49 s of CityPlan generation for the canonical seed - and plan
+## generation is lazy, so that stall landed inside chunk streaming and surfaced
+## as "owner chunk never returned" in the 60 s persistence gate.
+##
+## This predicate returns the same answer cheaper: far edges are rejected on a
+## cached bounding box (O(1) each) and only edges that could be close enough
+## have their polyline points examined, exiting on the first hit. Passing
+## inclusive=true gives "d <= limit", so callers that need "d > limit" or
+## "d >= limit" stay exactly equivalent.
+func _city_road_within_raw(p: Vector2, limit: float, inclusive := false) -> bool:
+	_ensure_city_edge_bounds()
+	var limit2 := limit * limit
+	for i in _city_edges.size():
+		var b: Rect2 = _city_edge_bounds[i]
+		# Distance from p to the edge's bounding box (0 when inside it).
+		var dx := maxf(maxf(b.position.x - p.x, 0.0), p.x - b.position.x - b.size.x)
+		var dy := maxf(maxf(b.position.y - p.y, 0.0), p.y - b.position.y - b.size.y)
+		if dx * dx + dy * dy > limit2:
+			continue
+		var poly: PackedVector2Array = _city_edges[i]["polyline"] as PackedVector2Array
+		var d := _distance_to_polyline(p, poly)
+		if inclusive:
+			if d <= limit:
+				return true
+		elif d < limit:
+			return true
+	return false
+
+
+## Bounding boxes of every city road edge polyline, cached against the edge
+## list. Rebuilt only when the network itself changes.
+func _ensure_city_edge_bounds() -> void:
+	if _city_edge_bounds.size() == _city_edges.size():
+		return
+	_city_edge_bounds.clear()
+	for edge: Dictionary in _city_edges:
+		var poly: PackedVector2Array = edge["polyline"] as PackedVector2Array
+		if poly.is_empty():
+			_city_edge_bounds.append(Rect2())
+			continue
+		var lo := poly[0]
+		var hi := poly[0]
+		for q: Vector2 in poly:
+			lo.x = minf(lo.x, q.x)
+			lo.y = minf(lo.y, q.y)
+			hi.x = maxf(hi.x, q.x)
+			hi.y = maxf(hi.y, q.y)
+		_city_edge_bounds.append(Rect2(lo, hi - lo))
 
 
 func _distance_to_city_road_raw(p: Vector2) -> float:

@@ -1,7 +1,7 @@
 class_name ChunkBuilder
 extends RefCounted
 ## Cap on real interior OmniLights per streamed chunk (lighting budget).
-const INTERIOR_LIGHT_CAP := 40
+const INTERIOR_LIGHT_CAP := 20
 
 const PavementPlanScript = preload("res://world/generation/pavement_plan.gd")
 ## Materializes ONE chunk of the deterministic city plan into batched
@@ -49,11 +49,19 @@ const LAMP_PLAZA_EXCLUDE_M := 12.0
 
 
 ## Emits everything for `coord` into `b`. Deterministic and side-effect free.
+## Debug profiling switch: when true, fill_batcher() prints a phase breakdown
+## (and flags any building whose plan generation dominates the chunk). Set from
+## a probe script; never enabled in normal runs.
+static var debug_profile := false
+
 static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 		world_plan: WorldPlan = null) -> void:
 	var rect := WorldSeed.chunk_rect(coord)
+	var _t0 := Time.get_ticks_usec()
 	_roads(b, plan, rect, world_plan)
+	var _t_roads := Time.get_ticks_usec()
 	_joined_pavements(b, plan, rect, world_plan)
+	var _t_pave := Time.get_ticks_usec()
 	for cell in plan.cells_in_rect(rect):
 		var block := plan.cell_block(cell)
 		var block_bounds: Rect2 = block.get("bounds", block["rect"]) as Rect2
@@ -69,13 +77,22 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 				_plaza(b, plan, block, rect, coord, world_plan)
 			_:
 				_park(b, plan, block, rect, coord, world_plan)
+	var _t_blocks := Time.get_ticks_usec()
 	var owned_buildings: Array = _owned_buildings(plan, rect, coord)
+	var _t_owned := Time.get_ticks_usec()
+	var _slow: Array = []
 	for spec in owned_buildings:
+		var _b0 := Time.get_ticks_usec()
 		# G10-P2A: the universal building contract - the ONLY normal path
 		# for enterable buildings. Delegates to the reference BuildingBuilder
 		# after contract-stamping + registration (byte-identical city
 		# geometry, now validated by BuildingContractValidator).
 		UniversalBuildingAssembler.build_into(b, _grounded_spec(spec, world_plan))
+		if debug_profile:
+			var _bms := float(Time.get_ticks_usec() - _b0) / 1000.0
+			if _bms >= 50.0:
+				_slow.append([String(spec.get("id", "?")), _bms, int(spec.get("floors", 0)),
+						str(spec.get("use", "")), int(spec.get("district", 0))])
 	# A city chunk can contain a road junction but no building footprint. Keep a
 	# tiny destructible curb marker in that empty case so the chunk still owns a
 	# real static body for persistence/streaming probes; it is not a building,
@@ -87,7 +104,20 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 		b.add_destructible_box(Vector3(curb_center.x, curb_y + 0.04, curb_center.y),
 				Vector3(0.42, 0.08, 0.42), Color("3b3b37"), &"concrete", true,
 				"city_curb_%d_%d" % [coord.x, coord.y])
+	var _t_build := Time.get_ticks_usec()
 	_scatter_props(b, plan, rect, coord, world_plan)
+	if debug_profile:
+		_slow.sort_custom(func(a: Array, c: Array) -> bool: return float(a[1]) > float(c[1]))
+		print("[ChunkPlan] %s roads=%.0f pave=%.0f blocks=%.0f owned=%.0f buildings=%.0f props=%.0f TOTAL=%.0f ms" % [
+			str(coord),
+			float(_t_roads - _t0) / 1000.0, float(_t_pave - _t_roads) / 1000.0,
+			float(_t_blocks - _t_pave) / 1000.0, float(_t_owned - _t_blocks) / 1000.0,
+			float(_t_build - _t_owned) / 1000.0,
+			float(Time.get_ticks_usec() - _t_build) / 1000.0,
+			float(Time.get_ticks_usec() - _t0) / 1000.0])
+		for row: Array in _slow.slice(0, 6):
+			print("[ChunkPlan]   SLOW %s %.0f ms floors=%d use=%s district=%s" % [
+				row[0], row[1], row[2], row[3], row[4]])
 
 
 ## Builds the chunk node under `parent` and returns generation stats.
@@ -497,8 +527,12 @@ static func _ground(b: MeshBatcher, plan: CityPlan, coord: Vector2i) -> void:
 
 static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		world_plan: WorldPlan = null) -> void:
+	var _r0 := Time.get_ticks_usec()
 	_emit_halo_lamps(b, plan, rect, world_plan)
+	var _r1 := Time.get_ticks_usec()
 	var street_edges := plan.city_road_segments_in(rect.grow(8.0))
+	var _r2 := Time.get_ticks_usec()
+	var _pieces := 0
 	for edge: Dictionary in street_edges:
 		var poly: PackedVector2Array = edge.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
 		var hierarchy: StringName = edge.get("hierarchy", &"local") as StringName
@@ -553,12 +587,17 @@ static func _roads(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 					color = ALLEY_FLOOR
 				if bool(edge.get("is_bridge", false)):
 					color = Color("5e5a52")
+				_pieces += 1
 				b.push_layer("street_setts")
 				b.add_box_rotated(Vector3(mid.x, road_center_y, mid.y),
 					Vector3(width, 0.11, piece_length + 0.12), basis, color, false)
 				b.pop_layer()
 				_emit_street_pavements(b, edge, street_edges, mid, road_center_y,
 					piece_length, width, basis, false)
+	if debug_profile:
+		print("[ChunkPlan]   ROADS halo=%.0f segments_query=%.0f emit_loop=%.0f edges=%d pieces=%d" % [
+			float(_r1 - _r0) / 1000.0, float(_r2 - _r1) / 1000.0,
+			float(Time.get_ticks_usec() - _r2) / 1000.0, street_edges.size(), _pieces])
 
 
 static func _emit_street_pavements(b: MeshBatcher, edge: Dictionary,
@@ -573,13 +612,27 @@ static func _emit_street_pavements(b: MeshBatcher, edge: Dictionary,
 		var center := mid + Vector2(offset.x, offset.z)
 		var footprint := Rect2(center - Vector2(depth, length) * 0.5, Vector2(depth, length))
 		var clear := true
+		# PERF (2026-09-10): this runs once per ROAD PIECE, so an unguarded
+		# scan of every other street's every segment is O(pieces x edges x
+		# segments) - millions of oriented-rect tests on a street-dense chunk,
+		# which measured 86 s of plan time for one chunk and starved the
+		# streaming ring (surfacing as "owner chunk never returned" in the
+		# persistence gate). Reject on the cheap segment AABB first; the
+		# oriented test only runs for segments that could possibly touch.
 		for other in street_edges:
 			if str(other.get("id", "")) == str(edge.get("id", "")):
 				continue
 			var line: PackedVector2Array = other.get("polyline_clipped", PackedVector2Array()) as PackedVector2Array
+			var other_pad: float = float(other.get("width", 5.0)) * 0.5 + 0.1
 			for i in range(line.size() - 1):
-				if CityPlan._segment_intersects_oriented_lot(line[i], line[i + 1], footprint,
-					yaw, float(other.get("width", 5.0)) * 0.5 + 0.1):
+				var sa: Vector2 = line[i]
+				var sb: Vector2 = line[i + 1]
+				var seg_min := Vector2(minf(sa.x, sb.x) - other_pad, minf(sa.y, sb.y) - other_pad)
+				var seg_max := Vector2(maxf(sa.x, sb.x) + other_pad, maxf(sa.y, sb.y) + other_pad)
+				if not footprint.intersects(Rect2(seg_min, seg_max - seg_min)):
+					continue
+				if CityPlan._segment_intersects_oriented_lot(sa, sb, footprint,
+					yaw, other_pad):
 					clear = false
 		if not clear:
 			continue
@@ -633,13 +686,62 @@ static func _joined_pavements(b: MeshBatcher, plan: CityPlan, rect: Rect2, world
 ## P2B-FIX lamp driver, called ONCE per _roads (function level, never per
 ## piece/edge). Halo query (grow 24) + ghost claims keep spacing across
 ## chunk borders; `accepted` spans every halo edge of this chunk.
+## Spatial bucket store for lamp-spacing tests.
+##
+## PERF (2026-09-10): the lamp pass used to scan EVERY already-accepted lamp for
+## EVERY candidate (a plain Array), which is quadratic. On the dense core chunk
+## (long primaries, many ghost claims) that measured ~85 s of PLAN time for a
+## single chunk. Because plan generation runs while the streaming ring waits,
+## the symptom surfaced far away as "owner chunk never returned" in the 60 s
+## persistence gate - a streaming-looking bug with a lamp-placement cause.
+##
+## Buckets are LAMP_MIN_SEP wide, so a candidate only tests its own 3x3
+## neighbourhood. The test is a pure radius query, so results are identical to
+## the old linear scan (order never affected the outcome).
+class LampSpacing:
+	var _cells: Dictionary = {}
+
+	func add(p: Vector2) -> void:
+		var key := _key(p)
+		if not _cells.has(key):
+			_cells[key] = []
+		(_cells[key] as Array).append(p)
+
+	func has_within(p: Vector2, radius: float) -> bool:
+		var reach := maxi(1, int(ceil(radius / maxf(ChunkBuilder.LAMP_MIN_SEP, 0.001))))
+		var key := _key(p)
+		for dx in range(-reach, reach + 1):
+			for dy in range(-reach, reach + 1):
+				var arr: Variant = _cells.get(Vector2i(key.x + dx, key.y + dy))
+				if arr == null:
+					continue
+				for q: Vector2 in (arr as Array):
+					if p.distance_to(q) < radius:
+						return true
+		return false
+
+	func _key(p: Vector2) -> Vector2i:
+		var cell := maxf(ChunkBuilder.LAMP_MIN_SEP, 0.001)
+		return Vector2i(int(floor(p.x / cell)), int(floor(p.y / cell)))
+
+
 static func _emit_halo_lamps(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		world_plan: WorldPlan = null) -> void:
+	var _h0 := Time.get_ticks_usec()
 	var lamp_discs := _lamp_exclusion_discs(plan, rect)
-	var lamp_accepted: Array = []  # plain Array[Vector2]: shared by reference
-	for lamp_edge in plan.city_road_segments_in(rect.grow(24.0)):
+	var _h1 := Time.get_ticks_usec()
+	var lamp_accepted := LampSpacing.new()  # shared by reference
+	var _edges := plan.city_road_segments_in(rect.grow(24.0))
+	var _h2 := Time.get_ticks_usec()
+	var _emitted := 0
+	for lamp_edge in _edges:
 		_lamps_for_edge(b, plan, lamp_edge, rect, lamp_discs, lamp_accepted,
 			world_plan)
+	var _h3 := Time.get_ticks_usec()
+	if debug_profile:
+		print("[ChunkPlan]     HALO discs=%.0f query=%.0f lamps=%.0f edges=%d" % [
+			float(_h1 - _h0) / 1000.0, float(_h2 - _h1) / 1000.0,
+			float(_h3 - _h2) / 1000.0, _edges.size()])
 
 
 ## Junction/plaza exclusion discs for lamp placement: Array of
@@ -648,7 +750,10 @@ static func _emit_halo_lamps(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 static func _lamp_exclusion_discs(plan: CityPlan, rect: Rect2) -> Array:
 	var discs: Array = []
 	var grown := rect.grow(40.0)
-	for node in plan.city_nodes():
+	var _d0 := Time.get_ticks_usec()
+	var _nodes := plan.city_nodes()
+	var _d1 := Time.get_ticks_usec()
+	for node in _nodes:
 		var nid := String(node.get("id", ""))
 		var deg := int(node.get("degree", 0))
 		# P2B-FIX: only named convergence hearts + true monster junctions
@@ -660,7 +765,14 @@ static func _lamp_exclusion_discs(plan: CityPlan, rect: Rect2) -> Array:
 			var c: Vector2 = node.get("center", Vector2.ZERO) as Vector2
 			if grown.has_point(c):
 				discs.append(Vector3(c.x, c.y, LAMP_JUNCTION_EXCLUDE_M))
-	for block in plan.city_blocks_in(grown):
+	var _d2 := Time.get_ticks_usec()
+	var _blocks := plan.city_blocks_in(grown)
+	var _d3 := Time.get_ticks_usec()
+	if debug_profile:
+		print("[ChunkPlan]       DISCS nodes=%.0f (%d) blocks_query=%.0f (%d) setup_total=%.0f" % [
+			float(_d1 - _d0) / 1000.0, _nodes.size(), float(_d3 - _d2) / 1000.0,
+			_blocks.size(), float(_d3 - _d0) / 1000.0])
+	for block in _blocks:
 		if (block.get("kind", &"") as StringName) == &"plaza":
 			var bc: Vector2 = block.get("center", Vector2.ZERO) as Vector2
 			var bb: Rect2 = block.get("bounds", block.get("rect", Rect2())) as Rect2
@@ -677,7 +789,7 @@ static func _lamp_exclusion_discs(plan: CityPlan, rect: Rect2) -> Array:
 ## keep their night pools. `accepted` is a plain Array (shared by
 ## reference) of Vector2 lamp positions for cross-edge spacing.
 static func _lamps_for_edge(b: MeshBatcher, plan: CityPlan, edge: Dictionary,
-		rect: Rect2, discs: Array, accepted: Array,
+		rect: Rect2, discs: Array, accepted: LampSpacing,
 		world_plan: WorldPlan = null) -> void:
 	if (edge.get("hierarchy", &"local") as StringName) != &"primary":
 		return
@@ -718,7 +830,7 @@ static func _lamps_for_edge(b: MeshBatcher, plan: CityPlan, edge: Dictionary,
 			# unconditionally — the bias favors exclusion zones, which is the
 			# desired direction near junctions and plazas.
 			if rect.grow(16.0).has_point(lp):
-				accepted.append(lamp_p)
+				accepted.add(lamp_p)
 			continue  # owned by the containing chunk
 		var rejected := false
 		for disc in discs:
@@ -726,14 +838,11 @@ static func _lamps_for_edge(b: MeshBatcher, plan: CityPlan, edge: Dictionary,
 			if lamp_p.distance_to(Vector2(d.x, d.y)) < d.z:
 				rejected = true
 				break
-		if not rejected:
-			for q in accepted:
-				if lamp_p.distance_to(q as Vector2) < LAMP_MIN_SEP:
-					rejected = true
-					break
+		if not rejected and accepted.has_within(lamp_p, LAMP_MIN_SEP):
+			rejected = true
 		if rejected:
 			continue
-		accepted.append(lamp_p)
+		accepted.add(lamp_p)
 		var lamp_ground_y := 0.0
 		if world_plan != null:
 			lamp_ground_y = world_plan.surface_height_at(lp)
@@ -754,7 +863,7 @@ static func _lamps_for_edge(b: MeshBatcher, plan: CityPlan, edge: Dictionary,
 ## accepted lamp is nearby. Same discs/side-offset/ground rules as anchors.
 static func _emit_fallback_lamp(b: MeshBatcher, _plan: CityPlan,
 		edge: Dictionary, full: PackedVector2Array, width: float,
-		edge_seed: int, rect: Rect2, discs: Array, accepted: Array,
+		edge_seed: int, rect: Rect2, discs: Array, accepted: LampSpacing,
 		world_plan: WorldPlan = null) -> void:
 	var best_run: Array[Vector2] = []
 	var best_tan := Vector2.RIGHT
@@ -784,9 +893,9 @@ static func _emit_fallback_lamp(b: MeshBatcher, _plan: CityPlan,
 		return
 	var mid: Vector2 = best_run[best_run.size() / 2]
 	# Gate: never double an anchor pool (20 m > LAMP_MIN_SEP on purpose).
-	for q in accepted:
-		if mid.distance_to(q as Vector2) < 20.0:
-			return
+	if accepted.has_within(mid, 20.0):
+		return
+
 	var side := 1.0 if edge_seed % 2 == 0 else -1.0
 	var lamp_p := mid + Vector2(-best_tan.y, best_tan.x) \
 		* (width * 0.5 + 0.85)
@@ -794,10 +903,10 @@ static func _emit_fallback_lamp(b: MeshBatcher, _plan: CityPlan,
 		var d := disc as Vector3
 		if lamp_p.distance_to(Vector2(d.x, d.y)) < d.z:
 			return
-	for q in accepted:
-		if lamp_p.distance_to(q as Vector2) < LAMP_MIN_SEP:
-			return
-	accepted.append(lamp_p)
+	if accepted.has_within(lamp_p, LAMP_MIN_SEP):
+		return
+
+	accepted.add(lamp_p)
 	var gy := 0.0
 	if world_plan != null:
 		gy = world_plan.surface_height_at(mid)

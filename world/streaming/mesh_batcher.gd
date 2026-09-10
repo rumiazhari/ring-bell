@@ -27,7 +27,10 @@ var _polygon_specs: Array[Dictionary] = [] # visual ground polygons: {points,y,c
 var _prepared_layers: Dictionary = {}
 var _box_shapes: Dictionary = {} # immutable size -> BoxShape3D, per batcher
 var _inactive_body: StaticBody3D
-static var _opaque_material: StandardMaterial3D
+## Debug switch: print a flush phase breakdown (set by probes only).
+static var debug_profile := false
+
+static var _opaque_material: ShaderMaterial
 static var _transparent_material: StandardMaterial3D
 static var _paving_materials: Dictionary = {}
 var _asset_instances: Array[Dictionary] = [] # {pos,size,color,res_path,scale,has_collision,yaw,layer,building_id,floor_i}
@@ -58,6 +61,84 @@ var layer_nodes := {}                  # layer key -> MeshInstance3D
 var _parent: Node3D
 var _shape_nodes: Dictionary = {}      # vox_id -> CollisionShape3D
 var _building_transform_stack: Array[Dictionary] = []
+## Atlas tiles (must match tools/gen_surface_atlas.py TILE order).
+const TILE_PLASTER_FINE := 0
+const TILE_PLASTER_COARSE := 1
+const TILE_PLASTER_DAMAGED := 2
+const TILE_BRICK := 3
+const TILE_STONE_RUBBLE := 4
+const TILE_WOOD_PALE := 5
+const TILE_WOOD_DARK := 6
+const TILE_FLOORBOARD := 7
+const TILE_TILE_CHECKER := 8
+const TILE_COBBLE := 9
+const TILE_SLATE := 10
+const TILE_RUST_METAL := 11
+const TILE_MOSS := 12
+const TILE_GRIME := 13
+const TILE_GLASS := 14
+const TILE_RENDER_GREY := 15
+
+## How many world metres one atlas tile spans, per tile. Surfaces with fine
+## structure (wood grain, rust) tile small; plaster tiles large so it reads as
+## a surface rather than noise.
+static func tile_span(tile: int) -> float:
+	match tile:
+		TILE_WOOD_PALE, TILE_WOOD_DARK, TILE_RUST_METAL:
+			return 0.9
+		TILE_SLATE, TILE_COBBLE:
+			return 1.2
+		TILE_BRICK, TILE_STONE_RUBBLE, TILE_TILE_CHECKER:
+			return 1.8
+		TILE_FLOORBOARD, TILE_GLASS, TILE_MOSS:
+			return 2.4
+		_:
+			return 3.2   # plaster / render / grime
+
+
+## Surface stack: the atlas tile for the geometry currently being generated.
+## Builders push the right surface around a group of boxes (roof, floor,
+## panelling...); anything without an explicit hint is auto-detected from the
+## box colour and role, so untouched call sites still get sensible detail.
+var _surface_stack: Array[int] = []
+
+
+func push_surface(tile: int) -> void:
+	_surface_stack.append(tile)
+
+
+func pop_surface() -> void:
+	if not _surface_stack.is_empty():
+		_surface_stack.pop_back()
+
+
+## Pick the atlas tile for a box: explicit hint, else inferred from the spec.
+func _tile_for(spec: Dictionary, col: Color) -> int:
+	if not _surface_stack.is_empty():
+		return _surface_stack.back()
+	var mat: StringName = spec["material"]
+	if mat == &"glass":
+		return TILE_GLASS
+	if bool(spec["roof"]):
+		return TILE_SLATE
+	var layer := String(spec["layer"])
+	if layer.contains("paving") or layer.contains("setts"):
+		return TILE_COBBLE
+	var sat := col.s
+	var val := col.v
+	# Greens read as moss/algae; greys as bare stone; very dark greys as iron.
+	if sat > 0.18 and col.h > 0.18 and col.h < 0.45:
+		return TILE_MOSS
+	if sat < 0.13:
+		return TILE_RUST_METAL if val < 0.55 else TILE_RENDER_GREY
+	# Warm mid-tones are joinery (walnut/oak), pale ones are plaster walls.
+	if val < 0.42:
+		return TILE_WOOD_DARK
+	if val < 0.72:
+		return TILE_WOOD_PALE
+	return TILE_PLASTER_FINE
+
+
 ## Post-apocalypse weathering: the decay level of the building currently being
 ## generated. Stamped onto every spec so the mesh pass can weather each face
 ## deterministically (specs keep the raw colour; only MESH vertices darken, so
@@ -531,8 +612,10 @@ func flush_into(parent: Node3D, body_layer := 1,
 	_asset_nodes.clear()
 	var stats := {"mesh_nodes": 0, "colliders": _colliders.size()}
 
+	var _f0 := Time.get_ticks_usec()
 	var groups := _prepared_layers if not _prepared_layers.is_empty() else _build_layers()
 	_prepared_layers = {}
+	var _f1 := Time.get_ticks_usec()
 	for key: String in groups.keys():
 		var mi := MeshInstance3D.new()
 		mi.name = "L_%s" % (key.replace(":", "_").replace("|", "_")
@@ -542,8 +625,10 @@ func flush_into(parent: Node3D, body_layer := 1,
 		layer_nodes[key] = mi
 		stats["mesh_nodes"] += 1
 
+	var _f2 := Time.get_ticks_usec()
 	if include_collision:
 		_flush_collision_into(parent, body_layer)
+	var _f3 := Time.get_ticks_usec()
 	# G9 M2 Asset Pipeline: instantiate queued modular walls (visual only, 0 collider, scale 1.0)
 	# Each asset is a MeshInstance from wall_2m.glb or fallback BoxMesh if GLB missing/invalid.
 	# ACTIVE-only visual: ChunkManager disables via queue_free on unload; warm retains visuals disabled.
@@ -617,6 +702,11 @@ func flush_into(parent: Node3D, body_layer := 1,
 		parent.add_child(mi_fb)
 		asset_count += 1
 	stats["asset_instances"] = asset_count
+	if debug_profile:
+		print("[Flush] layers=%.0f mesh=%.0f collision=%.0f assets=%.0f ms boxes=%d specs=%d" % [
+			float(_f1 - _f0) / 1000.0, float(_f2 - _f1) / 1000.0,
+			float(_f3 - _f2) / 1000.0, float(Time.get_ticks_usec() - _f3) / 1000.0,
+			box_count(), _specs.size()])
 	return stats
 
 
@@ -889,7 +979,8 @@ func _build_layers(only: Dictionary = {}) -> Dictionary:
 			continue
 		if not groups.has(key):
 			groups[key] = {"color": spec["color"], "verts": PackedVector3Array(),
-				"normals": PackedVector3Array(), "colors": PackedColorArray(), "idx": PackedInt32Array()}
+				"normals": PackedVector3Array(), "colors": PackedColorArray(),
+				"uvs": PackedVector2Array(), "idx": PackedInt32Array()}
 		var buf: Dictionary = groups[key]
 		_emit_box(buf, spec)
 	for polygon: Dictionary in _polygon_specs:
@@ -898,7 +989,8 @@ func _build_layers(only: Dictionary = {}) -> Dictionary:
 			continue
 		if not groups.has(polygon_key):
 			groups[polygon_key] = {"color": polygon.get("color", Color.WHITE), "verts": PackedVector3Array(),
-				"normals": PackedVector3Array(), "colors": PackedColorArray(), "idx": PackedInt32Array()}
+				"normals": PackedVector3Array(), "colors": PackedColorArray(),
+				"uvs": PackedVector2Array(), "idx": PackedInt32Array()}
 		var polygon_buf: Dictionary = groups[polygon_key]
 		_emit_polygon(polygon_buf, polygon)
 	return groups
@@ -911,7 +1003,9 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 	var verts: PackedVector3Array = buf["verts"]
 	var normals: PackedVector3Array = buf["normals"]
 	var colors: PackedColorArray = buf["colors"]
+	var uvs: PackedVector2Array = buf["uvs"]
 	var base := verts.size()
+	var poly_tile := float(_surface_stack.back()) if not _surface_stack.is_empty() else float(TILE_COBBLE)
 	var y: float = float(polygon.get("y", 0.0))
 	var heights: PackedFloat32Array = polygon.get("heights", PackedFloat32Array())
 	var col: Color = polygon.get("color", Color.WHITE) as Color
@@ -920,6 +1014,8 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 		verts.append(Vector3(p.x, heights[point_i] if heights.size() == points.size() else y, p.y))
 		normals.append(Vector3.UP)
 		colors.append(col)
+		# Ground polygons carry the same packed (tile, span) attribute.
+		uvs.append(Vector2(poly_tile, tile_span(int(poly_tile))))
 	# NOTE: never `(buf["verts"] as PackedVector3Array).append(...)` — the
 	# `as` cast copies the packed array, so appends are silently lost and the
 	# polygon renders nothing. Typed locals above share the stored array.
@@ -951,6 +1047,7 @@ func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
 	# vertex) keeps the cost off the streaming budget; the vertical gradient is
 	# plain arithmetic. Low corners of a box go dampest, top edges sootiest.
 	var decay: float = float(spec.get("decay", 0.0))
+	var tile := _tile_for(spec, col)
 	var mould := 0.0
 	if decay > 0.001:
 		mould = decay * _hash01(pos + Vector3(7.3, 1.7, 13.1))
@@ -967,9 +1064,14 @@ func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
 			c - hu - hv, c + hu - hv, c + hu + hv, c - hu + hv,
 		]
 		var base := verts.size()
+		var wn := basis * n
 		for p in corners:
 			verts.append(p)
-			buf["normals"].append(basis * n)
+			buf["normals"].append(wn)
+			# Single packed attribute: (atlas tile, metres per tile). The shader
+			# derives the planar pattern coords from world position, so no second
+			# UV array is needed - vertex bytes are the streaming budget here.
+			buf["uvs"].append(Vector2(float(tile), tile_span(tile)))
 			var vcol := col
 			if decay > 0.001:
 				# Per-vertex grime: patchy soot + vertical damp streaks (streak is
@@ -1033,6 +1135,7 @@ func _mesh_from(groups: Dictionary) -> ArrayMesh:
 		arrays[Mesh.ARRAY_VERTEX] = buf["verts"]
 		arrays[Mesh.ARRAY_NORMAL] = buf["normals"]
 		arrays[Mesh.ARRAY_COLOR] = buf["colors"]
+		arrays[Mesh.ARRAY_TEX_UV] = buf["uvs"]
 		arrays[Mesh.ARRAY_INDEX] = buf["idx"]
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var surf_idx := mesh.get_surface_count() - 1
@@ -1050,13 +1153,19 @@ func _mesh_from(groups: Dictionary) -> ArrayMesh:
 	return mesh
 
 
-static func _shared_material() -> StandardMaterial3D:
+## Opaque city material: the surface-detail atlas multiplied by vertex colour.
+## Vertex colour still carries the whole building palette and the decay
+## weathering; the atlas only adds the surface structure that flat vertex
+## colours could not express (grain, mortar, plaster, rust).
+static func _shared_material() -> ShaderMaterial:
 	if _opaque_material != null:
 		return _opaque_material
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
-	mat.metallic = 0.0
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://world/streaming/surface_atlas.gdshader")
+	mat.set_shader_parameter("atlas", preload("res://world/streaming/surface_atlas.png"))
+	mat.set_shader_parameter("atlas_grid", Vector2(4.0, 4.0))
+	mat.set_shader_parameter("surface_roughness", 0.95)
+	mat.set_shader_parameter("metallic_hint", 0.0)
 	_opaque_material = mat
 	return mat
 

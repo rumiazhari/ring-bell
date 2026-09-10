@@ -95,6 +95,12 @@ func _ready() -> void:
 	if args.has("--buildingrepairtest"):
 		add_child(load("res://debug/city_building_repair_test.gd").new())
 		return
+	if args.has("--chunkplanprobe"):
+		add_child(load("res://debug/chunk_plan_probe.gd").new())
+		return
+	if args.has("--chunkbudget"):
+		add_child(load("res://debug/chunk_budget_test.gd").new())
+		return
 	if args.has("--g10p2b-spawnprobe"):
 		var spawn_probe: Node = load("res://debug/g10p2b_spawn_probe.gd").new()
 		spawn_probe.name = "G10P2BSpawnProbe"

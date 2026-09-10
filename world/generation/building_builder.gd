@@ -346,7 +346,9 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 
 	# Elevated-ground support and exterior approach remain part of the same
 	# contract-owned building assembly; no separate shell or scene is created.
+	b.push_surface(MeshBatcher.TILE_STONE_RUBBLE)
 	_emit_foundation_and_access(b, off, w, d, tag, spec)
+	b.pop_surface()
 
 	# --- ground slab (STRUCTURAL, top FLUSH with building base plane) ----------
 	# A raised plinth here used to put a 22 cm vertical lip in every doorway -
@@ -547,7 +549,9 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	_ruin_features(b, off, w, d, tag, spec, decay, ruin)
 
 	# --- interior partitions (P1) -------------------------------------------------
+	b.push_surface(MeshBatcher.TILE_PLASTER_COARSE)
 	_emit_interior_partitions(b, off, w, d, fh, n, tag, spec, zone, has_stairs)
+	b.pop_surface()
 
 	# --- staircase --------------------------------------------------------------
 	var guard_on_east := true
@@ -558,8 +562,10 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 
 	# --- roof -------------------------------------------------------------------
 	b.push_layer(tag + ":roof")
+	b.push_surface(MeshBatcher.TILE_SLATE)
 	_roof(b, off, fp, style, roof_c, wall_c, total_h, zone, has_stairs,
 			guard_on_east)
+	b.pop_surface()
 	b.pop_layer()
 	b.pop_decay()
 
@@ -3503,10 +3509,12 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			var d0 := footprint.size.y
 			var strip_w := 2.7   # wide bands: 0.9 m strips cost ~18 boxes/building
 			var nx := int(ceil(w0 / strip_w))
+			b.push_surface(MeshBatcher.TILE_FLOORBOARD)
 			for si in nx:
 				var sx := strip_w * (si + 0.5)
 				var col_p := Color("6e451f") if si % 2 == 0 else Color("8f5c28")
 				b.add_visual_box(off + Vector3(minf(sx, w0 - strip_w * 0.5), 0.02, d0 * 0.5), Vector3(strip_w - 0.03, 0.025, d0), col_p)
+			b.pop_surface()
 			b.add_visual_box(off + Vector3(0.25, fh * 0.5, d0 - 0.25), Vector3(0.13, fh, 0.13), Color("9a5b2a"))
 			b.add_visual_box(off + Vector3(0.25, fh * 0.78, d0 - 0.25), Vector3(0.3, 0.16, 0.3), Color("c8913c"))
 			b.add_visual_box(off + Vector3(w0 * 0.5, fh - 0.14, d0 * 0.5), Vector3(w0 * 0.6, 0.16, 0.26), Color("8a5a28"))
@@ -3521,10 +3529,12 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			# sit FLUSH against that face and protrude into the room; a smaller
 			# inset buried it inside the wall (and it read as a free low wall).
 			var WALL_INSET := WALL_T + lin_t * 0.5
+			b.push_surface(MeshBatcher.TILE_WOOD_DARK)
 			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
 			b.add_visual_box(off + Vector3(w0 * 0.5, lin_h * 0.5, d0 - WALL_INSET), Vector3(w0, lin_h, lin_t), Color("4b361f"))
 			b.add_visual_box(off + Vector3(WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
 			b.add_visual_box(off + Vector3(w0 - WALL_INSET, lin_h * 0.5, d0 * 0.5), Vector3(lin_t, lin_h, d0), Color("4b361f"))
+			b.pop_surface()
 			# Panelled joinery: a dado rail at 0.82 m and vertical stiles every
 			# ~2.4 m read as recessed panels without any extra machinery.
 			# Panelling only on generous footprints; small lots keep the plain
