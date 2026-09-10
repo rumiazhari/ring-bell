@@ -377,6 +377,17 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# --- walls + windows + furniture ---------------------------------------------
 	# One aperture-composing facade generator handles doors AND windows.
 	var door_edge := int(spec.get("door_edge", 0))
+	# Post-apocalypse decay: each building carries a deterministic decay level
+	# (0.25 abandoned-and-dusty .. 0.95 rotting) applied as mesh-level weathering
+	# (soot, damp, mould). Specs keep raw colours, so equality tests still hold.
+	var decay_seed: float = absf(float(WorldSeed.str_hash(tag + "decay"))) / 2147483647.0
+	var decay: float = 0.45 + 0.5 * (decay_seed - floor(decay_seed))
+	# Ruin tier: a deterministic ~40% of buildings are RUINED (heavy destruction,
+	# boarded windows, rubble, blood); the rest are merely weathered and damp.
+	var ruin: float = float(spec.get("ruin_override", -1.0))
+	if ruin < 0.0:
+		ruin = 1.0 if absi(int(WorldSeed.str_hash(tag + "ruin"))) % 5 < 2 else 0.0
+	b.push_decay(decay)
 	# Same deterministic building-level dressing LOD the interior pass uses.
 	var dress_ok := absi(int(WorldSeed.str_hash(str(spec.get("id", "")) + "dress"))) % 3 == 0
 	for f in n:
@@ -531,6 +542,10 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	# without touching collision or doorway clearance.
 	_facade_plinth(b, off, w, d, fh, n, tag, spec)
 
+	# --- post-apocalypse decay + ruin dressing (ground floor) ---------------------
+	_decay_decals(b, off, w, d, fh, tag, decay, ruin)
+	_ruin_features(b, off, w, d, tag, spec, decay, ruin)
+
 	# --- interior partitions (P1) -------------------------------------------------
 	_emit_interior_partitions(b, off, w, d, fh, n, tag, spec, zone, has_stairs)
 
@@ -546,6 +561,7 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 	_roof(b, off, fp, style, roof_c, wall_c, total_h, zone, has_stairs,
 			guard_on_east)
 	b.pop_layer()
+	b.pop_decay()
 
 
 # --- Elevated foundations and exterior access -------------------------------
@@ -3617,6 +3633,8 @@ static func _f_gaslamp(b: MeshBatcher, pos: Vector3, tag: String, fi: int) -> vo
 	b.add_visual_box(pos + Vector3(0, 2.22, 0), Vector3(0.3, 0.08, 0.3), Color("6b4b26"))
 	b.add_visual_box(pos + Vector3(0, 2.4, 0), Vector3(0.1, 0.24, 0.1), Color("aa8750"))
 	b.add_visual_box(pos + Vector3(0, 2.02, 0), Vector3(0.12, 0.1, 0.12), Color("ffd27a"))
+	# Real gaslight: register an OmniLight at the lantern head (ChunkBuilder).
+	b.add_interior_light(pos + Vector3(0, 2.0, 0), "gas", tag + ":lamp%d" % fi)
 
 
 static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary, tag: String, fi: int) -> void:
@@ -3717,6 +3735,8 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		_rbox(b, basis, pos, Vector3(0, fh2 * 0.3, 0.2), Vector3(fw - 0.8, 0.06, 0.06), Color("c9c3b4"))
 		for bar in 3:
 			_rbox(b, basis, pos, Vector3(-0.28 + 0.28 * bar, fh2 * 0.22, 0.16), Vector3(0.05, 0.42, 0.05), Color("2a2a2e"))
+		# Hearth light: the fire still burning in an abandoned hearth.
+		b.add_interior_light(pos + Vector3(0, fh2 * 0.3, 0.3), "fire", tag + ":hearth%d" % fi)
 		return
 	if kind == "hearth":
 		# Slate hearth slab only (used where a full surround would crowd a shop).
@@ -3747,6 +3767,158 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x, 0.08, size.z), FURN_WOOD)
 		if kind == "workbench":
 			b.add_visual_box(pos + Vector3(0.25, size.y * 0.87, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
+
+
+## Colour of a blown-plaster patch (bare lath, grey render, or water-stained gypsum).
+static func pl_lath_col(rng: RandomNumberGenerator) -> Color:
+	return [Color("8a7a5c"), Color("6f6a5a"), Color("9a8f74"), Color("4f4a3e")][rng.randi_range(0, 3)]
+
+
+## Post-apocalypse decay geometry. Per-vertex weathering alone cannot read on
+## interiors because walls are single 8-vertex boxes (a smear interpolates
+## smoothly across 16 m), so decay is built as thin decal slabs on top of the
+## surfaces: soot smears, damp patches, floor stains and old blood.
+## RUINED buildings (deterministic ~40% tier) get a much heavier pass; the
+## rest are weathered and damp only. Bounded per tier to protect the streaming
+## budget, and the tier can be forced with spec.ruin_override for captures.
+static func _decay_decals(b: MeshBatcher, off: Vector3, w: float, d: float,
+		fh: float, tag: String, decay: float, ruin: float) -> void:
+	if decay < 0.3:
+		return
+	var rng := WorldSeed.rng_for("decals", [WorldSeed.str_hash(tag)])
+	# Higher-contrast palette: in gloom, near-black smears vanish, so the mix
+	# includes pale lime-wash loss and grey-green mould alongside the soot.
+	var wall_cols := [Color("1f1d19"), Color("2b231c"), Color("5b6152"), Color("141312"),
+			Color("3f4a3c"), Color("7d7a63"), Color("231b16")]
+	var n := 3 + int(decay * 5.0)
+	if ruin > 0.5:
+		n = 14 + int(decay * 8.0)
+	for i in n:
+		# Bias OFF the cutaway wall. Side index 2 is the high-z (south) face, which
+		# the audit camera hides via the ":S" cutaway layer, so decay placed there
+		# is invisible; side 0 is the far wall the camera actually looks at.
+		var side := rng.randi_range(0, 3)
+		if side == 2 and rng.randf() < 0.7:
+			side = [0, 1, 3][rng.randi_range(0, 2)]
+		var t := rng.randf_range(0.06, 0.94)
+		var hh := rng.randf_range(0.3, 2.7)
+		var pw := rng.randf_range(0.7, 2.6) if ruin > 0.5 else rng.randf_range(0.5, 1.7)
+		var ph := rng.randf_range(0.5, 2.0) if ruin > 0.5 else rng.randf_range(0.4, 1.3)
+		var col: Color = wall_cols[rng.randi_range(0, wall_cols.size() - 1)]
+		match side:
+			0: b.add_visual_box(off + Vector3(w * t, hh, WALL_T + 0.02), Vector3(pw, ph, 0.03), col)
+			1: b.add_visual_box(off + Vector3(w - WALL_T - 0.02, hh, d * t), Vector3(0.03, ph, pw), col)
+			2: b.add_visual_box(off + Vector3(w * t, hh, d - WALL_T - 0.02), Vector3(pw, ph, 0.03), col)
+			_: b.add_visual_box(off + Vector3(WALL_T + 0.02, hh, d * t), Vector3(0.03, ph, pw), col)
+	# Blown plaster showing pale lath behind - the big "this is rotting" cue.
+	if ruin > 0.5:
+		var lath_n := 3 + rng.randi_range(0, 3)
+		for li in lath_n:
+			var lx := rng.randf_range(0.15, maxf(w - 0.8, 0.3))
+			var ly := rng.randf_range(0.6, 2.6)
+			var lw := rng.randf_range(0.6, 1.9)
+			var lh := rng.randf_range(0.5, 1.6)
+			var lath := pl_lath_col(rng)
+			# Far wall (visible to the audit camera): the main showcase surface.
+			b.add_visual_box(off + Vector3(lx, ly, WALL_T + 0.015), Vector3(lw, lh, 0.02), lath)
+			if rng.randf() < 0.5:
+				b.add_visual_box(off + Vector3(rng.randf_range(0.15, maxf(w - 0.8, 0.3)), rng.randf_range(0.6, 2.6),
+						WALL_T + 0.03), Vector3(rng.randf_range(0.6, 1.6), rng.randf_range(0.5, 1.3), 0.02), pl_lath_col(rng))
+			if rng.randf() < 0.6:
+				# And the side walls, which the camera sees at an angle.
+				var slz := rng.randf_range(0.4, maxf(d - 1.2, 0.5))
+				var side_left := rng.randf() < 0.5
+				var slx := WALL_T + 0.015 if side_left else w - WALL_T - 0.015
+				b.add_visual_box(off + Vector3(slx, rng.randf_range(0.6, 2.5), slz),
+						Vector3(0.02, rng.randf_range(0.5, 1.4), rng.randf_range(0.6, 1.8)), pl_lath_col(rng))
+	# Rising damp: a dark band along the base of every wall.
+	var damp_col := Color("241f19")
+	if ruin > 0.5 or decay > 0.55:
+		b.add_visual_box(off + Vector3(w * 0.5, 0.28, WALL_T + 0.03), Vector3(w, 0.56, 0.04), damp_col)
+		b.add_visual_box(off + Vector3(w * 0.5, 0.28, d - WALL_T - 0.03), Vector3(w, 0.56, 0.04), damp_col)
+		b.add_visual_box(off + Vector3(WALL_T + 0.03, 0.28, d * 0.5), Vector3(0.04, 0.56, d), damp_col)
+		b.add_visual_box(off + Vector3(w - WALL_T - 0.03, 0.28, d * 0.5), Vector3(0.04, 0.56, d), damp_col)
+	# Floor: old stains, spill pools and dried blood.
+	var stains := 2 + int(decay * 3.0)
+	if ruin > 0.5:
+		stains = 9 + int(decay * 5.0)
+	for i in stains:
+		var fx := rng.randf_range(0.2, maxf(w - 0.6, 0.25))
+		var fz := rng.randf_range(0.2, maxf(d - 0.6, 0.25))
+		var sw := rng.randf_range(1.0, 3.0) if ruin > 0.5 else rng.randf_range(0.7, 2.1)
+		var sc := Color("141312")
+		if ruin > 0.5 and i % 4 == 0:
+			sc = Color("3a1614")   # dried blood
+		elif i % 2 == 1:
+			sc = Color("221a14")
+		b.add_visual_box(off + Vector3(fx, 0.035, fz), Vector3(sw, 0.015, sw * rng.randf_range(0.5, 1.1)), sc)
+	# Blood trail: a dragged smear running across the room (ruins only).
+	if ruin > 0.5:
+		var bx := rng.randf_range(0.3, maxf(w - 1.8, 0.4))
+		var bz := rng.randf_range(0.3, maxf(d - 1.8, 0.4))
+		var horiz := rng.randf() < 0.5
+		for seg in 4:
+			var sl := rng.randf_range(0.7, 1.3)
+			var spos := off + Vector3(bx + (seg * sl if horiz else 0.0), 0.04, bz + (0.0 if horiz else seg * sl))
+			b.add_visual_box(spos, Vector3(sl, 0.012, 0.5) if horiz else Vector3(0.5, 0.012, sl),
+					Color("4a1512") if seg % 2 == 0 else Color("33100e"))
+
+
+## Horror dressing: boarded-up windows, rubble piles, toppled furniture and
+## dead vegetation. RUINED buildings get every ground-floor window boarded and
+## several rubble heaps; weathered ones get a token amount.
+static func _ruin_features(b: MeshBatcher, off: Vector3, w: float, d: float,
+		tag: String, spec: Dictionary, decay: float, ruin: float) -> void:
+	var rng := WorldSeed.rng_for("ruin", [WorldSeed.str_hash(tag)])
+	var plank := Color("4a3a26")
+	# Boarded windows: ruined buildings board most ground openings.
+	var boards := 2 + int(decay * 3.0)
+	if ruin > 0.5:
+		boards = 7
+	if decay > 0.4:
+		for i in boards:
+			var side := rng.randi_range(0, 3)
+			var tpos := rng.randf_range(0.15, 0.85)
+			var yb := rng.randf_range(1.1, 1.9)
+			match side:
+				0: b.add_visual_box(off + Vector3(w * tpos, yb, WALL_T * 0.5), Vector3(rng.randf_range(1.1, 1.8), 0.17, 0.2), plank)
+				1: b.add_visual_box(off + Vector3(w - WALL_T * 0.5, yb, d * tpos), Vector3(0.2, 0.17, rng.randf_range(1.1, 1.8)), plank)
+				2: b.add_visual_box(off + Vector3(w * tpos, yb, d - WALL_T * 0.5), Vector3(rng.randf_range(1.1, 1.8), 0.17, 0.2), plank)
+				_: b.add_visual_box(off + Vector3(WALL_T * 0.5, yb, d * tpos), Vector3(0.2, 0.17, rng.randf_range(1.1, 1.8)), plank)
+	# Rubble: collapsed masonry heaps, denser and larger when ruined.
+	var heaps := 2 + int(decay * 4.0)
+	if ruin > 0.5:
+		heaps = 9 + int(decay * 5.0)
+	var rub_cols := [Color("6b6357"), Color("57504a"), Color("494238"), Color("3b352d")]
+	for i in heaps:
+		var cx := rng.randf_range(0.4, maxf(w - 0.6, 0.5))
+		var cz := rng.randf_range(0.4, maxf(d - 0.6, 0.5))
+		var pieces := 2 + rng.randi_range(0, 2)
+		if ruin > 0.5:
+			pieces = 3 + rng.randi_range(0, 4)
+		for j in pieces:
+			var ox := rng.randf_range(-0.6, 0.6)
+			var oz := rng.randf_range(-0.6, 0.6)
+			var sz := rng.randf_range(0.2, 0.55) if ruin > 0.5 else rng.randf_range(0.18, 0.44)
+			b.add_visual_box(off + Vector3(cx + ox, sz * 0.5, cz + oz), Vector3(sz, sz * 0.85, sz),
+					rub_cols[rng.randi_range(0, rub_cols.size() - 1)])
+	# Fallen beams across the floor.
+	var beams := 1 + int(decay * 2.0)
+	if ruin > 0.5:
+		beams = 4
+	for i in beams:
+		b.add_visual_box(off + Vector3(w * 0.5, 0.14, d * rng.randf_range(0.15, 0.85)),
+				Vector3(rng.randf_range(1.8, 3.4), 0.22, 0.24), Color("3a2c1e"))
+	# Dead vegetation in cracked planters (the living ferns are a separate prop).
+	var plants := 1 + int(decay * 2.0)
+	if ruin > 0.5:
+		plants = 4
+	for i in plants:
+		var px := rng.randf_range(0.5, maxf(w - 0.6, 0.5))
+		var pz := rng.randf_range(0.5, maxf(d - 0.6, 0.5))
+		b.add_visual_box(off + Vector3(px, 0.17, pz), Vector3(0.42, 0.34, 0.42), Color("4a3c2b"))
+		b.add_visual_box(off + Vector3(px, 0.5, pz), Vector3(0.3, 0.42, 0.3), Color("4d4536"))
+		b.add_visual_box(off + Vector3(px + 0.12, 0.72, pz - 0.08), Vector3(0.1, 0.34, 0.1), Color("3f3a2c"))
 
 
 ## Victorian wall palettes. The renderer is flat vertex colour (no textures), so

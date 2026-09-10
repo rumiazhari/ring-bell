@@ -1,5 +1,8 @@
 class_name ChunkBuilder
 extends RefCounted
+## Cap on real interior OmniLights per streamed chunk (lighting budget).
+const INTERIOR_LIGHT_CAP := 40
+
 const PavementPlanScript = preload("res://world/generation/pavement_plan.gd")
 ## Materializes ONE chunk of the deterministic city plan into batched
 ## geometry. This is the MATERIAL layer's worker: it never makes random
@@ -228,6 +231,38 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 		chunk.add_child(glow)
 		win_glows += 1
 	stats["window_glows"] = win_glows
+	# Post-apocalypse interior lighting: gas lanterns and hearth fires become
+	# real OmniLights so ruins are lit by failing gaslight instead of flat
+	# ambient. Capped per chunk: lighting is the most expensive thing we can add
+	# to a streamed chunk, so surplus lights are skipped rather than unbounded.
+	var interior_lit := 0
+	var interior_skipped := 0
+	for entry: Dictionary in batcher.interior_lights():
+		if interior_lit >= INTERIOR_LIGHT_CAP:
+			interior_skipped += 1
+			continue
+		var is_fire: bool = entry["kind"] == "fire"
+		var lamp := OmniLight3D.new()
+		lamp.name = "InteriorLight_%d" % interior_lit
+		lamp.position = entry["pos"]
+		lamp.omni_range = 10.5 if is_fire else 9.0
+		lamp.omni_attenuation = 1.6
+		lamp.light_energy = 2.6 if is_fire else 2.2
+		lamp.light_color = Color(1.0, 0.55, 0.22) if is_fire else Color(1.0, 0.78, 0.42)
+		lamp.shadow_enabled = false
+		if bool(entry["dead"]):
+			lamp.set_meta(&"dead_lamp", true)
+			lamp.visible = false
+		else:
+			lamp.visible = GameClock.is_night()
+			if bool(entry["flicker"]):
+				lamp.set_meta(&"lamp_flicker", true)
+				lamp.set_meta(&"flicker_phase", entry["phase"])
+		lamp.add_to_group(&"streetlamp")
+		chunk.add_child(lamp)
+		interior_lit += 1
+	stats["interior_lights"] = interior_lit
+	stats["interior_lights_skipped"] = interior_skipped
 	stats["boxes"] = batcher.box_count()
 	stats["colliders"] = batcher.collider_count()
 	stats["mat_ms"] = float(Time.get_ticks_usec() - t0) / 1000.0

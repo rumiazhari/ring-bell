@@ -23,11 +23,14 @@ func _run() -> void:
 			check("city generates " + use, uses.has(use))
 		print("[BuildingRepair] city buildings=%d uses=%s" % [buildings.size(), str(uses.keys())])
 	var light := DirectionalLight3D.new()
-	# Warming pass (round-3): tungsten-ish sun + softer ambient so walnut/
-	# ochre/brass hues actually read (raw white ambient washed them out).
-	light.rotation_degrees = Vector3(-58, -34, 0)
-	light.light_energy = 1.1
-	light.light_color = Color(1.0, 0.93, 0.82)
+	# Horror pass: the audit captures were lit like a bright showroom, which made
+	# decayed surfaces read as "clean". Captures now use a bleak, overcast
+	# late-dusk key so grime, damp and the failing gaslight pools are visible.
+	# This is FIXTURE lighting only - gameplay lighting stays with
+	# DayNightController (sun/moon/ambient/fog) and is not changed here.
+	light.rotation_degrees = Vector3(-62, -38, 0)
+	light.light_energy = 0.45
+	light.light_color = Color(0.58, 0.63, 0.72)
 	add_child(light)
 	var camera := Camera3D.new()
 	add_child(camera)
@@ -37,12 +40,14 @@ func _run() -> void:
 	var environment := WorldEnvironment.new()
 	environment.environment = Environment.new()
 	environment.environment.background_mode = Environment.BG_COLOR
-	environment.environment.background_color = Color("85867b")
+	environment.environment.background_color = Color("2b3138")
 	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	# Warm ambient to match the tungsten sun (washed-white ambient is why
-	# round-2 wainscot read as white).
-	environment.environment.ambient_light_color = Color(1.0, 0.94, 0.86)
-	environment.environment.ambient_light_energy = 0.45
+	# Cold, low ambient so the gaslight pools (below) carry the interior.
+	environment.environment.ambient_light_color = Color(0.52, 0.58, 0.68)
+	environment.environment.ambient_light_energy = 0.16
+	environment.environment.fog_enabled = true
+	environment.environment.fog_light_color = Color("31363c")
+	environment.environment.fog_density = 0.012
 	add_child(environment)
 	for use: String in InteriorPlan.ROOM_PROGRAMS:
 		for edge in 4:
@@ -57,7 +62,7 @@ func _run() -> void:
 							found = true
 					check(use + " minimum furniture " + String(room["kind"]) + " edge %d" % edge, found)
 	for use: String in InteriorPlan.ROOM_PROGRAMS:
-		var spec := {"id": "repair_" + use, "rect": Rect2(0, 0, 16, 20), "floors": 2, "floor_h": 3.1, "door_edge": 0, "use": use, "district": &"historic", "style": {"room_type": use, "wall": 0, "roof": 0}, "doors": []}
+		var spec := {"id": "repair_" + use, "rect": Rect2(0, 0, 16, 20), "floors": 2, "floor_h": 3.1, "door_edge": 0, "use": use, "district": &"historic", "style": {"room_type": use, "wall": 0, "roof": 0}, "doors": [], "ruin_override": 1.0}
 		var manifest := InteriorPlan.build_for_building(spec)
 		check(use + " deterministic", manifest == InteriorPlan.build_for_building(spec))
 		check(use + " valid room graph", InteriorPlan.validate(manifest).is_empty())
@@ -87,6 +92,24 @@ func _run() -> void:
 		var batcher := MeshBatcher.new()
 		BuildingBuilder.build(batcher, spec)
 		batcher.flush_into(holder)
+		# Mirror ChunkBuilder's interior lighting so captures show the real
+		# gaslight/hearth pools (the repair harness does not stream chunks).
+		var lit := 0
+		for entry: Dictionary in batcher.interior_lights():
+			if lit >= 40:
+				break
+			var il := OmniLight3D.new()
+			il.name = "InteriorLight_%d" % lit
+			il.position = entry["pos"]
+			var is_fire: bool = entry["kind"] == "fire"
+			il.omni_range = 10.5 if is_fire else 9.0
+			il.omni_attenuation = 1.6
+			il.light_energy = 2.6 if is_fire else 2.2
+			il.light_color = Color(1.0, 0.55, 0.22) if is_fire else Color(1.0, 0.78, 0.42)
+			il.shadow_enabled = false
+			holder.add_child(il)
+			lit += 1
+		print("[BuildingRepair] %s interior lights=%d" % [use, lit])
 		var live_doors: Array[Door] = []
 		for dm: Dictionary in manifest["floors"][0]["doors"]:
 			var leaf := Door.new()

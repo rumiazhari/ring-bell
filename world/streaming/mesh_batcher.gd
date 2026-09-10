@@ -34,6 +34,10 @@ var _asset_instances: Array[Dictionary] = [] # {pos,size,color,res_path,scale,ha
 var _asset_nodes: Array[Node3D] = []     # materialized asset nodes, keyed by layer metadata
 var _street_lights: Array[Vector3] = []  # Phase S: streamed-city streetlamp OmniLight positions
 var _window_glows: Array[Vector3] = []   # Phase U: interior window glow positions
+## Post-apocalypse interior lights: gas lamps and hearths inside buildings.
+## Each entry: {pos, kind ("gas"|"fire"), dead, flicker, phase}. ChunkBuilder
+## turns these into OmniLight3D with a per-chunk cap.
+var _interior_lights: Array[Dictionary] = []
 
 # Phase W: flicker/dead-lamp variant — deterministic subset sputters or stays dark.
 const STREET_DEAD_PROB := 0.035        # 3.5% dead (within 2-4% spec)
@@ -54,6 +58,11 @@ var layer_nodes := {}                  # layer key -> MeshInstance3D
 var _parent: Node3D
 var _shape_nodes: Dictionary = {}      # vox_id -> CollisionShape3D
 var _building_transform_stack: Array[Dictionary] = []
+## Post-apocalypse weathering: the decay level of the building currently being
+## generated. Stamped onto every spec so the mesh pass can weather each face
+## deterministically (specs keep the raw colour; only MESH vertices darken, so
+## determinism/equality tests on specs() are unaffected).
+var _decay_stack: Array[float] = []
 
 # Unified structural-damage records: id -> {damage: float}. Every
 # destructible cell accumulates effective damage (raw / MaterialDB strength)
@@ -175,8 +184,10 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 	var id := _box_count
 	# Glass renders translucent (tinted pane); everything else is opaque.
 	var alpha := 0.55 if material == &"glass" else 1.0
+	var decay: float = _decay_stack.back() if not _decay_stack.is_empty() else 0.0
 	_specs.append({
 		"id": id, "pos": pos, "size": size.abs(), "basis": basis,
+		"decay": decay,
 		"color": Color(color, alpha),
 		"collide": collide, "roof": roof_layer, "material": material,
 		"layer": _layers.back(),
@@ -191,6 +202,15 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 ## centre.  The builder continues to emit its reference-quality boxes and
 ## apertures unchanged; this seam only rotates the finished full-quality
 ## building when a road-frontage parcel carries a deterministic yaw.
+func push_decay(value: float) -> void:
+	_decay_stack.append(clampf(value, 0.0, 1.0))
+
+
+func pop_decay() -> void:
+	if not _decay_stack.is_empty():
+		_decay_stack.pop_back()
+
+
 func push_building_transform(origin: Vector3, yaw: float) -> void:
 	_building_transform_stack.append({
 		"origin": origin,
@@ -367,6 +387,22 @@ func add_street_lamp(pos: Vector3) -> void:
 	_street_lamp_dead.append(dead)
 	_street_lamp_flicker.append(flicker)
 	_street_lamp_phase.append(phase)
+
+## Register an interior light source (gas lamp or hearth) for ChunkBuilder.
+func add_interior_light(pos: Vector3, kind: String, tag: String) -> void:
+	var h: int = absi(int(WorldSeed.str_hash(tag + kind + str(int(pos.x)) + str(int(pos.z)))))
+	_interior_lights.append({
+		"pos": pos,
+		"kind": kind,
+		"dead": h % 6 == 0,
+		"flicker": h % 3 != 0,
+		"phase": float(h % 628) / 100.0,
+	})
+
+
+func interior_lights() -> Array[Dictionary]:
+	return _interior_lights
+
 
 func street_lights() -> Array[Vector3]:
 	return _street_lights
@@ -911,6 +947,13 @@ func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
 	if spec["material"] == &"glass" and _cracked.has(spec["id"]):
 		col = col.lightened(0.35)
 		col.a = 0.8
+	# Grim decay: soot, damp and mould mottling. One hash per box (not per
+	# vertex) keeps the cost off the streaming budget; the vertical gradient is
+	# plain arithmetic. Low corners of a box go dampest, top edges sootiest.
+	var decay: float = float(spec.get("decay", 0.0))
+	var mould := 0.0
+	if decay > 0.001:
+		mould = decay * _hash01(pos + Vector3(7.3, 1.7, 13.1))
 	for f: Array in _face_defs():
 		var n: Vector3 = f[0]
 		var u: Vector3 = f[1]
@@ -927,12 +970,37 @@ func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
 		for p in corners:
 			verts.append(p)
 			buf["normals"].append(basis * n)
-			buf["colors"].append(col)
+			var vcol := col
+			if decay > 0.001:
+				# Per-vertex grime: patchy soot + vertical damp streaks (streak is
+				# constant in Y, so it reads as staining running down a wall),
+				# heavier at the base where damp rises.
+				var patch := _hash01(p)
+				var streak := _hash01(Vector3(p.x, 0.0, p.z))
+				var damp := clampf(1.0 - (p.y - pos.y + half.y) / 2.2, 0.0, 1.0)
+				var soot := clampf(((p.y - pos.y + half.y) - 2.1) / 1.6, 0.0, 1.0)
+				var grime := decay * (0.24 * patch + 0.30 * streak + 0.20 * damp + 0.18 * soot)
+				vcol = col.darkened(clampf(grime, 0.0, 0.62))
+				if patch > 0.62 and damp > 0.3:
+					vcol = vcol.lerp(Color("38402b"), clampf((patch - 0.62) * decay * 1.1, 0.0, 0.34))
+			buf["colors"].append(vcol)
 		# ... reversed into Godot's clockwise front-face winding.
 		buf["idx"].append_array(PackedInt32Array([
 			base, base + 2, base + 1,
 			base, base + 3, base + 2,
 		]))
+
+
+## Deterministic 0..1 spatial hash (integer mixing - no transcendentals, so
+## it stays cheap at 24 vertices per box). Lattice is 0.35 m, fine enough that
+## one big wall box still shows patchy soot and damp rather than one flat tone.
+static func _hash01(p: Vector3) -> float:
+	var ix := int(floor(p.x * 2.857))
+	var iy := int(floor(p.y * 2.857))
+	var iz := int(floor(p.z * 2.857))
+	var h: int = ix * 374761393 + iy * 668265263 + iz * 1442695041
+	h = (h ^ (h >> 13)) * 1274126177
+	return float(absi(h % 65536)) / 65536.0
 
 
 ## Half extent along the dominant axis of unit vector d (d is +/- one axis).
