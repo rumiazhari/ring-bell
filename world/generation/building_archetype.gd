@@ -102,6 +102,40 @@ const ARCHETYPES: Dictionary = {
 		"bulk": false, "roof_families": [&"flat"],
 		"notes": "reserved: ward + treatment program",
 	},
+	# --- City historic fabric (G10-P2C migration) --------------------------
+	# CityPlan has always named these; until they were registered here every
+	# city spec failed validation as an unknown archetype, so the city could
+	# not be proven to follow the contract at all.
+	&"narrow_townhouse": {
+		"family": FAMILY_RESIDENTIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"gabled", &"pitched"],
+		"notes": "narrow street plot dwelling; ~1 room per floor, stairs above ground",
+	},
+	&"merged_house": {
+		"family": FAMILY_RESIDENTIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"gabled", &"pitched"],
+		"notes": "two or more townhouses merged on a wide frontage; several wings",
+	},
+	&"courtyard_tenement": {
+		"family": FAMILY_RESIDENTIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"flat", &"pitched"],
+		"notes": "multi-storey block around an inner court; 3+ wings, stairs per wing",
+	},
+	&"merchant_house": {
+		"family": FAMILY_COMMERCIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"flat", &"pitched"],
+		"notes": "street-front retail below, dwelling above",
+	},
+	&"artisan_house": {
+		"family": FAMILY_COMMERCIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"gabled", &"pitched"],
+		"notes": "workshop below, dwelling above; cart door on the street",
+	},
+	&"tavern_inn": {
+		"family": FAMILY_COMMERCIAL, "min_quality": &"FULL_BUILDING",
+		"bulk": false, "roof_families": [&"gabled", &"pitched"],
+		"notes": "city tavern: taproom below, guest rooms above, wagon yard",
+	},
 }
 
 ## Normalize legacy kind/use strings onto contract archetypes. Every plan
@@ -136,6 +170,19 @@ static func archetype_for(kind_or_use: StringName) -> StringName:
 			return &"school"
 		"hospital":
 			return &"hospital"
+		# City historic fabric: the names CityPlan emits for street fabric.
+		"narrow_townhouse", "townhouse", "row_house", "gabled_townhouse":
+			return &"narrow_townhouse"
+		"merged_house":
+			return &"merged_house"
+		"courtyard_tenement", "court_tenement":
+			return &"courtyard_tenement"
+		"merchant_house", "retail_house":
+			return &"merchant_house"
+		"artisan_house", "workshop_house":
+			return &"artisan_house"
+		"tavern_inn", "city_tavern":
+			return &"tavern_inn"
 	return StringName(String(kind_or_use))
 
 
@@ -178,4 +225,8 @@ static func room_program(archetype: StringName, floors: int) -> Array[StringName
 			return [&"hall"]
 		&"shed", &"outhouse", &"kiosk":
 			return []
+		&"narrow_townhouse", &"merged_house", &"courtyard_tenement":
+			return [&"entry", &"sleeping", &"toilet"]
+		&"merchant_house", &"artisan_house", &"tavern_inn":
+			return [&"entry", &"storage", &"toilet"]
 	return []

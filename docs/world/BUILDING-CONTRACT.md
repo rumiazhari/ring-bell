@@ -163,3 +163,9 @@ build + budgets 720/420) · rural tamper matrix (solid geometry in doorway,
 missing evidence, door off footprint).
 
 Regression gates: `--citytest`, `--cityruntime`, `--ruraltest`, `--smoke`.
+
+## 9. Related contract
+
+The **site envelope** (yard surface, fence loop with gates, standing trees) is
+governed by the sibling contract in `SITE-CONTRACT.md` (G10-P2C), which reuses
+this contract's quality levels, grounding authority and evidence pattern.

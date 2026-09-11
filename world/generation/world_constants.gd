@@ -832,6 +832,44 @@ const RURAL_CONTRACT_SECOND_WIN_H := 0.72
 ## compromise as the city builder; keeps collider counts linear.
 const CONTRACT_WALL_CELL := 1.25
 
+## --- Universal site envelope contract (G10-P2C) --------------------------
+## A plot's outdoor envelope: yard surface, fence loop with gates, trees.
+## Same WHAT/HOW split as buildings: SitePlan decides, a site builder draws.
+##
+## Minimum yard share of a plot: below this the ground is not an outdoor room.
+const SITE_MIN_YARD_FRACTION := 0.25
+## Smallest yard that may carry a fence, gates and trees (m2).
+const SITE_MIN_YARD_AREA_M2 := 24.0
+## Smallest plot a site may be generated for (m2) — below this it is a gap.
+const SITE_MIN_PLOT_AREA_M2 := 20.0
+## Fence height band (m) — human scale, same authority as building walls.
+const SITE_MIN_FENCE_H := 0.75
+const SITE_MAX_FENCE_H := 2.6
+## Post spacing ceiling (m): beyond this a rail spans unsupported and reads
+## as floating geometry.
+const SITE_MAX_POST_SPACING := 3.5
+## Posts also have a floor, or the fence is a solid low wall with no rhythm.
+const SITE_MIN_POST_SPACING := 0.8
+## Gate width band (m) and how close a gate must sit to the doorway it serves.
+const SITE_MIN_GATE_W := 1.0
+const SITE_MAX_GATE_W := 4.0
+const SITE_GATE_ALIGN_M := 3.0
+## Grounding authority for fence lines and tree roots (m), as buildings.
+const SITE_GROUND_TOL_M := 1.0
+## Tree placement: crown radius from species r_max, clearances (m).
+const SITE_TREE_RADIUS_FACTOR := 0.5
+const SITE_TREE_BUILDING_CLEAR_M := 1.5
+const SITE_TREE_TREE_CLEAR_M := 2.0
+const SITE_TREE_AREA_PER_TREE_M2 := 45.0
+const SITE_MAX_TREES_PER_SITE := 6
+## Fence loop must come within this of closing, measured in perimeter (m).
+const SITE_FENCE_CLOSE_TOL_M := 0.25
+## Per-rect ceilings so the fence/tree layer cannot blow the chunk budget.
+const SITE_MAX_PER_RECT := 12
+const SITE_MAX_TREES_PER_RECT := 24
+## Fence collision stays linear in perimeter: one collider per this length (m).
+const SITE_FENCE_COLLIDER_MODULE_M := 2.5
+
 static func is_inside_world(p: Vector2) -> bool:
 	return p.x >= WORLD_MIN_M and p.x < WORLD_MAX_M and p.y >= WORLD_MIN_M and p.y < WORLD_MAX_M
 

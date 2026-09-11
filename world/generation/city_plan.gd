@@ -1496,6 +1496,29 @@ func _street_garden_regions(source: PackedVector2Array, buildings: Array) -> Arr
 	return out
 
 
+## Every courtyard/garden region a rect touches, of ALL access kinds.
+##
+## `garden_regions_in_rect()` below returns only the `street_garden` subset, so
+## a caller that wants the real yards behind the street wall (the site envelope
+## layer, G10-P2C) has to ask here — a plot's yard is usually a plain courtyard,
+## not a street garden.
+func courtyard_regions_in_rect(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for block: Dictionary in _blocks:
+		for region_variant in block.get("courtyard_regions", []) as Array:
+			var region: Dictionary = region_variant as Dictionary
+			var poly: PackedVector2Array = region.get("polygon", PackedVector2Array()) as PackedVector2Array
+			if poly.size() < 3:
+				continue
+			var box := Rect2(poly[0], Vector2.ZERO)
+			for corner: Vector2 in poly:
+				box = box.expand(corner)
+			if not rect.intersects(box):
+				continue
+			out.append(region)
+	return out
+
+
 ## Street-garden regions intersecting `rect`, for the chunk renderer's planting
 ## pass. These are the strips the lot fitter could not build on; the renderer
 ## plants them so a gap in the street wall reads as a garden, not as bare city.

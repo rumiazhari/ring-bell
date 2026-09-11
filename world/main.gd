@@ -307,6 +307,10 @@ func _ready() -> void:
 		var tester_bc: Node = load("res://debug/building_contract_test.gd").new()
 		tester_bc.name = "BuildingContractTest"
 		add_child(tester_bc)
+	elif user_args.has("--sitecontracttest"):
+		var tester_sc: Node = load("res://debug/site_contract_test.gd").new()
+		tester_sc.name = "SiteContractTest"
+		add_child(tester_sc)
 	elif user_args.has("--cavetest"):
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
@@ -379,7 +383,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--biometest", "--biomaterialtest",
 			"--roadtest", "--settlementtest", "--roadmaterialtest",
 			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
-			"--fringetest", "--buildingcontracttest", "--propslogictest", "--g10p2a-ruralprobe",
+			"--fringetest", "--buildingcontracttest", "--sitecontracttest", "--propslogictest", "--g10p2a-ruralprobe",
 			"--cavetest",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
