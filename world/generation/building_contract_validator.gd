@@ -324,6 +324,32 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 			if _seals_aperture(s, region.center, region.size):
 				errs.append("solid geometry behind door %s (box id %d)" % [id, int(s.get("id", -1))])
 				break
+	# --- door swing clearance: can the leaf actually swing open? -----------
+	# Sealing (above) only rejects masonry ACROSS the aperture. Facade
+	# dressing beside a jamb (pilasters, plinths, cornices, the wall return
+	# next to the doorway) never trips it, yet it can pin the leaf at a few
+	# degrees - which is how an "open" door ends up physically blocking its
+	# own doorway (measured: leaf 2.6 deg against a 95 deg target). Sample
+	# the leaf tip along its swept arc for both hinge sides, swinging inward
+	# and outward, and report the best reachable angle. If even the most
+	# favourable configuration is blocked, the door can never open.
+	var local_specs: Array = _building_specs_local(b, id, spec)
+	for e in ents:
+		var sealed := false
+		var region := _aabb_of_entrance(e, spec)
+		for s in local_specs:
+			if not bool(s.get("collide", false)) or s.get("material", &"") == &"glass":
+				continue
+			if _seals_aperture(s, region.center, region.size):
+				sealed = true
+				break
+		if sealed:
+			continue
+		var sw := _swing_reach(e, spec, local_specs)
+		if float(sw.get("reach", 90.0)) < 55.0:
+			errs.append("door swing clearance %s reach=%d deg (blocked by box id %d)" % [
+				str(e.get("id", id)), int(round(float(sw.get("reach", 0.0)))),
+				int(sw.get("box", -1))])
 	# Window apertures (derived with the reference formula).
 	var facades_i := [0, 1, 2, 3]
 	var horiz := [true, false, true, false]
@@ -540,11 +566,73 @@ static func _aabb_of_entrance(e: Dictionary, building_spec: Dictionary = {}) -> 
 	}
 
 
-## True when a colliding box SEALS an aperture: its along-coverage and
-## height-coverage both exceed 80% AND its thickness interval STRADDLES
-## the wall plane (the box's own volume crosses the plane the aperture is
-## cut in). Interior partitions, stair rails, balconies and awnings sit
-## off-plane or below the coverage thresholds, so they never trip.
+## Best (largest) leaf angle an entrance can reach before a colliding box stops
+## it, mirroring Door.gd's geometry: leaf length == aperture width, hinge at a
+## jamb, quarter-circle sweep. Both hinge sides are tried, swinging inward and
+## outward, because the generator may choose any of those four options; a low
+## best-reach means no choice works and the doorway is self-blocking.
+## Returns {"reach": degrees, "box": box id of the first blocker}.
+static func _swing_reach(e: Dictionary, spec: Dictionary, local_specs: Array) -> Dictionary:
+	var r: Rect2 = spec.get("rect", Rect2()) as Rect2
+	var yaw := float(spec.get("yaw", 0.0))
+	var p2: Vector2 = e.get("pos", Vector2.ZERO) as Vector2
+	var local := _rotate_plan_point(r.get_center(), p2, -yaw)
+	var centre := r.get_center()
+	var inward := (centre - local)
+	if inward.length_squared() < 1e-6:
+		return {"reach": 90.0, "box": -1}
+	inward = inward.normalized()
+	var w: float = maxf(float(e.get("width", 1.05)), 0.4)
+	var leaf := maxf(w - 0.06, 0.3)
+	var ground: float = float(e.get("ground_y", 0.0))
+	var dh: float = maxf(float(e.get("height", 2.1)), 1.6)
+	var heights := [ground + 0.20, ground + dh * 0.5, ground + dh - 0.35]
+	var tangent := Vector2(-inward.y, inward.x)
+	var best_reach := 0.0
+	var best_box := -1
+	for hinge_sign in [-1.0, 1.0]:
+		var hinge: Vector2 = local + tangent * (hinge_sign * (w * 0.5 - 0.05))
+		var along: Vector2 = tangent * (-hinge_sign)
+		for swing_sign in [-1.0, 1.0]:
+			var cfg_reach := 0.0
+			var cfg_box := -1
+			for deg in range(10, 96, 5):
+				var th := deg_to_rad(float(deg))
+				var tip: Vector2 = hinge + along.rotated(hinge_sign * swing_sign * th) * leaf
+				var hit := _first_tip_blocker(tip, heights, local_specs)
+				if hit >= 0:
+					cfg_box = hit
+					break
+				cfg_reach = float(deg)
+			if cfg_reach > best_reach:
+				best_reach = cfg_reach
+				best_box = cfg_box
+	return {"reach": best_reach, "box": best_box}
+
+
+## Box id of the first colliding box containing the leaf tip (plan point) at any
+## of `heights`, or -1. A small inset keeps grazing contact from counting.
+static func _first_tip_blocker(tip: Vector2, heights: Array, local_specs: Array) -> int:
+	const INSET := 0.04
+	for s in local_specs:
+		if not bool(s.get("collide", false)) or s.get("material", &"") == &"glass":
+			continue
+		var pos: Vector3 = s.get("pos", Vector3.ZERO) as Vector3
+		var sz: Vector3 = s.get("size", Vector3.ZERO) as Vector3
+		var basis: Basis = s.get("basis", Basis.IDENTITY) as Basis
+		var hx := (absf(basis.x.x) * sz.x + absf(basis.z.x) * sz.z + absf(basis.y.x) * sz.y) * 0.5 - INSET
+		var hy := (absf(basis.x.y) * sz.x + absf(basis.z.y) * sz.z + absf(basis.y.y) * sz.y) * 0.5 - INSET
+		var hz := (absf(basis.x.z) * sz.x + absf(basis.z.z) * sz.z + absf(basis.y.z) * sz.y) * 0.5 - INSET
+		if hx <= 0.0 or hy <= 0.0 or hz <= 0.0:
+			continue
+		if absf(tip.x - pos.x) > hx or absf(tip.y - pos.z) > hz:
+			continue
+		for hy_pt in heights:
+			if absf(float(hy_pt) - pos.y) <= hy:
+				return int(s.get("id", -1))
+	return -1
+
+
 static func _seals_aperture(s: Dictionary, center: Vector3, size: Vector3) -> bool:
 	var pos: Vector3 = s.get("pos", Vector3.ZERO) as Vector3
 	var sz: Vector3 = s.get("size", Vector3.ZERO) as Vector3

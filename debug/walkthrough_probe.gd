@@ -170,10 +170,12 @@ func _run() -> void:
 	var climb: Array[Vector3] = _stair_path(zone, fh, n)
 	var roof_y := float(n) * fh
 	var climb_radius := func(_i: int) -> float: return 0.55
-	_check("climbed all %d storeys to deck" % n,
-			await _follow_waypoints_r(player, climb, 140.0, climb_radius,
-					zone.grow(0.1), Vector2(-1.0, roof_y + 1.5)),
+	var climb_ok := await _follow_waypoints_r(player, climb, 140.0, climb_radius,
+				zone.grow(0.1), Vector2(-1.0, roof_y + 1.5))
+	_check("climbed all %d storeys to deck" % n, climb_ok,
 			"y=%.2f want %.2f" % [player.global_position.y, roof_y])
+	if not climb_ok:
+		_dump_stair_blockers(player, zone, fh)
 	_check("camera tracks the vertical climb",
 			camera_rig_y_near(player.global_position.y),
 			"rig y=%s" % [_rig_y()])
@@ -386,6 +388,39 @@ func _stair_path(zone: Rect2, fh: float, n: int) -> Array[Vector3]:
 			path.append(_wp(cross_x, landing_z, y1))
 			path.append(_wp(other_lane, landing_z, y1))
 	return path
+
+
+## On a failed climb, name whatever the capsule is pressed against instead of
+## guessing: a ray fan at chest height resolved to each shape's owner, plus the
+## stair-zone-relative offset so the blocker can be mapped to an emitter.
+func _dump_stair_blockers(player: Node3D, zone: Rect2, fh: float) -> void:
+	var space := player.get_world_3d().direct_space_state
+	var base := player.global_position + Vector3(0.0, 0.9, 0.0)
+	var exclude: Array[RID] = []
+	if player is CollisionObject3D:
+		exclude.append((player as CollisionObject3D).get_rid())
+	for i in 8:
+		var ang := TAU * float(i) / 8.0
+		var to := base + Vector3(cos(ang), 0.0, sin(ang)) * 1.8
+		var q := PhysicsRayQueryParameters3D.create(base, to)
+		q.exclude = exclude
+		var hit := space.intersect_ray(q)
+		if hit.is_empty():
+			print("[StairBlock] %3d deg: clear" % int(rad_to_deg(ang)))
+			continue
+		var hp: Vector3 = hit.get("position", base)
+		var hl: Vector3 = _route_from_world(hp)
+		var nrm: Vector3 = hit.get("normal", Vector3.ZERO)
+		var nl := CityPlan._rotate_plan_point(Vector2.ZERO, Vector2(nrm.x, nrm.z), -_route_yaw)
+		print("[StairBlock] %3d deg: dist=%.2f hit_local=(%.3f,%.3f,%.3f) normal_local=(%.3f,%.3f) collider=%s owner=%s" % [
+			int(rad_to_deg(ang)), base.distance_to(hp), hl.x, hl.y, hl.z, nl.x, nl.y,
+			str(hit.get("collider")),
+			_shape_owner_description(hit.get("collider"), int(hit.get("shape", -1)))])
+	var lz := _route_from_world(player.global_position)
+	print("[StairBlock] yaw=%.1f deg player_local=(%.3f,%.3f,%.3f) storey=%.2f zone(x %.3f..%.3f, z %.3f..%.3f) fh=%.2f on_floor=%s" % [
+		rad_to_deg(_route_yaw), lz.x, lz.y, lz.z, floorf(lz.y / maxf(fh, 0.01)) * fh,
+		zone.position.x, zone.end.x, zone.position.y, zone.end.y, fh,
+		str((player as CharacterBody3D).is_on_floor()) if player is CharacterBody3D else "?"])
 
 
 ## Push toward a point for `seconds` at most.
@@ -638,9 +673,15 @@ func _shape_owner_description(collider: Object, shape_idx: int) -> String:
 	if owner == null:
 		return "shape=%d" % shape_idx
 	var tags: Array[String] = []
-	for key: StringName in [&"vox_id", &"vox_material", &"vox_tag"]:
+	for key: StringName in [&"vox_id", &"vox_material", &"vox_tag", &"src_layer"]:
 		if owner.has_meta(key):
 			tags.append("%s=%s" % [key, str(owner.get_meta(key))])
+	# Shape SIZE is what actually identifies the emitter: a bare shape node looked
+	# identical whether it was a partition, a rail or a slab.
+	if owner is CollisionShape3D and (owner as CollisionShape3D).shape is BoxShape3D:
+		tags.append("box=%s" % str((((owner as CollisionShape3D).shape) as BoxShape3D).size))
+	if owner is Node3D:
+		tags.append("basis=%s" % str((owner as Node3D).basis))
 	return "owner=%s@%s%s" % [str(owner.name), str(owner.global_position),
 			"[" + ",".join(tags) + "]" if not tags.is_empty() else ""]
 

@@ -2053,15 +2053,19 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 			win_idx += 1
 			if is_broken:
 				# Missing pane — leave the aperture open but add a dark
-				# interior plane so the hole reads as interior darkness,
+				# interior plate so the hole reads as interior darkness,
 				# not a transparent peek into empty volume. Visual-only.
+				# The plate sits INSIDE the wall cavity, just behind where
+				# the glass plane would be. At WALL_T + 0.55 it used to hang
+				# 0.55 m off the inner face — a panel floating in the middle
+				# of the room instead of a dark opening (props audit).
+				var inside := WALL_T * 0.5 + BROKEN_DARK_T * 0.5 + 0.02
 				var p_dark := _side_point(side, w, d, oc)
-				var inside := 0.55
 				match side:
-					0: p_dark = Vector2(oc, WALL_T + inside)
-					1: p_dark = Vector2(w - WALL_T - inside, oc)
-					2: p_dark = Vector2(oc, d - WALL_T - inside)
-					_: p_dark = Vector2(WALL_T + inside, oc)
+					0: p_dark = Vector2(oc, inside)
+					1: p_dark = Vector2(w - inside, oc)
+					2: p_dark = Vector2(oc, d - inside)
+					_: p_dark = Vector2(inside, oc)
 				var dark_sz := Vector3(owd - 0.12, oh - 0.12, BROKEN_DARK_T) \
 						if horizontal else Vector3(BROKEN_DARK_T, oh - 0.12, owd - 0.12)
 				var dark_c := Color("0f1216")
@@ -3451,6 +3455,22 @@ static func _entry_aisles(w: float, d: float, zone: Rect2, door_edge: int) -> Ar
 	var entry := _side_point(door_edge, w, d, (w if door_edge % 2 == 0 else d) * 0.5) + inward * 1.2
 	var corridor_x := (zone.end.x + w) * 0.5 if w - zone.end.x >= zone.position.x else zone.position.x * 0.5
 	var landing := Vector2(zone.position.x + LANE_W * 0.5, zone.position.y + LAND * 0.5)
+	# The dog-leg below alone leaves the door's OWN inward axis uncovered: a
+	# partition could legally stand square across the entrance and seal the only
+	# door -> stair route (measured on historic_block_48_plot_9_1_front: a wall
+	# 5.26 m inside the door, walker wedged 0.2 m from it). Reserve the straight
+	# approach as well, one capsule width plus clearance, then a lateral leg
+	# across to the landing centre. Narrow strips only - do not reserve a whole
+	# half-floor or the ground plan degenerates into one empty box.
+	var half := 0.75
+	var reach := absf((landing - entry).dot(inward))
+	var axis_end := entry + inward * reach
+	var axis_lo := Vector2(minf(entry.x, axis_end.x) - half, minf(entry.y, axis_end.y) - half)
+	var axis_hi := Vector2(maxf(entry.x, axis_end.x) + half, maxf(entry.y, axis_end.y) + half)
+	out.append(Rect2(axis_lo, axis_hi - axis_lo))
+	var lat_lo := Vector2(minf(axis_end.x, landing.x) - half, minf(axis_end.y, landing.y) - half)
+	var lat_hi := Vector2(maxf(axis_end.x, landing.x) + half, maxf(axis_end.y, landing.y) + half)
+	out.append(Rect2(lat_lo, lat_hi - lat_lo))
 	var path: Array[Vector2] = [entry, Vector2(corridor_x, entry.y), Vector2(corridor_x, landing.y), landing]
 	for i in range(path.size() - 1):
 		out.append(Rect2(path[i].min(path[i + 1]), (path[i + 1] - path[i]).abs()).grow(0.55))
@@ -3752,8 +3772,10 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 			var fx := (frond % 2) * 0.24 - 0.12
 			var fz := (frond / 2) * 0.24 - 0.12
 			b.add_visual_box(pos + Vector3(fx, 0.95, fz), Vector3(0.1, 0.95, 0.1) if frond % 2 == 0 else Vector3(0.12, 1.1, 0.12), Color("4e7043"))
-		b.add_visual_box(pos + Vector3(0, 1.75, 0), Vector3(0.85, 0.09, 0.4), Color("5b7a4f"))
-		b.add_visual_box(pos + Vector3(0, 1.75, 0), Vector3(0.4, 0.09, 0.85), Color("527346"))
+		# Crown of fronds: sits ON the tallest fronds, so the leaf mass is part
+		# of the plant instead of a plate hovering 5 cm above it (props audit).
+		b.add_visual_box(pos + Vector3(0, 1.66, 0), Vector3(0.85, 0.09, 0.4), Color("5b7a4f"))
+		b.add_visual_box(pos + Vector3(0, 1.66, 0), Vector3(0.4, 0.09, 0.85), Color("527346"))
 		return
 	if kind == "coatstand":
 		# Turned walnut post on a cast-iron tripod base with brass peg ring.
@@ -3777,10 +3799,15 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		return
 	if kind == "cabinet":
 		# Ledger/file cabinet: walnut carcass, brass drawer pulls, stone top.
+		# Top slab overlaps the carcass and the pulls stay within its height —
+		# both used to sit a scaled gap above the frame (props audit).
 		b.add_destructible_box(pos + Vector3(0, size.y * 0.35, 0), Vector3(size.x, size.y * 0.7, size.z), FURN_WALNUT, &"wood", true, tag, fi)
-		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x, 0.08, size.z), Color("efe6d2"))
+		b.add_visual_box(pos + Vector3(0, size.y * 0.7 + 0.02, 0), Vector3(size.x, 0.08, size.z), Color("efe6d2"))
 		for dr in 4:
-			b.add_visual_box(pos + Vector3(-size.x * 0.28, size.y * 0.18 + 0.36 * dr, size.z * 0.52), Vector3(0.2, 0.05, 0.03), Color("aa8750"))
+			var dr_y := size.y * 0.18 + 0.36 * dr
+			if dr_y > size.y * 0.62:
+				continue
+			b.add_visual_box(pos + Vector3(-size.x * 0.28, dr_y, size.z * 0.52), Vector3(0.2, 0.05, 0.03), Color("aa8750"))
 		return
 	if kind == "umbrella":
 		# Umbrella stand: riveted copper cylinder with folded umbrellas.
@@ -3791,8 +3818,10 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		b.add_visual_box(pos + Vector3(0, 0.62, 0), Vector3(0.37, 0.08, 0.37), Color("aa8750"))
 		return
 	if kind == "gauge":
-		# Brass-cased pressure gauge with dial face on a short pipe stub.
-		b.add_visual_box(pos + Vector3(0, 1.15, 0), Vector3(0.08, 1.1, 0.08), Color("8a5b33"))
+		# Brass-cased pressure gauge with dial face on a pipe riser. The riser
+		# used to start 0.6 m above the floor with nothing under it — a gauge
+		# floating in mid-room; it now stands on the floor (props audit).
+		b.add_visual_box(pos + Vector3(0, 0.85, 0), Vector3(0.08, 1.7, 0.08), Color("8a5b33"))
 		b.add_visual_box(pos + Vector3(0, 1.75, 0.1), Vector3(0.42, 0.5, 0.16), Color("aa8750"))
 		b.add_visual_box(pos + Vector3(0, 1.75, 0.19), Vector3(0.3, 0.36, 0.03), Color("ece2c8"))
 		b.add_visual_box(pos + Vector3(0, 1.75, 0.21), Vector3(0.02, 0.24, 0.012), Color("26261f"))
@@ -3811,7 +3840,7 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		_rbox(b, basis, pos, Vector3(-fw * 0.5 + 0.15, fh2 * 0.5, 0), Vector3(0.3, fh2, size.z), Color("b9b1a0"))
 		_rbox(b, basis, pos, Vector3(fw * 0.5 - 0.15, fh2 * 0.5, 0), Vector3(0.3, fh2, size.z), Color("b9b1a0"))
 		_rbox(b, basis, pos, Vector3(0, fh2 - 0.16, 0), Vector3(fw, 0.32, size.z), Color("b9b1a0"))
-		_rbox(b, basis, pos, Vector3(0, fh2 + 0.06, 0.03), Vector3(fw + 0.24, 0.09, size.z + 0.12), Color("5d452c"))
+		_rbox(b, basis, pos, Vector3(0, fh2 + 0.04, 0.03), Vector3(fw + 0.24, 0.09, size.z + 0.12), Color("5d452c"))
 		_rbox(b, basis, pos, Vector3(0, 0.06, 0.36), Vector3(fw + 0.2, 0.12, 0.72), Color("3b3b40"))
 		_rbox(b, basis, pos, Vector3(0, fh2 * 0.42, 0), Vector3(fw - 0.6, fh2 * 0.62, size.z - 0.24), Color("1d1d20"))
 		_rbox(b, basis, pos, Vector3(0, fh2 * 0.26, 0.06), Vector3(fw - 0.72, fh2 * 0.3, 0.2), Color("e0761f"))
@@ -3847,9 +3876,11 @@ static func _emit_room_furniture(b: MeshBatcher, pos: Vector3, item: Dictionary,
 		b.add_visual_box(pos + Vector3(0, size.y * 0.8, 0), Vector3(size.x * 0.65, size.y * 0.25, size.z * 0.7), Color("aa8750"))
 		b.add_visual_box(pos + Vector3(-size.x * 0.3, size.y * 0.8, -size.z * 0.3), Vector3(0.12, size.y * 0.4, 0.12), Color("6d5941"))
 	else:
-		b.add_visual_box(pos + Vector3(0, size.y * 0.74, 0), Vector3(size.x, 0.08, size.z), FURN_WOOD)
+		# Wooden top slab overlapping the frame (used to sit a scaled gap
+		# above it — a plank hovering over the carcass; props audit).
+		b.add_visual_box(pos + Vector3(0, size.y * 0.7 + 0.02, 0), Vector3(size.x, 0.08, size.z), FURN_WOOD)
 		if kind == "workbench":
-			b.add_visual_box(pos + Vector3(0.25, size.y * 0.87, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
+			b.add_visual_box(pos + Vector3(0.25, size.y * 0.7 + 0.16, 0), Vector3(0.3, 0.2, 0.22), Color("494b46"))
 
 
 ## Colour of a blown-plaster patch (bare lath, grey render, or water-stained gypsum).

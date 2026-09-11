@@ -181,3 +181,83 @@ Still to read: `world/generation/interior_plan.gd`, `historic_interior_plan.gd`,
 - Preserve performance (79 FPS baseline), destruction, streaming and parkour compatibility.
 - Commit and push each completed task; report the commit hash and genuine remaining limits.
 - File deletions: never delete — move to `junk/` inside the project.
+
+
+## INSTRUMENTED FINDING (2026-09-12) -- the stall is NOT the door
+
+Probe: `debug/walkthrough_probe.gd` now calls `_dump_stair_blockers()` on a failed
+climb (chest-height ray fan + shape owners) and its own `_route_diagnostics()` fires
+on every stall. Run: `python tools/run_suite.py --walkthrough 240 --rendered`.
+Engine output lands in `tools/out_walkthrough.txt` (NOT only the suite stdout).
+
+Building under test: `historic_block_48_plot_9_1_front`
+- local rect  x 162.0743..169.7350, z 77.73881..94.36776   (S 7.6607 x 16.6290)
+- door edge 0 == the min-z facade; local door mid (165.9046, 77.73882)
+- stair zone  local x 162.5743..165.0743, z 86.77182..93.86780  (2.5 x 7.0959)
+- lane_w 163.20, lane_e 164.45, z_n 86.77, z_s 93.87, floor_h 3.10, floors 5
+- world ground (pad) y == 3.975412  (derived, matches route frame exactly)
+
+Both stalls, same place:
+- `STALL waypoint 1/5  pos=(162.4641, 3.956354, 87.83964)`
+- `STALL waypoint 1/19 pos=(164.0716, 3.956354, 88.97807)`
+
+Player local y = -0.0191 => the capsule is standing on the GROUND FLOOR pad, not on a
+stair and not on an upper slab. Earlier "it climbed flight A" readings were wrong: the
+world y 3.956 is the pad height, not storey 1.
+
+The blocker (identical in every ray direction and in the capsule query):
+- collider is a **StaticBody3D**, i.e. NOT the door leaf (the leaf is a frozen
+  RigidBody3D) -- so the open door is not what blocks the route.
+- two boxes, world (163.462, 4.500412, 87.97939) and (165.0715, 4.500412, 90.08119):
+  ~2.65 m apart, shape centres **0.54 m above the pad** (a ~1.08 m tall pair),
+  face normals 124.05 deg and 34.05 deg, i.e. PERPENDICULAR to each other.
+- `capsule=` returns THREE shape overlaps of that same body => the walker's capsule is
+  **physically embedded inside static geometry**, so `move_and_slide()` cannot resolve
+  the motion: it is wedged, not merely obstructed.
+
+Conclusion: the entrance->stairwell circulation path on the ground floor is blocked by
+static geometry roughly 0.2 m from the walker, spanning about the stair zone's width.
+The 5- and 19-waypoint routes both die at their first inside-step, so this is a
+circulation-blocking defect, not a stair-climbing defect.
+
+Next decisive step: make the emitters self-identifying (tag emitted static collision
+with its source rule) so the log names the exact emitter instead of a bare
+`CollisionShape3D`, then fix that rule systemically. Do NOT re-chase "partition through
+the stairwell" -- `interior_partition_visible` (building_builder.gd:3680-3705) already
+filters the stair zone, entry aisles and entry box.
+
+## ROOT CAUSE (2026-09-12, measured) -- an f0 half-wall run blocks door -> stair
+
+Instrumentation now names the emitter instead of inferring it: MeshBatcher records the
+active layer key on every emitted collider (`src_layer` meta, mesh_batcher.gd ~430/~951)
+and the walkthrough probe prints it plus the BoxShape3D size.
+
+Blocking geometry on `historic_block_48_plot_9_1_front` (fp 7.6607 x 16.629, door_edge 0,
+fh 3.10, n 5; stair zone local x 162.574..165.074, z 86.772..93.868):
+  A: box (5.017, 1.05, 0.18), centre local (165.13, 83.00) -- runs along local x
+  B: box (0.18, 1.05, 1.69),  centre local (162.61, 82.14) -- return along local z
+  both `src_layer = historic_block_48_plot_9_1_front:f0`, height exactly 1.05 m.
+
+A half-height run 5.02 m long with an L-return at the west wall bisects the ground floor
+at local z 83.0: 5.26 m inside the entrance (door mid local z 77.739) and 3.77 m short of
+the stair zone. The entrance opens into the north half, the stairwell sits in the south
+half, and a 1.72 m capsule can never cross a 1.05 m wall -- the walker wedges with its
+capsule reporting 3 shape overlaps of that same StaticBody3D.
+
+Not a partition: `interior_partition_visible` (building_builder.gd:3696) has exactly ONE
+consumer (:3528), and adding the entry-axis keep-out below moved the stall from waypoint
+1/5 to 4/5 without moving this geometry at all. Dimensions implicate the plan-driven
+fixture path: 0.18 == WorldConstants.CITY_INTERIOR_WALL_T == interior_plan.gd:30
+WALL_T_INTERIOR, and 1.05 is the wall-run/shelf member height (building_builder.gd:2388+,
+:2780). `_emit_room_furniture` (:3743, called from :3591) stretches wall-hugging items
+along the wall and does NOT consult the entrance/stair keep-out that the legacy scatter
+path applies at :2478.
+
+FIX LANDED (provisional): `_entry_aisles` (:3450) now also reserves the door's own inward
+axis (capsule width + clearance) plus a lateral leg to the landing centre, not just the
+old dog-leg. Measured effect: route reaches waypoints 1/5..3/5 where it previously died at
+1/5. The 4/5 stall is the fixture above and is still open.
+
+NEXT: apply the same keep-out to plan-driven furniture/boards in
+`_emit_interior_partitions` / `_emit_room_furniture`, then fix the door control law
+(never latches OPEN; stall/reverse at -90.1 deg with hit=none).

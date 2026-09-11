@@ -428,7 +428,8 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 	})
 	if collide:
 		_colliders.append({"pos": pos, "size": size.abs(), "basis": basis,
-				"id": id, "material": material, "tag": owner_tag})
+				"id": id, "material": material, "tag": owner_tag,
+				"layer": _layers.back() if not _layers.is_empty() else ""})
 
 
 ## Apply a city BuildingSpec's local rectangular grammar around its world
@@ -947,6 +948,11 @@ func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
 			shape_node.set_meta("vox_id", int(col["id"]))
 			shape_node.set_meta("vox_material",
 					StringName(col["material"]))
+		# Diagnostic: which emitter produced this collider. Bare CollisionShape3D
+		# nodes made a blocked walkway impossible to attribute; the layer stack
+		# already knows, so ride it along and let audits name the rule.
+		if col.has("layer"):
+			shape_node.set_meta("src_layer", str(col["layer"]))
 		# Phase M: known feature tags ride along as vox_tag so the
 		# parkour controller can classify WHAT it grabbed, not just
 		# whether the wall is batched structure. Building-id owner

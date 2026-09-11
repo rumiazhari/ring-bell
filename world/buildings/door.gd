@@ -285,6 +285,8 @@ func _physics_process(delta: float) -> void:
 		# up - a jammed closing door bounces OPEN, a jammed opening door
 		# settles wherever it is; gameplay never wedges on a stuck leaf.
 		_stall_ticks += 1
+		if _stall_ticks == 1 and OS.get_environment("RB_DOOR_DEBUG") == "1":
+			_report_stall_blockers(ang, err)
 		if _stall_ticks == STALL_TICKS:
 			_sign_flip = -_sign_flip
 		elif _stall_ticks >= STALL_TICKS * 2:
@@ -299,6 +301,23 @@ func _physics_process(delta: float) -> void:
 		var v := clampf(err * 30.0 * _sign_flip, -24.0, 24.0)
 		_leaf.angular_velocity = Vector3(0.0, v, 0.0)
 	_last_yaw = ang
+
+
+## Diagnostic (RB_DOOR_DEBUG=1): name whatever is pinning the leaf, so a jam can
+## be attributed to a real emitter instead of guessed at.
+func _report_stall_blockers(ang: float, err: float) -> void:
+	var hits: Array[String] = []
+	for b in _leaf.get_colliding_bodies():
+		var owner_name := "?"
+		var n3 := b as Node3D
+		if n3 != null and n3.get_parent() != null:
+			owner_name = String((n3.get_parent() as Node).name)
+		hits.append("%s<-%s" % [String((b as Node).name), owner_name])
+	print("[DoorStall] yaw=%.1f err=%.1f door=%s leaf=%s hit=%s" % [
+		rad_to_deg(ang), rad_to_deg(err),
+		str(global_position.snapped(Vector3(0.01, 0.01, 0.01))),
+		str(_leaf.global_position.snapped(Vector3(0.01, 0.01, 0.01))),
+		"none" if hits.is_empty() else ", ".join(hits)])
 
 
 ## Blocked while closing: reopen fully. The leaf stays PHYSICAL at its
