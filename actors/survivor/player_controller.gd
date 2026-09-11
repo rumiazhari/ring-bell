@@ -149,16 +149,19 @@ func _update_hover(delta: float) -> void:
 	var best: Node3D = null
 	var best_d := INTERACT_RANGE * INTERACT_RANGE
 	for pair in _hover_cache:
-		var candidate: Node3D = pair[0]
-		if not is_instance_valid(candidate):
+		# Untyped on purpose: a cached candidate whose node was freed by streaming
+		# unload hands back a previously-freed instance, and assigning that to a typed
+		# Node3D variable raises an error. Validate first, then cast.
+		var candidate: Variant = pair[0]
+		if not (candidate is Node3D) or not is_instance_valid(candidate):
 			continue
-		var comp: InteractableComponent = pair[1]
-		if not is_instance_valid(comp) or not comp.enabled:
+		var comp: Variant = pair[1]
+		if not is_instance_valid(comp) or not (comp as InteractableComponent).enabled:
 			continue
-		var d := origin.distance_squared_to(candidate.global_position)
+		var d := origin.distance_squared_to((candidate as Node3D).global_position)
 		if d < best_d:
 			best_d = d
-			best = candidate
+			best = candidate as Node3D
 	_hovered = best
 	if best != null:
 		var comp: InteractableComponent = best.get("interactable")
