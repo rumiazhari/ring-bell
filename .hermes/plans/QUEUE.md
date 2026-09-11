@@ -101,3 +101,64 @@ destruction. Manually window-test several historic/retail/residential buildings 
 "Fix SYSTEMIC rules, not one showcase building. Update docs/tests/build result, then COMMIT
 AND PUSH. Report exact commit hash, tested routes/buildings and genuine remaining
 limitations."
+
+---
+
+# Q3 — PROCEDURAL BUILDING INTERIORS overhaul (user, queued after Q1 + Q2)
+
+Continue from the then-current `copilot/worldgen-fix` HEAD. FIRST inspect current code and
+write a detailed continuation plan in `.hermes/plans/` so another model can resume. Then
+implement, test, COMMIT AND ALWAYS PUSH. **Fix generation rules, NOT one showcase building.**
+
+GOAL: replace empty/shell-like interiors with systemic multi-floor layouts matching each
+building's footprint, entrances, windows, stairs and archetype.
+
+INSPECT AT MINIMUM: `world/generation/building_builder.gd`, `interior_plan.gd`,
+`historic_interior_plan.gd`, `building_archetype.gd`, `building_spec.gd`, `city_plan.gd`,
+`roof_plan.gd`, `world/streaming/chunk_builder.gd`, `world/interior_probe.gd`, relevant
+debug/tests.
+
+MULTI-FLOOR: meaningful interiors on ALL appropriate floors, not only ground-floor
+residential. Every floor connects logically to stairs/landings and roof access where
+applicable. No sealed rooms, impossible corridors, floating partitions, or stairs opening
+into walls.
+
+ROOM LOGIC BY ARCHETYPE:
+- residential: entry/common space, kitchen, bedrooms, storage, washroom; attic/cellar where suitable
+- retail: storefront, counter/service zone, backroom/storage, staff/access; upper residence/office when plausible
+- workshop/industrial: work floor, storage, service space, office
+- civic/large historic: halls, offices/rooms and wider circulation
+Do not make every floor identical.
+
+ARCHITECTURAL RULES: respect exterior windows/doors; partitions must not cut through windows,
+entrances or stairs; realistic corridors, doors, player-capsule clearance, useful circulation.
+Avoid both giant empty boxes and tiny random mazes.
+
+VERTICAL SPACES: deterministic basements/cellars and attics where geometry permits, with real
+stairs/hatches/doors. Attics must respect roof/headroom; basements must not conflict with
+terrain/underground systems.
+
+FURNITURE: placed by room purpose, not random scatter. Sensible placement and clearance.
+Preserve critical paths entrance -> circulation -> stairs -> rooms.
+
+EXPLORATION: generate semantic candidate points for future loot/interactables (cupboards,
+desks, shelves, wardrobes, shop backrooms, workshop storage, attic/cellar storage). Do NOT
+build a full loot economy unless already supported — provide clean metadata/hooks.
+
+VARIETY: deterministic seed-based variation; same archetype yields varied but valid layouts.
+Prefer strong layout grammars/templates with constrained variation over pure randomness.
+
+COMPATIBILITY: do not regress doorway clearance, camera cutaway, roof transitions,
+parkour/climbing, destruction, streaming/performance, or interior lighting.
+
+TEST MANY seeds/sizes/archetypes: all intended floors generated; entrance->interior access;
+stair continuity; no sealed required rooms; no partition/window/stair conflicts; capsule
+clearance; furniture not blocking critical paths; valid attic/basement access; deterministic
+same-seed output; acceptable performance. Manually window-test several residential, retail,
+workshop and historic buildings street -> rooms -> upper floors -> attic/roof/basement where
+applicable. Fix SYSTEMIC causes. Update docs/tests/build result, COMMIT AND PUSH. Report
+commit hash, supported interior archetypes, tests run and genuine remaining limitations.
+
+Note: Q3 shares subject matter with Q1 (buildings/interior/camera) and Q2 (parkour). Q1's
+locked decisions (kind-based door widths, HARD-CUT camera-side-only cutaway, `floor_i == n`
+= roof/exterior) and Q2's climbable-feature rules remain binding on Q3.

@@ -153,7 +153,7 @@ func _update_hover(delta: float) -> void:
 		if not is_instance_valid(candidate):
 			continue
 		var comp: InteractableComponent = pair[1]
-		if not comp.enabled:
+		if not is_instance_valid(comp) or not comp.enabled:
 			continue
 		var d := origin.distance_squared_to(candidate.global_position)
 		if d < best_d:
