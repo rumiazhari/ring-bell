@@ -44,6 +44,12 @@ func measure(seed: int) -> void:
 	var blanks_gt15 := 0
 	var internal_blank := 0.0
 	var boundary_blank := 0.0
+	var garden_len := 0.0
+	var step_lots := 0
+	var cafe_lots := 0
+	var step_shop_lots := 0
+	var tavern_wings := 0
+	var bad_reports: Array[String] = []
 	var street_wings := 0
 	var facade_wings := 0
 	var facade_differs := 0
@@ -57,6 +63,25 @@ func measure(seed: int) -> void:
 			var other: PackedVector2Array = block.polygon
 			built_polys.append(other)
 			built_boxes.append(poly_bounds(other))
+	var garden_polys: Array[PackedVector2Array] = []
+	var garden_regions := 0
+	var garden_area := 0.0
+	var residual_gardens := 0
+	var residual_area := 0.0
+	for block: Dictionary in blocks:
+		for region_variant in block.get("courtyard_regions", []) as Array:
+			var region: Dictionary = region_variant as Dictionary
+			var region_kind := StringName(region.get("kind", &""))
+			var access := StringName(region.get("access_kind", &""))
+			if region_kind == &"garden" and access == &"block_residual":
+				residual_gardens += 1
+				residual_area += float(region.get("area_m2", 0.0))
+				continue
+			if region_kind != &"garden" or access != &"street_garden":
+				continue
+			garden_polys.append(region.get("polygon", PackedVector2Array()) as PackedVector2Array)
+			garden_area += float(region.get("area_m2", 0.0))
+			garden_regions += 1
 	for block: Dictionary in blocks:
 		if not bool(block.get("historic_compound", false)) or block.kind != &"built":
 			continue
@@ -105,23 +130,35 @@ func measure(seed: int) -> void:
 					blank_run = 0.0
 					blank_start = Vector2.ZERO
 				elif edge_class == "street":
-					# Where does the missing frontage live? An edge with historic
-					# fabric across the street is an internal street whose wall is
-					# broken; an edge with nothing historic opposite is the core
-					# boundary, where this grammar hands over to the generic fringe.
-					var far := point + (middle - centroid).normalized() * 18.0
-					var across := false
-					for k in built_boxes.size():
-						if built_boxes[k].has_point(far) and Geometry2D.is_point_in_polygon(far, built_polys[k]):
-							across = true
-							break
-					if across:
-						internal_blank += step
+					if _in_garden(point, garden_polys):
+						# Ground the plan published as a garden is an intentional
+						# use, not a blank wall: a gap may become a building OR a
+						# garden/courtyard/service yard. It is still counted as
+						# unbuilt frontage in the coverage ratio.
+						garden_len += step
+						if blank_run > 15.0:
+							blanks_gt15 += 1
+						blank_run = 0.0
+						blank_start = Vector2.ZERO
 					else:
-						boundary_blank += step
-					if blank_run == 0.0:
-						blank_start = point
-					blank_run += step
+						# Where does the missing frontage live? An edge with
+						# historic fabric across the street is an internal street
+						# whose wall is broken; an edge with nothing historic
+						# opposite is the core boundary, where this grammar hands
+						# over to the generic fringe.
+						var far := point + (middle - centroid).normalized() * 18.0
+						var across := false
+						for k in built_boxes.size():
+							if built_boxes[k].has_point(far) and Geometry2D.is_point_in_polygon(far, built_polys[k]):
+								across = true
+								break
+						if across:
+							internal_blank += step
+						else:
+							boundary_blank += step
+						if blank_run == 0.0:
+							blank_start = point
+						blank_run += step
 			if edge_class == "street":
 				street_len += length
 				street_built += covered
@@ -139,11 +176,30 @@ func measure(seed: int) -> void:
 			frontage += float(plot.frontage_m)
 			widths.append(float(plot.frontage_m))
 		for spec: Dictionary in block.buildings:
-			svg += svg_polygon(CityPlan._lot_corners(spec.rect, spec.yaw), "#9b604e")
+			# Orange: a house laid by the stepped wedge fill. Red-ish: one of them
+			# that carries a cafe/restaurant venue. Both are the new irregular
+			# infill, so they have to be visible on the plan.
+			var lot_color := "#9b604e"
+			if str(spec.id).contains("_step_"):
+				lot_color = "#c8452f" if str(spec.use) == "tavern" else "#d98b3a"
+			svg += svg_polygon(CityPlan._lot_corners(spec.rect, spec.yaw), lot_color)
+			if str(spec.id).contains("_step_"):
+				step_lots += 1
+				if str(spec.use) == "tavern":
+					cafe_lots += 1
+				elif str(spec.use) == "retail":
+					step_shop_lots += 1
+			if str(spec.use) == "tavern":
+				tavern_wings += 1
 			occupied += (spec.rect as Rect2).get_area()
 			var manifest := InteriorPlan.build_for_building(spec)
-			if not InteriorPlan.validate(manifest).is_empty():
+			var problems := InteriorPlan.validate(manifest)
+			if not problems.is_empty():
 				disconnected += 1
+				if bad_reports.size() < 4:
+					bad_reports.append("id=%s rect=%.1fx%.1f floors=%d use=%s :: %s" % [
+						str(spec.id), (spec.rect as Rect2).size.x, (spec.rect as Rect2).size.y,
+						int(spec.get("floors", 0)), str(spec.get("use", "")), str(problems)])
 			if str(spec.get("wing_role", "")) == "front":
 				# Phase 4 proof: the openings the shell builds are the ones derived
 				# from this building's REAL room boundaries and ground-floor use,
@@ -206,10 +262,17 @@ func measure(seed: int) -> void:
 	# never reach the bar even on a perfect street wall. The graded bar is
 	# "buildable street frontage" above, measured against street-facing boundary.
 	print("[PragueGameplayTest] actual street elevations / block perimeter = ", occupied_boundary / maxf(perimeter, 1.0))
+	# Gardens last, so the block fill cannot paint over the very thing this
+	# diagram exists to show. They never overlap a building, so drawing them on
+	# top of the fabric costs nothing and makes the planted ground visible.
+	for garden_poly: PackedVector2Array in garden_polys:
+		svg += svg_polygon(garden_poly, "#5cc24a")
 	svg += "\n".join(blank_lines)
 	raster.load_svg_from_string(svg + "</svg>")
 	raster.save_png("res://.hermes/autopilot/reports/prague-gameplay-pass/plan-%d.png" % seed)
-	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s floor_rooms_p50=%.2f combat_floors=%d/%d hall_p50=%.2f street_frontage=%.3f party=%.3f void=%.3f blanks_gt15=%d street_wings=%d facade=%d differs=%d shopfronts=%d blank_internal=%.0fm blank_boundary=%.0fm" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths), percentile(floor_rooms, 0.5), combat_floors, floors_seen, percentile(hall_widths, 0.5), street_built / maxf(street_len, 1.0), party_len / maxf(perimeter, 1.0), void_len / maxf(perimeter, 1.0), blanks_gt15, street_wings, facade_wings, facade_differs, shopfronts, internal_blank, boundary_blank])
+	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s floor_rooms_p50=%.2f combat_floors=%d/%d hall_p50=%.2f street_frontage=%.3f party=%.3f void=%.3f blanks_gt15=%d street_wings=%d facade=%d differs=%d shopfronts=%d blank_internal=%.0fm blank_boundary=%.0fm step_lots=%d gardens=%d garden_area=%.0fm2 garden_frontage=%.0fm residual_gardens=%d residual_area=%.0fm2 cafe_lots=%d step_shop_lots=%d seal_gardened=%d seal_unfilled=%d tavern_wings=%d" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths), percentile(floor_rooms, 0.5), combat_floors, floors_seen, percentile(hall_widths, 0.5), street_built / maxf(street_len, 1.0), party_len / maxf(perimeter, 1.0), void_len / maxf(perimeter, 1.0), blanks_gt15, street_wings, facade_wings, facade_differs, shopfronts, internal_blank, boundary_blank, step_lots, garden_regions, garden_area, garden_len, residual_gardens, residual_area, cafe_lots, step_shop_lots, int(ParcelPlan.stats.get("seal_gardened", 0)), int(ParcelPlan.stats.get("seal_unfilled", 0)), tavern_wings])
+	for line: String in bad_reports:
+		print("[PragueGameplayTest] invalid interior: %s" % line)
 	check(percentile(areas, 0.5) >= 15.0, "occupied room median >=15m2")
 	check(percentile(areas, 0.5) <= 30.0, "occupied room median <=30m2")
 	check(percentile(areas, 0.9) <= 45.0, "occupied room p90 <=45m2")
@@ -232,6 +295,24 @@ func measure(seed: int) -> void:
 
 func frontage_line(a: Vector2, b: Vector2) -> String:
 	return '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#ff2d2d" stroke-width="3"/>' % [a.x, a.y, b.x, b.y]
+
+func _in_garden(point: Vector2, garden_polys: Array[PackedVector2Array]) -> bool:
+	# A garden strip behind a set-back facade is often barely a metre deep, so a
+	# point-in-polygon test 1 m inside the line misses it. Proximity to the garden
+	# surface is what makes the frontage an intentional use, not bare ground.
+	for poly: PackedVector2Array in garden_polys:
+		if poly.size() < 3:
+			continue
+		var near := Geometry2D.get_closest_point_to_segment(point, poly[poly.size() - 1], poly[0])
+		var best := point.distance_to(near)
+		for i in poly.size() - 1:
+			near = Geometry2D.get_closest_point_to_segment(point, poly[i], poly[i + 1])
+			best = minf(best, point.distance_to(near))
+		if best <= 1.6:
+			return true
+		if Geometry2D.is_point_in_polygon(point, poly):
+			return true
+	return false
 
 func poly_bounds(poly: PackedVector2Array) -> Rect2:
 	var box := Rect2(poly[0], Vector2.ZERO)

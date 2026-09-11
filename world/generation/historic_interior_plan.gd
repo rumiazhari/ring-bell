@@ -158,6 +158,13 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 			pieces.append_array(_subdivide_zone(street_zone, tiers))
 		if rear_zone.get_area() >= SERVICE_MIN and minf(rear_zone.size.x, rear_zone.size.y) >= 1.0:
 			pieces.append_array(_subdivide_zone(rear_zone, tiers))
+		if pieces.is_empty():
+			# A narrow wedge house has a single bay per floor: rather than ship a
+			# floor that is pure circulation, the band itself becomes the room.
+			for band: Rect2 in [rear_zone, street_zone]:
+				if band.get_area() >= NORMAL_MIN and minf(band.size.x, band.size.y) >= 2.0:
+					pieces.append(band)
+					break
 		if toilet.size == Vector2.ZERO and not pieces.is_empty():
 			# Last resort: carve the WC out of the largest room rather than leave
 			# the floor without one.
@@ -166,9 +173,19 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 				if pieces[i].get_area() > pieces[big].get_area():
 					big = i
 			var piece := pieces[big]
-			if minf(piece.size.x, piece.size.y) >= 2.4:
-				toilet = Rect2(piece.end.x - 1.4, piece.position.y, 1.4, piece.size.y)
-				pieces[big] = Rect2(piece.position, Vector2(piece.size.x - 1.4, piece.size.y))
+			# Take it off the end of the room's long axis. A 2.2m wide bay cannot
+			# give up 1.4m of width and still hold a room, but it can give up a
+			# bay at the back - which is where a narrow house keeps its WC.
+			if piece.size.x >= piece.size.y:
+				var wc_w := minf(1.5, piece.size.x - 2.2)
+				if wc_w >= 1.3:
+					toilet = Rect2(piece.end.x - wc_w, piece.position.y, wc_w, piece.size.y)
+					pieces[big] = Rect2(piece.position, Vector2(piece.size.x - wc_w, piece.size.y))
+			else:
+				var wc_d := minf(2.2, piece.size.y - 3.0)
+				if wc_d >= 1.3:
+					toilet = Rect2(piece.position.x, piece.end.y - wc_d, piece.size.x, wc_d)
+					pieces[big] = Rect2(piece.position, Vector2(piece.size.x, piece.size.y - wc_d))
 		if toilet.size.x >= 1.0 and toilet.size.y >= 1.0:
 			rooms.append(room(bid, fi, rooms.size(), &"toilet", toilet, false))
 		for pi in pieces.size():

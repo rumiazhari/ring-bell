@@ -121,11 +121,19 @@ Street wall and density:
 - historic block footprint coverage **0.591–0.627** (bar 0.55–0.75) — PASS.
 - unclassified residual void **0.000** of block perimeter (bar < 5%) — PASS; party walls
   are 1.1–1.2%, i.e. ~90% of every block perimeter is genuinely buildable street frontage.
-- buildable street-frontage continuity **0.663–0.695** (bar 0.85) — NOT MET.
-- blank frontage runs longer than 15 m: **127–148 per city** (bar 0) — NOT MET.
-- where the missing frontage lives, measured: 2.9–3.5 km of it is internal street wall
-  (historic fabric stands across the street) and 2.0–2.2 km is the core boundary, where
-  this grammar hands over to the generic fringe and no historic plot is expected.
+- buildable street-frontage continuity: **0.667–0.700 building wall** plus
+  **2,998–3,400 m of planted street garden** = **86.7–88.1% wall-or-garden** — the 0.85
+  bar is met only by counting intentional gardens, which the brief explicitly allows
+  ("blank plates must become buildings, or intentional courtyards/squares/gardens/
+  service areas"); the building-only figure is NOT met.
+- blank frontage runs longer than 15 m: **50–54 per city** (bar 0) — NOT MET, down from
+  127–148 before the wedge/garden pass; 1.97–2.22 km of bare frontage remains (11.9–13.3%)
+  against 4.9–5.7 km before it.
+- the remaining bare frontage is concentrated on the core boundary, where this grammar
+  hands over to the generic fringe, and in internal street wall breaks where a house that
+  fits the gap also has to clear its neighbours' rear wings. Wedge tips too small for a
+  stair-capable house (4.7 m wide × 9.5 m deep) are planted rather than built on, which is
+  why the garden frontage is a fifth of the total.
 
 Façades — openings derived from the actual rooms and the ground-floor use:
 
@@ -135,6 +143,51 @@ Façades — openings derived from the actual rooms and the ground-floor use:
 - ground-floor shopfronts appear on 60% of street wings (562 and 530); service rooms get
   small high openings, chambers get 1.25–1.55 m windows on the spacing of their own room
   width.
+
+## Irregular infill: wedge houses, gardens and cafés
+
+The engine publishes a rotated rectangle, so a triangular or trapezoidal ground plan
+is expressed the way a real terraced row does it: as a short run of houses whose depth
+follows whatever the block face actually allows. `ParcelPlan.seal_street_frontage()`
+walks each uncovered run of boundary with a cursor and, at every position on it, takes
+the largest lot from a width/depth ladder that fits wholly inside the block polygon and
+clears every plot already placed; the cursor then advances by the lot just laid, so the
+wall stays continuous and the outline steps round the corner instead of leaving the
+wedge empty. Wedge houses run 4.2–21 m wide and 4–15 m deep, i.e. one to three steps
+per side.
+
+Small street-facing wedge houses carry a venue rather than a service use: a
+deterministic roll gives them `tavern` (taproom/kitchen/toilet interiors, i.e. the café
+and restaurant the street needs) or `retail`.
+
+Whatever the fitter still cannot build on is not left as dirt. `_frontage_garden_polygon()`
+measures the strip the block really allows, station by station, with depth probes of
+3.2/2.2/1.5/1.0 m that must be strictly inside the polygon and clear of every real
+footprint, and publishes the resulting world-space polygon as a `garden` region with
+`access_kind: street_garden`. Those are emitted *before* the enclosed-courtyard rules,
+because a wedge between two houses has no passage and encloses nothing — it would be
+dropped by the courtyard test even though it is exactly the blank the city must not
+have. The chunk builder draws street gardens from 3 m² upward in the planted tone, and
+`_plant_garden_trees()` puts one tree per 16 m² (max three) into them, kept 1.1 m clear
+of the walls they sit between.
+
+Measured over three seeds (19041207 / 19041208 / 19041209):
+
+- **231 / 230 / 246 street gardens** covering 8,394 / 7,651 / 8,720 m², fronting
+  **3,323 / 2,998 / 3,400 m** of block boundary — i.e. 18.1–20.8% of the buildable
+  street frontage is now planted ground.
+- **13 / 16 / 13 stepped wedge houses**, every one of them mixed-use (café/restaurant
+  or shop) and stair-capable.
+- buildable street frontage: **0.668 / 0.700 / 0.667 is building wall**, plus the
+  garden frontage above, giving **86.7 / 88.1 / 87.5% wall-or-garden** (the bar is
+  0.85 and it is met only when intentional gardens are counted — the building-only
+  figure is reported beside it and is not met).
+- blank runs longer than 15 m fell from 127–148 to **54 / 50 / 50**; bare frontage
+  fell from 4.9–5.7 km to **2.22 / 1.97 / 2.06 km** (11.9–13.3% of the frontage).
+- the interior contract stays clean: `invalid_interiors 0` on all three seeds,
+  tiny rooms 0.6–0.7%, 90–92% of floors hold a manoeuvre room.
+- cafés and restaurants: 185–193 street wings carry the `tavern` ground-floor use
+  (taproom/kitchen interiors) plus 4–10 of them laid by the wedge fill itself.
 
 ## Known limitations (not hidden — the harness asserts what holds and reports the rest)
 

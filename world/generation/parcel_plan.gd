@@ -76,7 +76,10 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 				"depth_m": lot.size.y, "frontage_center": front,
 				"owner_chunk": WorldSeed.chunk_coord(lot.get_center().x, lot.get_center().y)}
 			result.append(plot)
-	seal_street_frontage(str(block.id), polygon, result, seed)
+	var frontage_gardens: Array[PackedVector2Array] = []
+	seal_street_frontage(str(block.id), polygon, result, seed, frontage_gardens)
+	if not frontage_gardens.is_empty():
+		block["frontage_gardens"] = frontage_gardens
 	for plot: Dictionary in result:
 		var original: Rect2 = plot.rect
 		var direction := Vector2(-sin(float(plot.yaw)), cos(float(plot.yaw)))
@@ -111,7 +114,8 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 ## visible Prague defect and the one the density target is really about, so
 ## after the main pass every uncovered run of buildable boundary gets its own
 ## house, at the shallowest depth that still fits.
-static func seal_street_frontage(block_id: String, polygon: PackedVector2Array, result: Array[Dictionary], seed: int) -> void:
+static func seal_street_frontage(block_id: String, polygon: PackedVector2Array, result: Array[Dictionary], seed: int,
+		frontage_gardens: Array[PackedVector2Array] = []) -> void:
 	for edge in polygon.size():
 		var a := polygon[edge]
 		var b := polygon[(edge + 1) % polygon.size()]
@@ -134,7 +138,7 @@ static func seal_street_frontage(block_id: String, polygon: PackedVector2Array, 
 				if run_start < 0:
 					run_start = i
 			elif run_start >= 0:
-				_fill_frontage_gap(block_id, edge, polygon, result, seed, a, tangent, inward, step, run_start, i)
+				_fill_frontage_gap(block_id, edge, polygon, result, seed, a, tangent, inward, step, run_start, i, frontage_gardens)
 				run_start = -1
 
 ## True when an allocated plot still presents a wall on this boundary point.
@@ -147,7 +151,8 @@ static func _frontage_covered(p: Vector2, result: Array[Dictionary]) -> bool:
 	return false
 
 static func _fill_frontage_gap(block_id: String, edge: int, polygon: PackedVector2Array, result: Array[Dictionary],
-		seed: int, a: Vector2, tangent: Vector2, inward: Vector2, step: float, first: int, last: int) -> void:
+		seed: int, a: Vector2, tangent: Vector2, inward: Vector2, step: float, first: int, last: int,
+		frontage_gardens: Array[PackedVector2Array] = []) -> void:
 	var gap := float(last - first) * step
 	var count := 0
 	var span := 0.0
@@ -182,13 +187,172 @@ static func _fill_frontage_gap(block_id: String, edge: int, polygon: PackedVecto
 	if not filled:
 		if gap < 3.2:
 			stats["seal_gap_short"] = int(stats.get("seal_gap_short", 0)) + 1
+		# A block face is rarely a rectangle. Where one house cannot span what is
+		# left of it, the wedge is filled by a run of smaller houses whose depth
+		# follows the outline the polygon actually allows, so the street wall
+		# steps around the corner (trapezoid, triangle, chamfer) instead of the
+		# wedge staying bare ground.
+		var stepped := _fill_gap_stepped(block_id, edge, polygon, result, seed, a, tangent,
+			inward, step, first, last)
+		var closed := false
+		if stepped > 0:
+			stats["seal_widened"] = int(stats.get("seal_widened", 0)) + 1
+			# The ladder may have spanned only part of the run, so check rather
+			# than assume: a gap that got a house at one end still owes the player
+			# ground at the other.
+			closed = _frontage_run_covered(result, a, tangent, step, first, last)
 		# A blank wall is the defect. Where no new plot fits - a corner sliver, a
 		# gap narrower than a house, a spot where the block is too shallow - the
 		# neighbouring house on the same street line takes the frontage instead.
-		if _absorb_frontage_gap(polygon, result, a, tangent, inward, step, first, last):
+		if not closed and _absorb_frontage_gap(polygon, result, a, tangent, inward, step, first, last):
 			stats["seal_widened"] = int(stats.get("seal_widened", 0)) + 1
-		else:
+			closed = true
+		if not closed:
 			stats["seal_unfilled"] = int(stats.get("seal_unfilled", 0)) + 1
+			# Nothing more can be built here, but bare dirt at the street line is
+			# not an answer either: the strip the block does allow is published as
+			# a garden, so the frontage reads as planted ground instead of a hole.
+			var garden := _frontage_garden_polygon(polygon, result, a, tangent, inward, step, first, last)
+			if garden.size() >= 3:
+				frontage_gardens.append(garden)
+				stats["seal_gardened"] = int(stats.get("seal_gardened", 0)) + 1
+
+
+## True when every station along this run still presents a wall.
+static func _frontage_run_covered(result: Array[Dictionary], a: Vector2, tangent: Vector2,
+		step: float, first: int, last: int) -> bool:
+	for i in maxi(0, last - first):
+		if not _frontage_covered(a + tangent * (step * (float(first + i) + 0.5)), result):
+			return false
+	return true
+
+
+## Strict containment in a plot, for garden probing. `_frontage_covered` allows a
+## 0.7m tolerance because it is asking whether a wall is present; a garden strip
+## between two houses must instead be tested against the real footprint, or every
+## strip narrower than the tolerance looks occupied and no garden is ever laid.
+static func _point_inside_plots(p: Vector2, result: Array[Dictionary]) -> bool:
+	for plot: Dictionary in result:
+		var rect: Rect2 = plot.rect
+		var local := (p - rect.get_center()).rotated(-float(plot.yaw))
+		if absf(local.x) <= rect.size.x * 0.5 + 0.08 and absf(local.y) <= rect.size.y * 0.5 + 0.08:
+			return true
+	return false
+
+
+## The strip a gap leaves at the street line, measured in world space. A garden
+## is not a consolation prize: it is the shape the block actually allows, so a
+## wedge too tight for a house still reads as planted ground instead of a hole.
+static func _frontage_garden_polygon(polygon: PackedVector2Array, result: Array[Dictionary],
+		a: Vector2, tangent: Vector2, inward: Vector2, step: float, first: int, last: int) -> PackedVector2Array:
+	var span := float(last - first) * step
+	if span < 1.5:
+		return PackedVector2Array()
+	var count := maxi(2, ceili(span / 1.5))
+	var cell := span / float(count)
+	var front_pts: PackedVector2Array = []
+	var back_pts: PackedVector2Array = []
+	var deepest := 0.0
+	for i in count + 1:
+		var c := float(first) * step + cell * float(i)
+		var front := a + tangent * c + inward * 0.10
+		var depth := 0.0
+		for candidate: float in [3.2, 2.2, 1.5, 1.0, 0.6]:
+			if not Geometry2D.is_point_in_polygon(front + inward * (candidate * 0.4), polygon):
+				continue
+			if not Geometry2D.is_point_in_polygon(front + inward * (candidate * 0.85), polygon):
+				continue
+			if _point_inside_plots(front + inward * (candidate * 0.85), result):
+				continue
+			depth = candidate
+			break
+		deepest = maxf(deepest, depth)
+		front_pts.append(front)
+		back_pts.append(front + inward * maxf(depth, 0.30))
+	if deepest < 0.6:
+		return PackedVector2Array()
+	var poly := PackedVector2Array()
+	for p: Vector2 in front_pts:
+		poly.append(p)
+	for i in range(back_pts.size() - 1, -1, -1):
+		poly.append(back_pts[i])
+	if absf(CityPlan._polygon_area(poly)) < 2.5:
+		return PackedVector2Array()
+	return poly
+
+
+## Candidate (width, depth) lots for the stepped wedge fill, largest first. A
+## single house cannot always span the face that is left, so the gap is consumed
+## by a run of houses whose depth follows the polygon: the outline steps instead
+## of leaving the wedge empty. Every pair clears the 12 m2 contract footprint
+## minimum and the 2.5 m minimum side with margin, because these lots become real
+## wings with real interiors and the repair validator checks them.
+static func step_pairs() -> Array[Vector2]:
+	var pairs: Array[Vector2] = []
+	for width: float in [21.0, 15.0, 11.0, 8.5, 6.6, 5.2, 4.2, 3.4]:
+		for depth: float in [15.0, 12.0, 9.5, 7.5, 6.0, 5.0, 4.2, 3.6]:
+			# A wedge house is still a house: it has to be wide enough for a
+			# stairwell (4.7m, `has_stairs_for`) and deep enough for one plus a
+			# room (9.1m = stair_zone_len + 2.0 at a 34 degree pitch), or it is a
+			# shed in the street wall and drags the storey-range share down.
+			# Anything smaller is published as a garden instead, so the two
+			# building families stay honest.
+			if width < 4.7 or depth < 9.5 or width * depth < 12.8:
+				continue
+			pairs.append(Vector2(width, depth))
+	pairs.sort_custom(_step_pair_cmp)
+	return pairs
+
+static func _step_pair_cmp(a: Vector2, b: Vector2) -> bool:
+	return a.x * a.y > b.x * b.y
+
+## Fill an uncovered run with a stepped row of houses. Each house is laid
+## contiguously against the previous one, so the wall stays closed; the depth
+## steps down as the block narrows. Small street-facing houses in a wedge are
+## where a city keeps its cafe, its restaurant and its shop, so a shallow step
+## is given a venue - which the plan materialises as a tavern or merchant house
+## with a shopfront instead of a blank service wall.
+static func _fill_gap_stepped(block_id: String, edge: int, polygon: PackedVector2Array,
+		result: Array[Dictionary], seed: int, a: Vector2, tangent: Vector2, inward: Vector2,
+		step: float, first: int, last: int) -> int:
+	var yaw := atan2(tangent.y, tangent.x)
+	var cursor := float(first) * step
+	var end_t := float(last) * step
+	var pairs := step_pairs()
+	var placed := 0
+	while end_t - cursor >= 4.8 and placed < 6:
+		var run_left := end_t - cursor
+		var lot := Rect2()
+		for pair: Vector2 in pairs:
+			var width := minf(pair.x, run_left - 0.12)
+			if width < 4.7 or width * pair.y < 12.8:
+				continue
+			var front := a + tangent * (cursor + width * 0.5) + inward * 0.12
+			var candidate := fit_frontage(front, tangent, inward, width, pair.y, polygon,
+				result, 4.7)
+			if candidate.size == Vector2.ZERO:
+				continue
+			lot = candidate
+			break
+		if lot.size == Vector2.ZERO:
+			break
+		var id := "%s_step_%d_%d" % [block_id, edge, first + placed]
+		var venue := ""
+		var roll := Streets.unit(seed, "historic_step_venue", [WorldSeed.str_hash(id)])
+		# The wedge houses are the street's small frontage: the city keeps its
+		# cafes, restaurants and corner shops here, so every one of them is a
+		# mixed-use house rather than a single-use shed.
+		venue = "tavern" if roll < 0.45 else "retail"
+		result.append({"id": id, "block_id": block_id, "rect": lot, "yaw": yaw,
+			"polygon": CityPlan._lot_corners(lot, yaw), "frontage_m": lot.size.x,
+			"depth_m": lot.size.y, "frontage_center": a + tangent * cursor + inward * 0.12,
+			"owner_chunk": WorldSeed.chunk_coord(lot.get_center().x, lot.get_center().y),
+			"venue": venue})
+		stats["seal_stepped"] = int(stats.get("seal_stepped", 0)) + 1
+		stats["allocated"] = int(stats["allocated"]) + 1
+		cursor += lot.size.x
+		placed += 1
+	return placed
 
 ## Street-wall closure by widening an existing house, which is how a real street
 ## wall stays continuous: plots merge and the survivor's frontage grows.
@@ -247,13 +411,14 @@ static func _absorb_frontage_gap(polygon: PackedVector2Array, result: Array[Dict
 	return true
 
 static func fit_frontage(front: Vector2, tangent: Vector2, inward: Vector2,
-		width: float, target: float, polygon: PackedVector2Array, reserved: Array[Dictionary]) -> Rect2:
+		width: float, target: float, polygon: PackedVector2Array, reserved: Array[Dictionary],
+		min_width: float = 6.0) -> Rect2:
 	var yaw := atan2(tangent.y, tangent.x)
 	# At crooked party walls a modest width adjustment can retain a house;
 	# discarding the entire bay used to leave a 10-15m hole in the street.
 	for reduction in [0.0, 0.6, 1.2, 2.0, 3.0, 4.0]:
 		var fitted_width := width - float(reduction)
-		if fitted_width < 6.0:
+		if fitted_width < min_width:
 			continue
 		for depth in [target, 12.0, 10.0]:
 			var center := front + inward * float(depth) * 0.5

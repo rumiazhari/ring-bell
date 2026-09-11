@@ -84,6 +84,8 @@ var _city_edge_ids: Dictionary = {}
 var _landmarks: Array[Dictionary] = []
 var _landmark_by_id: Dictionary = {}
 var _blocks: Array[Dictionary] = []
+var _street_garden_cache: Array[Dictionary] = []
+var _street_gardens_cached := false
 var _block_by_cell: Dictionary = {}
 var _all_buildings: Array[Dictionary] = []
 var _placement_bins: Dictionary = {}
@@ -1319,7 +1321,42 @@ func _finalize_block_fabric() -> void:
 ## Derive one shared rear-court/garden surface from the owning block face.
 ## Tiny residual fragments are rejected so they cannot become detached-looking
 ## procedural shards.
+## Ground the lot fitter could not build on, published as planted gardens. This
+## runs before the enclosed-courtyard rules, and deliberately so: a wedge between
+## two houses has no passage and encloses nothing, so it would be dropped on its
+## way to the courtyard test even though it is exactly the blank the city must
+## not have.
+func _street_gardens_for_block(block: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var buildings: Array = block.get("buildings", []) as Array
+	for garden_variant in block.get("frontage_gardens", []) as Array:
+		var garden: PackedVector2Array = garden_variant as PackedVector2Array
+		if garden.size() < 3:
+			continue
+		var garden_area := absf(_polygon_area(garden))
+		if garden_area < 3.0:
+			continue
+		var garden_center := _polygon_centroid(garden)
+		out.append({
+			"kind": &"garden",
+			"polygon": garden,
+			"area_m2": garden_area,
+			"center": garden_center,
+			"enclosed": false,
+			"access": true,
+			"access_kind": &"street_garden",
+			"enclosure_sides": _courtyard_enclosure_sides(garden_center, buildings),
+		})
+	return out
+
+
 func _courtyard_regions_for_block(block: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = _street_gardens_for_block(block)
+	out.append_array(_courtyard_regions_inner(block))
+	return out
+
+
+func _courtyard_regions_inner(block: Dictionary) -> Array[Dictionary]:
 	var source: PackedVector2Array = block.get("polygon",
 		PackedVector2Array()) as PackedVector2Array
 	var source_area := absf(_polygon_area(source))
@@ -1398,7 +1435,110 @@ func _courtyard_regions_for_block(block: Dictionary) -> Array[Dictionary]:
 	out.sort_custom(_surface_region_cmp)
 	if out.size() > WorldConstants.CITY_COURTYARD_MAX_REGIONS_PER_BLOCK:
 		out.resize(WorldConstants.CITY_COURTYARD_MAX_REGIONS_PER_BLOCK)
+	# Whatever the lot fitter could not turn into a house does not have to read as
+	# bare city. Ground that still touches the block boundary is published as a
+	# garden surface, which is the second half of the anti-blank rule: every gap
+	# becomes a building, a party wall, or an intentional garden.
+	# Ground the lot fitter could not build on still owes the player something: the
+	# strips left along the street line are published as planted gardens (see
+	# _street_gardens_for_block), and the ground left inside the block as residual
+	# courts, so no part of the core reads as bare void.
+	out.append_array(_street_garden_regions(source, buildings))
 	return out
+
+
+## Leftover ground of a block that still reaches its own boundary, published as a
+## garden. The rear-court pass above only keeps enclosed courts reached by a
+## passage, so a gap in the street wall with nothing behind it stayed bare. A
+## garden is the honest use for ground too shallow or too wedged for a house, and
+## the chunk renderer already draws a `garden` region as planted ground.
+func _street_garden_regions(source: PackedVector2Array, buildings: Array) -> Array[Dictionary]:
+	var free: Array[PackedVector2Array] = [source]
+	for spec_variant in buildings:
+		var spec: Dictionary = spec_variant as Dictionary
+		var lot: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var yaw := float(spec.get("yaw", 0.0))
+		var next: Array[PackedVector2Array] = []
+		for subject: PackedVector2Array in free:
+			for clipped_variant in Geometry2D.clip_polygons(subject, _lot_corners(lot, yaw)):
+				var component: PackedVector2Array = clipped_variant as PackedVector2Array
+				if component.size() >= 3:
+					next.append(component)
+		free = next
+		if free.is_empty():
+			return []
+	var min_area := WorldConstants.CITY_COURTYARD_MIN_AREA_M2 * 0.36
+	var out: Array[Dictionary] = []
+	for component: PackedVector2Array in free:
+		var area := absf(_polygon_area(component))
+		if area < min_area:
+			continue
+		if not _polygon_touches_boundary(component, source):
+			continue
+		var center := _polygon_centroid(component)
+		var enclosure := _courtyard_enclosure_sides(center, buildings)
+		# A court, not open country: the residual must be bounded by houses on
+		# three sides and remain pocket-sized, otherwise this is not a courtyard
+		# but simply land the fabric never reached.
+		if enclosure < 3 or area > 600.0:
+			continue
+		out.append({
+			"kind": &"garden",
+			"polygon": component,
+			"area_m2": area,
+			"center": center,
+			"enclosed": enclosure >= 2,
+			"access": true,
+			"access_kind": &"block_residual",
+			"enclosure_sides": enclosure,
+		})
+	out.sort_custom(_surface_region_cmp)
+	return out
+
+
+## Street-garden regions intersecting `rect`, for the chunk renderer's planting
+## pass. These are the strips the lot fitter could not build on; the renderer
+## plants them so a gap in the street wall reads as a garden, not as bare city.
+func garden_regions_in_rect(rect: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not _street_gardens_cached:
+		_street_gardens_cached = true
+		for block: Dictionary in _blocks:
+			for region_variant in block.get("courtyard_regions", []) as Array:
+				var region: Dictionary = region_variant as Dictionary
+				if StringName(region.get("access_kind", &"")) == &"street_garden":
+					_street_garden_cache.append(region)
+	for region: Dictionary in _street_garden_cache:
+		var poly: PackedVector2Array = region.get("polygon", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 3:
+			continue
+		var box := Rect2(poly[0], Vector2.ZERO)
+		for corner: Vector2 in poly:
+			box = box.expand(corner)
+		if not rect.intersects(box):
+			continue
+		out.append(region)
+	return out
+
+
+## True when any vertex of `component` lies on the block boundary, which is what
+## makes the leftover visible from the public realm instead of a sealed pocket.
+func _polygon_touches_boundary(component: PackedVector2Array, source: PackedVector2Array) -> bool:
+	for vertex: Vector2 in component:
+		for i in source.size():
+			if _point_segment_distance(vertex, source[i],
+					source[(i + 1) % source.size()]) <= 1.5:
+				return true
+	return false
+
+
+func _point_segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var length_sq := ab.length_squared()
+	if length_sq <= 0.000001:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / length_sq, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
 
 
 func _courtyard_enclosure_sides(center: Vector2, buildings: Array) -> int:
@@ -2498,7 +2638,14 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 			# ground-floor program, courtyard annexes carry service programs, and
 			# the upper floors hold apartments or offices above both.
 			var ground_roll := _u("historic_ground_use", [WorldSeed.str_hash(plot.id)])
-			var street_use := "retail" if ground_roll < 0.34 else ("workshop" if ground_roll < 0.54 else ("tavern" if ground_roll < 0.68 else ("storage" if ground_roll < 0.84 else "caretaker")))
+			var street_use := "retail" if ground_roll < 0.32 else ("tavern" if ground_roll < 0.52 else ("workshop" if ground_roll < 0.72 else ("storage" if ground_roll < 0.88 else "caretaker")))
+			# A house laid by the stepped frontage fill carries its own venue.
+			# Those are the small houses wedged into an irregular face, which is
+			# exactly where a city keeps its cafe, restaurant and corner shop, so
+			# the plan honours the venue instead of rolling a service use over it.
+			var venue := str(plot.get("venue", ""))
+			if wi == 0 and not venue.is_empty():
+				street_use = venue
 			spec.use = street_use if wi == 0 else ("workshop" if _u("historic_annex_use", [WorldSeed.str_hash(plot.id), wi]) < 0.35 else "storage")
 			spec.floor_uses = [spec.use]
 			for fi in range(1, int(spec.floors)):

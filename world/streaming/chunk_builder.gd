@@ -115,6 +115,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 				"city_curb_%d_%d" % [coord.x, coord.y])
 	var _t_build := Time.get_ticks_usec()
 	_scatter_props(b, plan, rect, coord, world_plan)
+	_plant_garden_trees(b, plan, rect, world_plan)
 	if debug_profile:
 		_slow.sort_custom(func(a: Array, c: Array) -> bool: return float(a[1]) > float(c[1]))
 		print("[ChunkPlan] %s roads=%.0f pave=%.0f blocks=%.0f owned=%.0f buildings=%.0f props=%.0f TOTAL=%.0f ms" % [
@@ -978,14 +979,22 @@ static func _built_block_surfaces(b: MeshBatcher, plan: CityPlan, block: Diction
 		var region_poly: PackedVector2Array = region.get("polygon",
 			PackedVector2Array()) as PackedVector2Array
 		var clipped_region := _clip_polygon_to_rect(region_poly, chunk_rect)
-		if clipped_region.size() < 3 or _polygon_area(clipped_region) < \
-				WorldConstants.CITY_COURTYARD_MIN_AREA_M2 * 0.35:
+		var region_min_area := WorldConstants.CITY_COURTYARD_MIN_AREA_M2 * 0.35
+		if StringName(region.get("access_kind", &"")) == &"street_garden":
+			# A planted strip between two houses is often only a couple of metres
+			# wide, but it is deliberate ground and it has to be drawn.
+			region_min_area = 2.0
+		if clipped_region.size() < 3 or _polygon_area(clipped_region) < region_min_area:
 			continue
 		var region_center: Vector2 = region.get("center",
 			block.get("center", Vector2.ZERO)) as Vector2
 		var region_y := world_plan.surface_height_at(region_center) if world_plan != null else 0.0
 		var region_kind: StringName = region.get("kind", &"courtyard") as StringName
 		var region_color := COURTYARD_SERVICE if region_kind == &"garden" else COURTYARD_GREEN
+		# A street garden is planted ground seen from the public realm, so it reads
+		# as green; the enclosed rear service yards keep the service tone they had.
+		if StringName(region.get("access_kind", &"")) == &"street_garden":
+			region_color = COURTYARD_GREEN
 		b.add_visual_polygon(clipped_region, region_y + 0.032, region_color)
 
 
@@ -1212,6 +1221,60 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 
 
 # --- Props / apocalypse decoration pass v0 ------------------------------------
+
+## Plant the street gardens. The lot fitter leaves filled strips where no house
+## fits; drawing them green is not enough for the player, so they get trees, one
+## per 16 m2 of garden up to three, kept clear of the walls they sit between.
+static func _plant_garden_trees(b: MeshBatcher, plan: CityPlan, rect: Rect2,
+		world_plan: WorldPlan = null) -> void:
+	var regions := plan.garden_regions_in_rect(rect.grow(4.0))
+	if regions.is_empty():
+		return
+	var rng := WorldSeed.rng_for("garden_trees", [int(rect.position.x), int(rect.position.y)])
+	for region: Dictionary in regions:
+		var poly: PackedVector2Array = region.get("polygon", PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 3:
+			continue
+		var box := Rect2(poly[0], Vector2.ZERO)
+		for corner: Vector2 in poly:
+			box = box.expand(corner)
+		var wanted := clampi(int(round(float(region.get("area_m2", 0.0)) / 16.0)), 1, 3)
+		var planted := 0
+		var tries := 0
+		while planted < wanted and tries < wanted * 8:
+			tries += 1
+			var p := Vector2(rng.randf_range(box.position.x, box.end.x),
+				rng.randf_range(box.position.y, box.end.y))
+			if not Geometry2D.is_point_in_polygon(p, poly):
+				continue
+			var clearance := 1000.0
+			for i in poly.size():
+				var s0 := poly[i]
+				var s1 := poly[(i + 1) % poly.size()]
+				clearance = minf(clearance, Geometry2D.get_closest_point_to_segment(p, s0, s1).distance_to(p))
+			if clearance < 1.1:
+				continue
+			var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
+			b.add_prop_def({
+				"position": Vector3(p.x, ground_y, p.y),
+				"yaw": rng.randf_range(0.0, TAU),
+				"material": &"wood",
+				"parts": [
+					{
+						"offset": Vector3(0, 1.3, 0),
+						"size": Vector3(0.42, 2.6, 0.42),
+						"color": WorldConstants.COL_RURAL_TREE_TRUNK,
+						"collide": true,
+					},
+					{
+						"offset": Vector3(0, 3.3, 0),
+						"size": Vector3(2.6, 2.0, 2.6),
+						"color": Color("4d6b39").lightened(rng.randf() * 0.3),
+					},
+				],
+			})
+			planted += 1
+
 
 static func _scatter_props(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 		coord: Vector2i, world_plan: WorldPlan = null) -> void:
