@@ -42,6 +42,8 @@ func measure(seed: int) -> void:
 	var blank_start := Vector2.ZERO
 	var blank_lines: Array[String] = []
 	var blanks_gt15 := 0
+	var internal_blank := 0.0
+	var boundary_blank := 0.0
 	var street_wings := 0
 	var facade_wings := 0
 	var facade_differs := 0
@@ -103,6 +105,20 @@ func measure(seed: int) -> void:
 					blank_run = 0.0
 					blank_start = Vector2.ZERO
 				elif edge_class == "street":
+					# Where does the missing frontage live? An edge with historic
+					# fabric across the street is an internal street whose wall is
+					# broken; an edge with nothing historic opposite is the core
+					# boundary, where this grammar hands over to the generic fringe.
+					var far := point + (middle - centroid).normalized() * 18.0
+					var across := false
+					for k in built_boxes.size():
+						if built_boxes[k].has_point(far) and Geometry2D.is_point_in_polygon(far, built_polys[k]):
+							across = true
+							break
+					if across:
+						internal_blank += step
+					else:
+						boundary_blank += step
 					if blank_run == 0.0:
 						blank_start = point
 					blank_run += step
@@ -193,7 +209,7 @@ func measure(seed: int) -> void:
 	svg += "\n".join(blank_lines)
 	raster.load_svg_from_string(svg + "</svg>")
 	raster.save_png("res://.hermes/autopilot/reports/prague-gameplay-pass/plan-%d.png" % seed)
-	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s floor_rooms_p50=%.2f combat_floors=%d/%d hall_p50=%.2f street_frontage=%.3f party=%.3f void=%.3f blanks_gt15=%d street_wings=%d facade=%d differs=%d shopfronts=%d" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths), percentile(floor_rooms, 0.5), combat_floors, floors_seen, percentile(hall_widths, 0.5), street_built / maxf(street_len, 1.0), party_len / maxf(perimeter, 1.0), void_len / maxf(perimeter, 1.0), blanks_gt15, street_wings, facade_wings, facade_differs, shopfronts])
+	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s floor_rooms_p50=%.2f combat_floors=%d/%d hall_p50=%.2f street_frontage=%.3f party=%.3f void=%.3f blanks_gt15=%d street_wings=%d facade=%d differs=%d shopfronts=%d blank_internal=%.0fm blank_boundary=%.0fm" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths), percentile(floor_rooms, 0.5), combat_floors, floors_seen, percentile(hall_widths, 0.5), street_built / maxf(street_len, 1.0), party_len / maxf(perimeter, 1.0), void_len / maxf(perimeter, 1.0), blanks_gt15, street_wings, facade_wings, facade_differs, shopfronts, internal_blank, boundary_blank])
 	check(percentile(areas, 0.5) >= 15.0, "occupied room median >=15m2")
 	check(percentile(areas, 0.5) <= 30.0, "occupied room median <=30m2")
 	check(percentile(areas, 0.9) <= 45.0, "occupied room p90 <=45m2")
