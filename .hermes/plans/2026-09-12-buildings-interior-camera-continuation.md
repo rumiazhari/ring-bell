@@ -301,11 +301,12 @@ reporting mean luminance outside vs inside, plus per-room darkest point, so the
   migration bypass/registration (~35). Grounding needs a plot-pad decision
   (flatten under plots vs follow terrain) and is a prerequisite for fences/yards.
 - `--sitecontracttest` (new, G10-P2C site envelope contract): **42/44 checks pass**.
-  Fringe yards validate 9/9. The city side derived **0 sites**: neither
-  `garden_regions_in_rect()` (street-garden subset) nor the new
-  `courtyard_regions_in_rect()` finds any courtyard region across a ±2.5 km walk.
-  Root cause not yet pinned — `_finalize_block_fabric()` (city_plan.gd:1187) does
-  run after `_replace_historic_blocks()` (city_plan.gd:1159), so the ordering
-  hypothesis was wrong; the next probe should print block count, block-centre
-  extent and total `courtyard_regions` (a diagnostic for exactly that is already in
-  `SitePlan.block_extent()` and `debug/site_contract_test.gd`).
+  Fringe yards validate 9/9. The city side derived **0 sites**, and the pinned root
+  cause is now measured, not guessed: after generation `wp.city_plan._blocks` is
+  **empty** (`blocks=0`, `courtyard_regions=0`, extent `(0,0,0,0)`), while
+  `city_plan.gd:1179` fills `_block_by_cell[block["cell"]] = block` — so the
+  populated store is `_block_by_cell`, and both `SitePlan.raw_region_count()` and
+  the *existing* `CityPlan.garden_regions_in_rect()` (which iterates `_blocks`)
+  therefore see nothing. Fix: read `_block_by_cell.values()` (or look up by cell
+  for a rect) in both; then re-run `--sitecontracttest`. If street gardens were
+  never actually planted in-game either, that is a second, larger find.
