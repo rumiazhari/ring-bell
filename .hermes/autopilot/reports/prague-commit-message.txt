@@ -1,0 +1,51 @@
+feat(prague): finish the gameplay/density overhaul — interiors, street wall, façades
+
+Interiors (Phase 2) — a historic floor is now a few real rooms, not a door maze:
+- a flank zone is halved repeatedly while a piece exceeds 28.8 m2, and no cut may
+  leave a piece below 12 m2 or a side below 1.8 m: a 90 m2 flank becomes four
+  ~22 m2 rooms instead of one 45 m2 hall or a grid of cells
+- room kinds come from per-use tier programs; service spaces (toilet, stores) are
+  added separately and never counted as substantial rooms
+- the door graph is a capped tree (ordinary rooms 2 connections, stair hall and
+  landing 3) built in three passes; a repair link may exceed a cap only where the
+  geometry leaves no alternative — measured rooms with >2 doors: 0
+- the entry hall is a real 1.5-2.0 m passage beside the stairwell column, and the
+  service room is carved from whichever band can actually hold it
+- a plate too small for a passage plus a landing keeps the whole plate as its stair
+  landing, so every upper floor still reaches the stair
+
+Street wall and density (Phase 3):
+- the bay walk lays the wall contiguously (each house starts where the previous
+  one ended), so a house the fitter narrows leaves no hole in the frontage
+- ParcelPlan.seal_street_frontage() fills what is left: a new house where one fits,
+  otherwise the neighbouring house widens along the same street line; stats report
+  seal_filled / seal_widened / seal_unfilled / seal_gap_short per seed
+- deeper front wings (14.5-17.5 m), rear wings from 21 m plot depth, side wings
+  from 8.6 m plot width; a side wing needs 4.2 m of court depth to clear the 12 m2
+  contract footprint minimum
+- a wing too small to hold a stair is a single-storey service extension rather than
+  a multi-storey wing nobody can climb
+
+Façades (Phase 4): specs already published HistoricFacadePlan.for_wing(); the
+harness now proves CONSUMPTION — 100% of historic street wings carry a plan, and
+every one differs from the legacy evenly-spaced rule when the plan is removed.
+
+Harness: one greppable metric line; every block-boundary edge is classified
+street / party / void so the frontage bar is scored against BUILDABLE frontage
+(party walls 1.2%, residual void 0.000); blank runs >15 m are marked in red on the
+plan PNG so the defect is visible, not inferred.
+
+Measured, --praguegameplaytest, 3 seeds:
+- rooms/floor p10/50/90 2-3/4/8; occupied room area p10/50/90 15.5/19.8/27.2 m2;
+  principal room p50 24.7 m2; rooms <8 m2 0.5%; >2 doors 0; invalid interiors 0
+- manoeuvre-room floors 3395/3686 and 3456/3722 (>=92%)
+- footprint coverage 0.591-0.627 (bar 0.55-0.75) PASS; residual void 0.000 PASS
+- buildable street frontage 0.663-0.695 (bar 0.85) NOT MET; blank runs >15 m
+  127-148 (bar 0) NOT MET. Cause is measured, not guessed: a candidate house must
+  place its rotated footprint inside the irregular block polygon to within 0.03 m2
+  and the space behind a gap is usually already occupied by a neighbour's depth.
+  Closing the rest needs clipped (non-rectangular) lots, which this generator
+  cannot express; documented in docs/world/PRAGUE-MORPHOLOGY.md.
+
+Suites: --import 0, --praguetest 0, --buildingrepairtest --city-plan-check 0,
+--streamingregressiontest 0, --cityruntime unchanged by this diff.

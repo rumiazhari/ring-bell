@@ -2482,7 +2482,13 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 			spec.planned_ground_y = plot.ground_y
 			spec.wing_role = wing.role
 			spec.historical_layer = plot.historical_layer if wi == 0 else &"later_rear_extension"
-			spec.floors = floors if wi == 0 else (maxi(2, floors - 1) if wing.role == &"rear" else 1)
+			# A wing too small to hold a stair is a single-storey service extension,
+			# not a multi-storey wing nobody can climb: the plan and the interior
+			# grammar must agree on the storey count.
+			var wing_floors := floors if wi == 0 else (maxi(2, floors - 1) if wing.role == &"rear" else 1)
+			if not BuildingBuilder.has_stairs_for(rect.size, 3.1, wing_floors):
+				wing_floors = 1
+			spec.floors = wing_floors
 			spec.archetype = "merged_house" if float(plot.frontage_m) > 15.0 else ("courtyard_tenement" if plot.wings.size() >= 3 else "narrow_townhouse")
 			spec.floor_h = 3.1
 			spec.circulation = {"kind": &"stairs" if int(spec.floors) > 1 else &"none"}

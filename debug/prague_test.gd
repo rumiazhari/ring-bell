@@ -524,12 +524,18 @@ func _stairs(specs: Array[Dictionary], seed: int) -> void:
 			bad += 1
 			if bad <= 2:
 				print("[PragueTest] DIST seed=%d stair sample %s (w=%.1f): %s" % [seed, spec.id, width, errors])
+		var first_bad := ""
 		for floor: Dictionary in interior.get("floors", []):
 			var kinds := []
 			for room: Dictionary in floor.get("rooms", []):
 				kinds.append(str(room.get("kind", "")))
 			if floor.get("floor_i") != 0 and not (kinds.has("landing") or kinds.has("stair_hall")):
 				unreachable += 1
+				if first_bad == "":
+					first_bad = "%s w=%.1f depth=%.1f floor=%d kinds=%s" % [spec.id, width,
+						float((spec.get("rect", Rect2()) as Rect2).size.y), int(floor.get("floor_i")), str(kinds)]
+		if first_bad != "":
+			print("[PragueTest] DIST seed=%d stair-unreachable %s" % [seed, first_bad])
 	print("[PragueTest] DIST seed=%d stair_samples=%d narrowest=%.1fm narrow_sampled=%d invalid=%d floors_without_stair_access=%d"
 		% [seed, checked, narrowest, narrow_checked, bad, unreachable])
 	_check(checked >= 8, "seed %d: stair reachability is sampled across the core (%d wings)" % [seed, checked])

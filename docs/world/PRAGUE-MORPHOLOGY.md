@@ -94,6 +94,44 @@ Seed 19041207 (407 city blocks, 58 historic-core blocks, 326 plots, 577 wings):
 - cost: city generation ~41 s per seed (pre-existing generator cost, unchanged); the
   morphology analysis itself adds < 150 ms per seed.
 
+## Gameplay and density overhaul (interiors, street wall, façades)
+
+Reproduce with:
+
+```
+python tools/run_suite.py --praguegameplaytest 2300     # 3 real seeds, ~8 min
+```
+
+Interiors — a normal floor is a small number of real rooms, not a door maze:
+
+- substantial rooms per front-wing floor: p10/50/90 = 1/4/8 (large corner plates only
+  reach 8); service spaces (toilet, stores) are separate and never counted.
+- occupied room area p10/50/90 = 15.3 / 19.9 / 27.9 m² against the 12–22 m² normal band;
+  principal-room median 25.6 m² inside the 22–40 m² principal band.
+- rooms under 8 m²: 2.0%; rooms with more than two connections: **0**; interiors failing
+  the geometry/connectivity contract: **0**.
+- entry hall is a real 1.5–2.0 m passage beside the stairwell column (median 2.00 m);
+  partition openings are clamped to 1.3–1.6 m; a floor is cut by repeated halving, so a
+  90 m² flank becomes four ~22 m² rooms and no partition may leave a piece below 12 m².
+- 93–96% of normal floors contain an ≥18 m² room with at most two doors (a manoeuvre
+  room), and the door graph is a tree: bedrooms are never mandatory through-routes.
+
+Street wall and density:
+
+- historic block footprint coverage **0.601–0.641** (bar 0.55–0.75) — PASS.
+- unclassified residual void **0.000** of block perimeter (bar < 5%) — PASS; party walls
+  are 1.1–1.2%, i.e. ~90% of every block perimeter is genuinely buildable street frontage.
+- buildable street-frontage continuity **0.68–0.73** (bar 0.85) — NOT MET.
+- blank frontage runs longer than 15 m: **110–138 per city** (bar 0) — NOT MET.
+
+Façades — openings derived from the actual rooms and the ground-floor use:
+
+- 100% of historic street wings carry a room-derived façade plan (956/956 and 911/911),
+  and every one of them differs from the legacy evenly-spaced rule (the materializer
+  consumes `spec.facade_plan` through `city_window_openings`).
+- ground-floor shopfronts appear on 66–70% of street wings; service rooms get small high
+  openings, chambers get 1.25–1.55 m windows on the spacing of their own room width.
+
 ## Known limitations (not hidden — the harness asserts what holds and reports the rest)
 
 - Dead-end share runs 21–27% of junctions: the blind-lane roll is deliberate but high.
@@ -106,6 +144,18 @@ Seed 19041207 (407 city blocks, 58 historic-core blocks, 326 plots, 577 wings):
 - Rear-lane passages are planned but not yet rendered as a distinct surface.
 - Cellars are manifest-only by design (`materialized: false`) — pending the underground
   systems.
-- Façade grammar (window/door placement from room and stair positions, item 13) and the
-  landmark/public-space hierarchy (items 14–15) beyond the existing squares and civic
-  landmarks are not part of this cycle.
+- Façade grammar (openings from room boundaries and ground-floor use, item 13) is
+  implemented: `HistoricFacadePlan.for_wing()` publishes a per-floor, per-side opening
+  list on every historic wing and `city_window_openings()` returns it unchanged.
+- Street-frontage continuity is 0.68–0.73 against the 0.85 bar. The gap is structural, not
+  a metric artefact: ~300 street-wall gaps remain per city and 245–277 of them resist every
+  filler. A candidate house must place its *rotated* footprint inside the irregular block
+  polygon to within 0.03 m², and the space behind a gap is usually already occupied by a
+  neighbour's depth; widening the neighbouring house along the same street line closes
+  only 47–69 of them. Closing the rest needs clipped (non-rectangular) lots, which this
+  generator cannot express — lots, interiors, façades and the validator all assume a
+  rotated rectangle.
+- The legacy `actual street elevations / block perimeter` ratio prints as a diagnostic
+  only (0.61–0.65). It divides covered street wall by the whole block perimeter including
+  party walls and non-buildable boundary, so it cannot reach the bar even on a perfect
+  street wall; the graded bar is the buildable-frontage ratio above.

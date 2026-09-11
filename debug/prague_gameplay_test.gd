@@ -30,7 +30,31 @@ func measure(seed: int) -> void:
 	var disconnected := 0
 	var rooms_total := 0
 	var widths: Array[float] = []
+	var floor_rooms: Array[float] = []
+	var floors_seen := 0
+	var combat_floors := 0
+	var hall_widths: Array[float] = []
+	var street_len := 0.0
+	var street_built := 0.0
+	var party_len := 0.0
+	var void_len := 0.0
+	var blank_run := 0.0
+	var blank_start := Vector2.ZERO
+	var blank_lines: Array[String] = []
+	var blanks_gt15 := 0
+	var street_wings := 0
+	var facade_wings := 0
+	var facade_differs := 0
+	var shopfronts := 0
+	var shopfront_wings := 0
 	var svg := '<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1400" viewBox="-450 -450 900 900"><rect x="-450" y="-450" width="900" height="900" fill="#343c40"/>'
+	var built_polys: Array[PackedVector2Array] = []
+	var built_boxes: Array[Rect2] = []
+	for block: Dictionary in blocks:
+		if bool(block.get("historic_compound", false)) and block.kind == &"built":
+			var other: PackedVector2Array = block.polygon
+			built_polys.append(other)
+			built_boxes.append(poly_bounds(other))
 	for block: Dictionary in blocks:
 		if not bool(block.get("historic_compound", false)) or block.kind != &"built":
 			continue
@@ -42,12 +66,27 @@ func measure(seed: int) -> void:
 			outlines.append(CityPlan._lot_corners(spec.rect, spec.yaw))
 		svg += svg_polygon(poly, "#d6cebc")
 		land += absf(CityPlan._polygon_area(poly))
+		# Only block boundary that faces a buildable street counts toward the
+		# frontage bar. Party walls between abutting blocks and open-ground edges
+		# are not buildable frontage, so they must not dilute the ratio - and the
+		# residual open-ground class is itself measured against the 5 % target.
+		var centroid := Vector2.ZERO
+		for point: Vector2 in poly:
+			centroid += point
+		centroid /= maxf(float(poly.size()), 1.0)
+		var roads := city.city_road_segments_in(poly_bounds(poly).grow(14.0))
 		for i in poly.size():
 			var a := poly[i]
 			var b := poly[(i + 1) % poly.size()]
 			var length := a.distance_to(b)
 			perimeter += length
+			var middle := a.lerp(b, 0.5)
+			var outward := middle - centroid
+			outward = outward.normalized() if outward.length() > 0.05 else Vector2.RIGHT
+			var edge_class := classify_edge(middle + outward * 1.2, city, roads, built_polys, built_boxes)
 			var samples := maxi(1, ceili(length / 0.5))
+			var step := length / float(samples)
+			var covered := 0.0
 			for j in samples:
 				var point := a.lerp(b, (float(j) + 0.5) / samples)
 				var distance := INF
@@ -55,7 +94,31 @@ func measure(seed: int) -> void:
 					for k in outline.size():
 						distance = minf(distance, point.distance_to(Geometry2D.get_closest_point_to_segment(point, outline[k], outline[(k + 1) % outline.size()])))
 				if distance <= 0.75:
-					occupied_boundary += length / samples
+					occupied_boundary += step
+					covered += step
+					if blank_run > 15.0:
+						blanks_gt15 += 1
+					if blank_run > 6.0 and blank_start != Vector2.ZERO:
+						blank_lines.append(frontage_line(blank_start, point))
+					blank_run = 0.0
+					blank_start = Vector2.ZERO
+				elif edge_class == "street":
+					if blank_run == 0.0:
+						blank_start = point
+					blank_run += step
+			if edge_class == "street":
+				street_len += length
+				street_built += covered
+			elif edge_class == "party":
+				party_len += length
+			else:
+				void_len += length
+		if blank_run > 15.0:
+			blanks_gt15 += 1
+		if blank_run > 6.0 and blank_start != Vector2.ZERO:
+			blank_lines.append(frontage_line(blank_start, poly[0]))
+		blank_run = 0.0
+		blank_start = Vector2.ZERO
 		for plot: Dictionary in block.get("plots", []):
 			frontage += float(plot.frontage_m)
 			widths.append(float(plot.frontage_m))
@@ -65,6 +128,28 @@ func measure(seed: int) -> void:
 			var manifest := InteriorPlan.build_for_building(spec)
 			if not InteriorPlan.validate(manifest).is_empty():
 				disconnected += 1
+			if str(spec.get("wing_role", "")) == "front":
+				# Phase 4 proof: the openings the shell builds are the ones derived
+				# from this building's REAL room boundaries and ground-floor use,
+				# not the legacy evenly-spaced fallback.
+				street_wings += 1
+				if spec.has("facade_plan"):
+					facade_wings += 1
+					var ground: Array = spec.facade_plan[0]
+					var here := 0
+					for side_openings: Array in ground:
+						for opening: Dictionary in side_openings:
+							if str(opening.get("kind", "")) == "shopfront":
+								here += 1
+					shopfronts += here
+					if here > 0:
+						shopfront_wings += 1
+					var bare := spec.duplicate()
+					bare.erase("facade_plan")
+					var planned: Array = BuildingSpec.city_window_openings((spec.rect as Rect2).size.x, false, spec, 0, 0)
+					var legacy: Array = BuildingSpec.city_window_openings((spec.rect as Rect2).size.x, false, bare, 0, 0)
+					if str(planned) != str(legacy):
+						facade_differs += 1
 			for floor_plan: Dictionary in manifest.floors:
 				var count := 0
 				var biggest := 0.0
@@ -84,21 +169,74 @@ func measure(seed: int) -> void:
 						tiny += 1
 					if int(degree.get(str(room.id), 0)) > 2:
 						excessive_degree += 1
+				var manoeuvre := false
+				for room: Dictionary in floor_plan.rooms:
+					if (room.rect as Rect2).get_area() >= 18.0 and int(degree.get(str(room.id), 0)) <= 2 \
+							and not bool(room.service) and str(room.kind) not in ["stair_hall", "landing"]:
+						manoeuvre = true
+				for room: Dictionary in floor_plan.rooms:
+					if str(room.kind) == "stair_hall":
+						hall_widths.append((room.rect as Rect2).size.x)
 				if str(spec.wing_role) == "front":
+					floor_rooms.append(float(count))
+					floors_seen += 1
+					if manoeuvre:
+						combat_floors += 1
 					counts.append(float(count))
 					principal.append(biggest)
 	var raster := Image.new()
+	# Diagnostic only: this legacy ratio divides covered street wall by the WHOLE
+	# block perimeter, including party walls and non-buildable boundary, so it can
+	# never reach the bar even on a perfect street wall. The graded bar is
+	# "buildable street frontage" above, measured against street-facing boundary.
 	print("[PragueGameplayTest] actual street elevations / block perimeter = ", occupied_boundary / maxf(perimeter, 1.0))
+	svg += "\n".join(blank_lines)
 	raster.load_svg_from_string(svg + "</svg>")
 	raster.save_png("res://.hermes/autopilot/reports/prague-gameplay-pass/plan-%d.png" % seed)
-	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths)])
+	print("[PragueGameplayTest] seed=%d generation_and_measure_ms=%d occupied_rooms=%d area_p10/50/90=%s room_count_p10/50/90=%s principal_p50=%.2f tiny_share=%.3f door_degree_gt2=%d invalid_interiors=%d footprint=%.3f frontage=%.3f frontage_width_p10/50/90=%s floor_rooms_p50=%.2f combat_floors=%d/%d hall_p50=%.2f street_frontage=%.3f party=%.3f void=%.3f blanks_gt15=%d street_wings=%d facade=%d differs=%d shopfronts=%d" % [seed, Time.get_ticks_msec() - started, rooms_total, percentiles(areas), percentiles(counts), percentile(principal, 0.5), float(tiny) / maxi(1, rooms_total), excessive_degree, disconnected, occupied / maxf(land, 1.0), frontage / maxf(perimeter, 1.0), percentiles(widths), percentile(floor_rooms, 0.5), combat_floors, floors_seen, percentile(hall_widths, 0.5), street_built / maxf(street_len, 1.0), party_len / maxf(perimeter, 1.0), void_len / maxf(perimeter, 1.0), blanks_gt15, street_wings, facade_wings, facade_differs, shopfronts])
 	check(percentile(areas, 0.5) >= 15.0, "occupied room median >=15m2")
+	check(percentile(areas, 0.5) <= 30.0, "occupied room median <=30m2")
+	check(percentile(areas, 0.9) <= 45.0, "occupied room p90 <=45m2")
 	check(percentile(principal, 0.5) >= 22.0, "principal room median >=22m2")
+	check(percentile(principal, 0.5) <= 40.0, "principal room median <=40m2")
+	check(percentile(floor_rooms, 0.5) >= 2.0 and percentile(floor_rooms, 0.5) <= 4.0, "typical floor has 2..4 substantial rooms")
+	check(combat_floors * 10 >= floors_seen * 9, "90% of normal floors hold an 18m2 manoeuvre room")
+	check(percentile(hall_widths, 0.5) >= 1.5 and percentile(hall_widths, 0.5) <= 2.0, "stair halls 1.5..2.0m")
 	check(float(tiny) / maxi(1, rooms_total) <= 0.05, "occupied rooms below8m2 <=5%")
 	check(excessive_degree == 0, "ordinary rooms have at most two connections")
 	check(disconnected == 0, "all interiors satisfy geometry and connectivity contract")
 	check(occupied / maxf(land, 1.0) >= 0.55, "historic building coverage >=55%")
-	check(occupied_boundary / maxf(perimeter, 1.0) >= 0.85, "historic street frontage >=85%")
+	check(occupied / maxf(land, 1.0) <= 0.75, "historic building coverage <=75%")
+	check(street_built / maxf(street_len, 1.0) >= 0.85, "buildable street frontage >=85%")
+	check(void_len / maxf(perimeter, 1.0) <= 0.05, "unclassified residual void <=5%")
+	check(blanks_gt15 == 0, "no blank frontage run longer than 15m")
+	check(facade_wings * 10 >= street_wings * 9, "90% of historic street wings carry a room-derived facade plan")
+	check(facade_differs * 10 >= facade_wings * 9, "planned openings replace the legacy spacing rule")
+	check(shopfront_wings * 4 >= facade_wings, "a quarter of street wings have ground-floor shopfronts")
+
+func frontage_line(a: Vector2, b: Vector2) -> String:
+	return '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#ff2d2d" stroke-width="3"/>' % [a.x, a.y, b.x, b.y]
+
+func poly_bounds(poly: PackedVector2Array) -> Rect2:
+	var box := Rect2(poly[0], Vector2.ZERO)
+	for point: Vector2 in poly:
+		box = box.expand(point)
+	return box
+
+func polyline_distance(p: Vector2, line: PackedVector2Array) -> float:
+	var best := INF
+	for i in maxi(0, line.size() - 1):
+		best = minf(best, p.distance_to(Geometry2D.get_closest_point_to_segment(p, line[i], line[i + 1])))
+	return best
+
+func classify_edge(probe: Vector2, city: CityPlan, roads: Array, polys: Array[PackedVector2Array], boxes: Array[Rect2]) -> String:
+	for i in polys.size():
+		if boxes[i].has_point(probe) and Geometry2D.is_point_in_polygon(probe, polys[i]):
+			return "party"
+	for road: Dictionary in roads:
+		if polyline_distance(probe, road["polyline"] as PackedVector2Array) <= 8.0:
+			return "street"
+	return "void"
 
 func check(ok: bool, message: String) -> void:
 	if not ok:
