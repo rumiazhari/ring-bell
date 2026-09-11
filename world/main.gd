@@ -109,6 +109,16 @@ func _ready() -> void:
 		spawn_probe.name = "G10P2BSpawnProbe"
 		add_child(spawn_probe)
 		return
+	if args.has("--praguegameplaycapture"):
+		add_child(load("res://debug/prague_gameplay_capture.gd").new())
+		return
+	if args.has("--praguegameplaytest"):
+		var gameplay_script: GDScript = load("res://debug/prague_gameplay_test.gd")
+		if gameplay_script == null or not gameplay_script.can_instantiate():
+			get_tree().quit(1)
+			return
+		add_child(gameplay_script.new())
+		return
 	if args.has("--praguetest"):
 		# A parse error in the harness must fail the suite, not hang it: without
 		# this guard nothing quits the tree and the runner burns its timeout.

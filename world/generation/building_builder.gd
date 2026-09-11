@@ -400,13 +400,13 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		_storey_walls(b, off, w, d, y0, fh, col, f,
 				door_edge if f == 0 else -1, tag,
 				str(spec.get("district", "")) == "historic",
-				door_w, door_h, spec.get("extra_door_edges", []) if f == 0 else [])
+				door_w, door_h, spec.get("extra_door_edges", []) if f == 0 else [], spec)
 		if f == 0:
 			# Room-side casing on the street entrance (interior trim).
 			if dress_ok:
 				_interior_entry_casing(b, off, w, d, y0, door_edge, door_w, door_h)
 			# Shopfront dressing on the street-facing ground wall (visual) - retail only.
-			if str(style.get("room_type", "residential")) == "retail":
+			if str(style.get("room_type", "residential")) == "retail" and not spec.has("facade_plan"):
 				_shopfront(b, off, w, d, spec)
 
 		# Phase K: AC-style facade balconies on the upper storeys - a
@@ -747,12 +747,12 @@ static func _access_outward(edge: int) -> Vector2:
 static func _storey_walls(b: MeshBatcher, off: Vector3, w: float, d: float,
 		y0: float, fh: float, col: Color, floor_i: int, door_edge: int,
 		tag: String, is_historic: bool = false,
-		door_w := DOOR_W, door_h := DOOR_H, extra_edges: Array = []) -> void:
+		door_w := DOOR_W, door_h := DOOR_H, extra_edges: Array = [], spec: Dictionary = {}) -> void:
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
 		b.push_layer("%s:f%d:%s" % [tag, floor_i, facades[side]])
 		_facade_with_openings(b, off, side, w, d, y0, fh, col, floor_i,
-				door_edge == side or extra_edges.has(side), is_historic, tag, door_w, door_h)
+				door_edge == side or extra_edges.has(side), is_historic, tag, door_w, door_h, spec)
 		b.pop_layer()
 
 
@@ -1398,6 +1398,9 @@ static func _facade_drainpipes(b: MeshBatcher, off: Vector3, w: float, d: float,
 ## computed by _facade_with_openings so shutters sit exactly beside glass.
 static func _facade_shutters(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var shutter_colors: Array[Color] = [
@@ -1462,6 +1465,9 @@ static func _facade_shutters(b: MeshBatcher, off: Vector3, w: float, d: float,
 ## under glass, at sill height.
 static func _facade_flower_boxes(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var trough_base := Color("b06238").darkened(0.04)
@@ -1536,6 +1542,9 @@ static func _facade_flower_boxes(b: MeshBatcher, off: Vector3, w: float, d: floa
 ## _facade_with_openings so headers sit exactly above glass.
 static func _facade_window_trim(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var door_edge: int = int(spec.get("door_edge", 0))
@@ -1589,6 +1598,9 @@ static func _facade_window_trim(b: MeshBatcher, off: Vector3, w: float, d: float
 ## _facade_with_openings so sills sit exactly under glass.
 static func _facade_sill_ledges(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var door_edge: int = int(spec.get("door_edge", 0))
@@ -1645,6 +1657,9 @@ static func _facade_sill_ledges(b: MeshBatcher, off: Vector3, w: float, d: float
 ## beside glass.
 static func _facade_window_jambs(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var door_edge: int = int(spec.get("door_edge", 0))
@@ -1701,6 +1716,9 @@ static func _facade_window_jambs(b: MeshBatcher, off: Vector3, w: float, d: floa
 ## sit exactly above glass.
 static func _facade_window_keystones(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var door_edge: int = int(spec.get("door_edge", 0))
@@ -1751,6 +1769,9 @@ static func _facade_window_keystones(b: MeshBatcher, off: Vector3, w: float, d: 
 ## Mirrors the window layout so corbels sit exactly under glass.
 static func _facade_sill_corbels(b: MeshBatcher, off: Vector3, w: float, d: float,
 		fh: float, n: int, tag: String, spec: Dictionary) -> void:
+	if spec.has("facade_plan"):
+		return # Planned apertures receive their own aligned trim below.
+
 	if str(spec.get("district", "")) != "historic":
 		return
 	var door_edge: int = int(spec.get("door_edge", 0))
@@ -1963,7 +1984,7 @@ static func _facade_plinth(b: MeshBatcher, off: Vector3, w: float, d: float,
 static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 		w: float, d: float, y0: float, fh: float, col: Color, floor_i: int,
 		is_entrance: bool, is_historic: bool = false, tag: String = "",
-		door_w := DOOR_W, door_h := DOOR_H) -> void:
+		door_w := DOOR_W, door_h := DOOR_H, spec: Dictionary = {}) -> void:
 	var horizontal := side == 0 or side == 2     # N/S walls run along X
 	var length := w if horizontal else d
 	var lo := -WALL_T * 0.5                      # extend past corners like the
@@ -1978,13 +1999,7 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 	if is_entrance and floor_i == 0:
 		openings.append({"c": length * 0.5, "wd": door_w + DOOR_FRAME,
 				"bot": 0.0, "h": door_h, "glass": false})
-	var count := int(floor((length - 1.6) / WIN_SPACING))
-	for i in count:
-		var t := length * 0.5 + (float(i) - (count - 1) * 0.5) * WIN_SPACING
-		if is_entrance and absf(t - length * 0.5) < DOOR_W * 0.5 + 0.9:
-			continue   # keep the entrance clear; shopfront dresses this wall
-		openings.append({"c": t, "wd": WIN_W, "bot": WIN_SILL, "h": WIN_H,
-				"glass": true})
+	openings.append_array(BuildingSpec.city_window_openings(length, is_entrance, spec, floor_i, side))
 	if openings.is_empty():
 		# Solid wall: one full-length piece.
 		_emit_wall_seg(b, off, side, horizontal, lo, hi, y0, fh, col, w, d)
@@ -2021,6 +2036,11 @@ static func _facade_with_openings(b: MeshBatcher, off: Vector3, side: int,
 					y0 + obot + oh, lh, col)
 		# Glass pane centered INSIDE the aperture (windows only).
 		if bool(o["glass"]):
+			if spec.has("facade_plan"):
+				var trim_point := _side_point(side, w, d, oc)
+				for trim_y in [y0 + obot - 0.07, y0 + obot + oh + 0.07]:
+					b.add_visual_box(off + Vector3(trim_point.x, trim_y, trim_point.y),
+						Vector3(owd + 0.22, 0.12, 0.45) if horizontal else Vector3(0.45, 0.12, owd + 0.22), Color("b8aa91"))
 			var cur_idx := win_idx
 			var is_broken := false
 			if is_historic and tag != "":

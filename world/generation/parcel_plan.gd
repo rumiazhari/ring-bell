@@ -28,7 +28,7 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 		if not Geometry2D.is_point_in_polygon((a + b) * 0.5 + inward, polygon):
 			inward = -inward
 		var yaw := atan2(tangent.y, tangent.x)
-		var count := maxi(1, roundi(length / 11.0))
+		var count := maxi(1, roundi(length / 11.5))
 		# Frontages vary per plot instead of tiling the edge uniformly: historic
 		# Prague runs from narrow ~6 m houses to ~15 m corner properties, and the
 		# weighted span split is what produces that spread along one street wall.
@@ -36,13 +36,15 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 		var weight_sum := 0.0
 		for i in count:
 			var weight := lerpf(0.62, 1.35, Streets.unit(seed, "historic_plot_width", [WorldSeed.str_hash("%s_plot_%d_%d" % [block.id, edge, i])]))
+			if Streets.unit(seed, "historic_merged_plot", [WorldSeed.str_hash(str(block.id)), edge, i]) > 0.9:
+				weight *= 1.7
 			weights.append(weight)
 			weight_sum += weight
 		var cursor := 0.0
 		for i in count:
 			var id := "%s_plot_%d_%d" % [block.id, edge, i]
 			var span := length * weights[i] / weight_sum
-			var width := minf(15.0, span - 0.18)
+			var width := minf(23.0, span - 0.18)
 			var center_t := cursor + span * 0.5
 			cursor += span
 			stats["candidates"] = int(stats["candidates"]) + 1
@@ -52,35 +54,11 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 				stats["skipped_too_narrow"] = int(stats["skipped_too_narrow"]) + 1
 				continue
 			var front := a + tangent * center_t + inward * 0.12
-			var target := lerpf(27.0, 45.0, Streets.unit(seed, "historic_plot_depth", [WorldSeed.str_hash(id)]))
-			# A narrow street house is shallower as well as narrower: a 7 m x 45 m
-			# sliver cannot sit inside a convex block face, and Prague's narrow
-			# houses are not deeper than their wide neighbours.
-			var max_depth := clampf(width * 3.0, 12.0, 45.0)
-			var lot := Rect2()
-			for depth in [minf(target, max_depth), minf(target * 0.85, max_depth),
-					minf(25.0, max_depth), minf(17.0, max_depth), minf(12.0, max_depth)]:
-				var center := front + inward * float(depth) * 0.5
-				var candidate := Rect2(center - Vector2(width, depth) * 0.5, Vector2(width, depth))
-				var corners := CityPlan._lot_corners(candidate, yaw)
-				var intersection := Geometry2D.intersect_polygons(corners, polygon)
-				var inside_area := 0.0
-				for piece: PackedVector2Array in intersection:
-					inside_area += absf(CityPlan._polygon_area(piece))
-				if absf(inside_area - width * float(depth)) > 0.03:
-					stats["failed_fit"] = int(stats["failed_fit"]) + 1
-					continue
-				var overlaps := false
-				for previous: Dictionary in result:
-					if CityPlan._lots_overlap(candidate, yaw, previous.rect, previous.yaw, 0.03):
-						overlaps = true
-						break
-				if not overlaps:
-					lot = candidate
-					break
-				stats["failed_overlap"] = int(stats["failed_overlap"]) + 1
+			var target := lerpf(13.0, 16.0, Streets.unit(seed, "historic_plot_depth", [WorldSeed.str_hash(id)]))
+			var lot := fit_frontage(front, tangent, inward, width, target, polygon, result)
 			if lot.size == Vector2.ZERO:
 				continue
+			width = lot.size.x
 			stats["allocated"] = int(stats["allocated"]) + 1
 			if width < 9.0:
 				stats["narrow_allocated"] = int(stats["narrow_allocated"]) + 1
@@ -88,9 +66,62 @@ static func for_block(block: Dictionary, seed: int) -> Array[Dictionary]:
 				"polygon": CityPlan._lot_corners(lot, yaw), "frontage_m": width,
 				"depth_m": lot.size.y, "frontage_center": front,
 				"owner_chunk": WorldSeed.chunk_coord(lot.get_center().x, lot.get_center().y)}
-			plot.merge(compound(plot, seed))
 			result.append(plot)
+	for plot: Dictionary in result:
+		var original: Rect2 = plot.rect
+		var direction := Vector2(-sin(float(plot.yaw)), cos(float(plot.yaw)))
+		var target := lerpf(25.0, 42.0, Streets.unit(seed, "historic_plot_rear", [WorldSeed.str_hash(plot.id)]))
+		for depth in [target, 25.0, 22.0, 20.0, 18.0, 16.0, original.size.y]:
+			if float(depth) < original.size.y:
+				continue
+			var center: Vector2 = plot.frontage_center + direction * float(depth) * 0.5
+			var candidate := Rect2(center - Vector2(original.size.x, depth) * 0.5, Vector2(original.size.x, depth))
+			var area := 0.0
+			for piece: PackedVector2Array in Geometry2D.intersect_polygons(CityPlan._lot_corners(candidate, plot.yaw), polygon):
+				area += absf(CityPlan._polygon_area(piece))
+			if absf(area - candidate.get_area()) > 0.03:
+				continue
+			var overlaps := false
+			for other: Dictionary in result:
+				if other.id != plot.id and CityPlan._lots_overlap(candidate, plot.yaw, other.rect, other.yaw, 0.03):
+					overlaps = true
+					break
+			if not overlaps:
+				plot.rect = candidate
+				plot.depth_m = float(depth)
+				plot.polygon = CityPlan._lot_corners(candidate, plot.yaw)
+				plot.owner_chunk = WorldSeed.chunk_coord(center.x, center.y)
+				break
+		plot.merge(compound(plot, seed))
 	return result
+
+static func fit_frontage(front: Vector2, tangent: Vector2, inward: Vector2,
+		width: float, target: float, polygon: PackedVector2Array, reserved: Array[Dictionary]) -> Rect2:
+	var yaw := atan2(tangent.y, tangent.x)
+	# At crooked party walls a modest width adjustment can retain a house;
+	# discarding the entire bay used to leave a 10-15m hole in the street.
+	for reduction in [0.0, 0.6, 1.2, 2.0, 3.0, 4.0]:
+		var fitted_width := width - float(reduction)
+		if fitted_width < 6.0:
+			continue
+		for depth in [target, 12.0, 10.0]:
+			var center := front + inward * float(depth) * 0.5
+			var candidate := Rect2(center - Vector2(fitted_width, depth) * 0.5, Vector2(fitted_width, depth))
+			var area := 0.0
+			for piece: PackedVector2Array in Geometry2D.intersect_polygons(CityPlan._lot_corners(candidate, yaw), polygon):
+				area += absf(CityPlan._polygon_area(piece))
+			if absf(area - candidate.get_area()) > 0.03:
+				stats["failed_fit"] = int(stats["failed_fit"]) + 1
+				continue
+			var overlap := false
+			for previous: Dictionary in reserved:
+				if CityPlan._lots_overlap(candidate, yaw, previous.rect, previous.yaw, 0.03):
+					overlap = true
+					break
+			if not overlap:
+				return candidate
+			stats["failed_overlap"] = int(stats["failed_overlap"]) + 1
+	return Rect2()
 
 static func compound(plot: Dictionary, seed: int) -> Dictionary:
 	var id := str(plot.id)
@@ -98,7 +129,9 @@ static func compound(plot: Dictionary, seed: int) -> Dictionary:
 	var d: float = plot.depth_m
 	var roll := Streets.unit(seed, "historic_compound_form", [WorldSeed.str_hash(id)])
 	var court_roll := Streets.unit(seed, "historic_court", [WorldSeed.str_hash(id)])
-	var front_depth := minf(10.2, d)
+	var front_depth := minf(lerpf(13.0, 16.0, roll), d)
+	if d >= 14.0 and court_roll >= 0.18:
+		front_depth = minf(front_depth, d - 4.2)
 	var wings: Array[Dictionary] = [{"id": id + "_front", "role": &"front",
 		"local_rect": Rect2(0, 0, w, front_depth), "door_edge": 0}]
 	var form := &"I"
@@ -108,6 +141,9 @@ static func compound(plot: Dictionary, seed: int) -> Dictionary:
 	# Courtyards are the Prague norm, not a universal: a minority of plots are
 	# built solid, which is also what keeps some blocks impermeable (spec 5, 6).
 	var has_court := d - front_depth >= 4.0 and court_roll >= 0.18
+	if not has_court:
+		front_depth = d
+		wings[0].local_rect = Rect2(0, 0, w, d)
 	if has_court and d >= 28.0 and roll >= 0.32:
 		rear_depth = 9.8
 		wings.append({"id": id + "_rear", "role": &"rear", "local_rect": Rect2(0, d - rear_depth, w, rear_depth), "door_edge": 0})

@@ -331,7 +331,7 @@ static func validate_build(spec: Dictionary, b: MeshBatcher) -> Array[String]:
 		for side in 4:
 			var length := w if horiz[side] else d
 			var is_entrance := (side == int(spec.get("door_edge", 0)) or (spec.get("extra_door_edges", []) as Array).has(side)) and f == 0
-			var opens: Array[Dictionary] = BuildingSpec.city_window_openings(length, is_entrance)
+			var opens: Array[Dictionary] = BuildingSpec.city_window_openings(length, is_entrance, spec, f, side)
 			for o in opens:
 				var oc: float = float(o["c"])
 				var wp := BuildingBuilder._side_point(side, w, d, oc)

@@ -648,6 +648,11 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 	for room: Dictionary in fl["rooms"]:
 		if str(room.get("kind", "")) in ["stair_hall", "landing"]:
 			continue
+		# Reserve a central fighting/turning area before placing perimeter props.
+		# This is an actual furniture exclusion, not a reported floor-area proxy.
+		var room_rect: Rect2 = room.rect
+		if spec.has("compound_id") and not bool(room.get("service", false)) and room_rect.size.x >= 3.9 and room_rect.size.y >= 4.4:
+			blocked.append(Rect2(room_rect.get_center() - Vector2(1.75, 2.0), Vector2(3.5, 4.0)))
 		var bounds: Rect2 = (room["rect"] as Rect2).grow(-0.22)
 		var rkind := String(room["kind"])
 		# Program lookup: lobby ground floors use the per-use Victorian dressing

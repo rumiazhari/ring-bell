@@ -171,7 +171,11 @@ static func polygon_area(pts: PackedVector2Array) -> float:
 ## THE reference window aperture formula - must stay byte-identical with
 ## BuildingBuilder._facade_with_openings so the validator scans REAL holes.
 ## Returns window openings {c, wd, bot, h, glass} for one facade length.
-static func city_window_openings(length: float, is_entrance: bool) -> Array[Dictionary]:
+static func city_window_openings(length: float, is_entrance: bool, spec: Dictionary = {}, floor_i := 0, side := 0) -> Array[Dictionary]:
+	if spec.has("facade_plan"):
+		var planned: Array[Dictionary] = []
+		planned.assign(spec.facade_plan[floor_i][side])
+		return planned
 	var out: Array[Dictionary] = []
 	var count := int(floor((length - 1.6) / WIN_SPACING))
 	for i in count:

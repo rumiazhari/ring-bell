@@ -99,6 +99,10 @@ func _ready() -> void:
 		var raster := Image.new()
 		raster.load_svg_from_string(svg + "</svg>")
 		raster.save_png("res://.hermes/autopilot/reports/prague-street-faces.png")
+	if OS.get_cmdline_user_args().has("--fixtures-only"):
+		print("[PragueTest] finished with %d failure(s)" % failures)
+		get_tree().quit(failures)
+		return
 	if OS.get_cmdline_user_args().has("--dist"):
 		for s: int in DIST_SEEDS:
 			_distribution(s)

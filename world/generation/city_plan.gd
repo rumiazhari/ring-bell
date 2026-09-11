@@ -1,5 +1,6 @@
 class_name CityPlan
 extends RefCounted
+const HistoricFacades = preload("res://world/generation/historic_facade_plan.gd")
 const HistoricStreets = preload("res://world/generation/historic_street_plan.gd")
 const UrbanBlocks = preload("res://world/generation/urban_block_plan.gd")
 const HistoricParcels = preload("res://world/generation/parcel_plan.gd")
@@ -2442,7 +2443,14 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 		return result
 	var plots := HistoricParcels.for_block(block, seed_used)
 	for plot: Dictionary in plots:
-		if not _city_lot_has_valid_land(plot.rect, plot.yaw, WorldConstants.CITY_HISTORIC_MIN_FRONTAGE_M) or not _lot_clear_of_city_roads(plot.rect, plot.yaw):
+		# Historic shallow exceptions are real houses; the generic 14m depth
+		# gate previously discarded half the already reserved frontage plots.
+		var valid := true
+		for point: Vector2 in plot.polygon:
+			valid = valid and _is_valid_city_land(point)
+		if not valid or not _lot_clear_of_city_roads(plot.rect, plot.yaw):
+			var reason := "land_rejected" if not valid else "road_rejected"
+			HistoricParcels.stats[reason] = int(HistoricParcels.stats.get(reason, 0)) + 1
 			continue
 		var low := INF
 		var high := -INF
@@ -2453,6 +2461,7 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 		var front_y := WorldPlan.urban_base_height_at(terrain, plot.frontage_center)
 		plot.ground_y = high + 0.08 if high - low > 0.18 else front_y
 		if float(plot.ground_y) - front_y > 3.5:
+			HistoricParcels.stats["relief_rejected"] = int(HistoricParcels.stats.get("relief_rejected", 0)) + 1
 			continue # A bounded entrance ramp cannot serve this terrain relief.
 		block.plots.append(plot)
 		var grain := Vector2i(floori((plot.frontage_center as Vector2).x / 90.0), floori((plot.frontage_center as Vector2).y / 90.0))
@@ -2474,6 +2483,7 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 			spec.wing_role = wing.role
 			spec.historical_layer = plot.historical_layer if wi == 0 else &"later_rear_extension"
 			spec.floors = floors if wi == 0 else (maxi(2, floors - 1) if wing.role == &"rear" else 1)
+			spec.archetype = "merged_house" if float(plot.frontage_m) > 15.0 else ("courtyard_tenement" if plot.wings.size() >= 3 else "narrow_townhouse")
 			spec.floor_h = 3.1
 			spec.circulation = {"kind": &"stairs" if int(spec.floors) > 1 else &"none"}
 			spec.frontage_role = &"street" if wi == 0 else &"courtyard"
@@ -2487,14 +2497,21 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 			spec.floor_uses = [spec.use]
 			for fi in range(1, int(spec.floors)):
 				spec.floor_uses.append("office" if _u("historic_upper_use", [WorldSeed.str_hash(plot.id), fi]) < 0.18 else "residential")
+			if wi == 0 and spec.archetype == "narrow_townhouse":
+				spec.archetype = {"retail": "merchant_house", "workshop": "artisan_house", "tavern": "tavern_inn"}.get(str(spec.use), "narrow_townhouse")
 			spec.style.room_type = spec.use
 			spec.style.attic = true
 			spec.style.roof_plan = HistoricRoofs.for_wing(spec)
 			spec.extra_door_edges = [2] if wi == 0 and not plot.passages.is_empty() else []
+			spec.door_w = 2.6 if wi == 0 and not plot.passages.is_empty() and float(plot.frontage_m) >= 9.0 else 1.5
+			spec.door_h = 2.7 if spec.door_w > 2.0 else 2.2
+			spec.facade_plan = HistoricFacades.for_wing(spec)
 			spec.doors = []
 			var door_edges: Array = [int(wing.door_edge)] + spec.extra_door_edges
 			for de: int in door_edges:
 				var door := _door_manifest(spec.id, rect, de, seed_used)
+				door.width = spec.door_w
+				door.height = spec.door_h
 				door.id = "%s_door_%d" % [spec.id, de]
 				var dp: Vector3 = door.position
 				var rotated := _rotate_plan_point(center, Vector2(dp.x, dp.z), plot.yaw)
@@ -2976,7 +2993,8 @@ func _lot_clear_of_city_roads(lot: Rect2, yaw := 0.0) -> bool:
 			var poly: PackedVector2Array = edge["polyline"]
 			for i in range(poly.size() - 1):
 				var segment_bounds := Rect2(poly[i], Vector2.ZERO).expand(poly[i + 1]).grow(half_width * 1.415 + 0.001)
-				var segment := {"id": segment_id, "a": poly[i], "b": poly[i + 1], "half": half_width, "bounds": segment_bounds}
+				var segment := {"id": segment_id, "a": poly[i], "b": poly[i + 1], "half": half_width, "bounds": segment_bounds,
+					"shared": bool(edge.get("shared_surface", false))}
 				segment_id += 1
 				for x in range(floori(segment_bounds.position.x / 64.0), floori(segment_bounds.end.x / 64.0) + 1):
 					for z in range(floori(segment_bounds.position.y / 64.0), floori(segment_bounds.end.y / 64.0) + 1):
@@ -2994,6 +3012,16 @@ func _lot_clear_of_city_roads(lot: Rect2, yaw := 0.0) -> bool:
 					continue
 				seen[segment.id] = true
 				if (segment.bounds as Rect2).intersects(bounds, true) and _segment_intersects_oriented_lot(segment.a, segment.b, lot, yaw, segment.half):
+					if bool(segment.shared):
+						# The expanded-rectangle broad phase is not an exact road
+						# collision test at oblique bends. Match block subtraction.
+						var collision := false
+						for overlap: PackedVector2Array in Geometry2D.intersect_polygons(_lot_corners(lot, yaw), _road_strip_polygon(segment.a, segment.b, segment.half)):
+							if absf(_polygon_area(overlap)) > 0.01:
+								collision = true
+								break
+						if not collision:
+							continue
 					return false
 	return true
 
