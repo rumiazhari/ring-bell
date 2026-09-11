@@ -43,6 +43,7 @@ const LANTERN_BOB_FREQ := 4.2
 # Preload (not global class_name lookup): keeps headless suites green even
 # before the editor rescans the global script-class cache.
 const PARKOUR_SCRIPT := preload("res://actors/traversal/parkour_controller.gd")
+const ABYSS_SCRIPT := preload("res://actors/traversal/abyss_recovery.gd")
 
 var identity: IdentityComponent
 var health: HealthComponent
@@ -50,6 +51,7 @@ var needs: NeedsComponent
 var inventory: InventoryComponent
 var interactable: InteractableComponent
 var parkour: PARKOUR_SCRIPT            # vertical mobility + fall damage
+var abyss: ABYSS_SCRIPT                # anti-abyss fall recovery (top-side respawn)
 
 var equipped_weapon_id: StringName = &""
 var stamina := STAMINA_MAX
@@ -115,6 +117,14 @@ func _ready() -> void:
 	parkour = PARKOUR_SCRIPT.new()
 	add_child(parkour)
 	parkour.setup(self)
+
+	# Anti-abyss guard: every human character (player and NPC) that falls out of
+	# the realized world is recovered onto the verified top-side surface instead
+	# of falling forever. See actors/traversal/abyss_recovery.gd.
+	abyss = ABYSS_SCRIPT.new()
+	abyss.name = "AbyssRecovery"
+	add_child(abyss)
+	abyss.setup(self)
 
 	# Phase T: handheld lantern — only the player carries it. OmniLight
 	# follows the body (child) so it survives streaming/teleports
@@ -269,6 +279,55 @@ func request_move(dir: Vector3, sprint: bool) -> void:
 func stop_moving() -> void:
 	_move_dir = Vector3.ZERO
 	_wants_sprint = false
+
+
+## Anti-abyss recovery hook: called by AbyssRecovery immediately after the body
+## is placed on the verified top-side surface. Clears every motion source so the
+## character resumes normal locomotion on the next physics frame and cannot
+## clip or glide after the teleport:
+##   - velocity/knockback (a 200 m/s fall must not carry into the new spot),
+##   - parkour fall tracking (a cancelled fall must not charge fall damage on
+##     the next landing),
+##   - locomotion parkour locks and capsule (a vault/hang/slide state or a
+##     crouched capsule would fight the new position or stand up in geometry).
+func reset_motion_after_recovery(feet_y: float) -> void:
+	velocity = Vector3.ZERO
+	_knockback = Vector3.ZERO
+	_move_dir = Vector3.ZERO
+	_wants_sprint = false
+	_attack_cooldown = 0.0
+	if parkour != null and is_instance_valid(parkour) \
+			and parkour.has_method(&"reset_fall_tracking"):
+		parkour.reset_fall_tracking(feet_y)
+	if _locomotion != null and is_instance_valid(_locomotion):
+		_locomotion.state = CharacterLocomotion.State.IDLE
+		_locomotion.blend = 0.0
+		_locomotion.strafe = 0.0
+		_locomotion.foot_slide = 0.0
+		_locomotion.hand_snap = 0.0
+		_locomotion.ledge_pos = Vector3.ZERO
+		_locomotion.ledge_normal = Vector3.ZERO
+		_locomotion.wall_normal = Vector3.ZERO
+		_locomotion.wall_tangent = Vector3.ZERO
+		_locomotion.wall_side = ""
+		_locomotion._vault_timer = 0.0
+		_locomotion._mantle_timer = 0.0
+		_locomotion._climb_timer = 0.0
+		_locomotion._hang_timer = 0.0
+		_locomotion._slide_timer = 0.0
+		_locomotion._standup_timer = 0.0
+		_locomotion._turn_timer = 0.0
+		_locomotion._wallrun_timer = 0.0
+		_locomotion._shimmy_timer = 0.0
+		_locomotion._drop_timer = 0.0
+		_locomotion.capsule_height = CharacterLocomotion.CAP_STAND
+		_locomotion._capsule_target = CharacterLocomotion.CAP_STAND
+	if _capsule != null:
+		_capsule.height = CharacterLocomotion.CAP_STAND
+		if _capsule_shape != null:
+			_capsule_shape.position = Vector3(0, _capsule.height * 0.5, 0)
+
+
 func set_work_speed(speed: float) -> void:
 	_work_speed_override = speed
 

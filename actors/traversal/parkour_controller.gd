@@ -570,6 +570,15 @@ func _tick_climb_follow(delta: float) -> void:
 	_survivor.velocity.z = lerpf(_survivor.velocity.z, target.z, k)
 
 
+## Anti-abyss recovery: a cancelled fall must not charge fall damage on the
+## next landing, and a half-finished ledge follow-through must not steer the
+## body after the teleport.
+func reset_fall_tracking(feet_y: float) -> void:
+	_peak_y = feet_y
+	_climb_time_left = -1.0
+	_climb_dir = Vector3.ZERO
+
+
 ## Track airtime peaks; charge fall damage on hard landings.
 ## Call from Survivor._physics_process AFTER move_and_slide().
 func tick(_delta: float) -> void:
