@@ -311,6 +311,12 @@ func _ready() -> void:
 		var tester_sc: Node = load("res://debug/site_contract_test.gd").new()
 		tester_sc.name = "SiteContractTest"
 		add_child(tester_sc)
+	elif user_args.has("--perftest"):
+		# Frame-performance bisection: needs the real streamed city AND a real
+		# GPU, so it runs here (windowed) rather than in the early probe block.
+		var testers_perf: Node = load("res://debug/perf_probe.gd").new()
+		testers_perf.name = "PerfProbe"
+		add_child(testers_perf)
 	elif user_args.has("--cavetest"):
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
@@ -384,6 +390,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--roadtest", "--settlementtest", "--roadmaterialtest",
 			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
 			"--fringetest", "--buildingcontracttest", "--sitecontracttest", "--propslogictest", "--g10p2a-ruralprobe",
+			"--perftest",
 			"--cavetest",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",

@@ -91,7 +91,7 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"use_medical"):
 		_try_medical()
 
-	_update_hover()
+	_update_hover(delta)
 	if Input.is_action_just_pressed(&"interact"):
 		_try_interact()
 
@@ -112,18 +112,50 @@ func _try_medical() -> void:
 
 # --- Interaction ------------------------------------------------------------
 
-func _update_hover() -> void:
+# Hover scanning budget: the interact prompt is a UI nicety, not a per-step need.
+# Scans run at ~6.6 Hz and the candidate list is rebuilt once a second.
+const HOVER_INTERVAL := 0.15
+const HOVER_CACHE_SECONDS := 1.0
+var _hover_accum := 0.0
+var _hover_cache_accum := 0.0
+var _hover_cache: Array = []
+var _prompt_text := ""
+
+
+func _update_hover(delta: float) -> void:
+	# This used to walk EVERY interactable in the streamed city (every door and every
+	# prop) on every physics step and do a String-based component lookup on each one —
+	# by measurement the single most expensive script in the frame (~11 ms/step). An
+	# interact prompt does not need 60 Hz, and the distance reject is far cheaper than
+	# the component lookup, so: scan a few times a second, keep a cached candidate
+	# list, and reject by squared distance before touching components.
+	_hover_accum += delta
+	if _hover_accum < HOVER_INTERVAL:
+		return
+	_hover_accum = 0.0
+	_hover_cache_accum += HOVER_INTERVAL
+	if _hover_cache.is_empty() or _hover_cache_accum >= HOVER_CACHE_SECONDS:
+		_hover_cache_accum = 0.0
+		_hover_cache.clear()
+		for body in get_tree().get_nodes_in_group(&"interactables"):
+			var candidate := body as Node3D
+			if candidate == null or candidate == _survivor:
+				continue
+			var comp: InteractableComponent = candidate.get("interactable") \
+					if "interactable" in candidate else null
+			if comp != null:
+				_hover_cache.append([candidate, comp])
+	var origin := _survivor.global_position
 	var best: Node3D = null
 	var best_d := INTERACT_RANGE * INTERACT_RANGE
-	for body in get_tree().get_nodes_in_group(&"interactables"):
-		var candidate := body as Node3D
-		if candidate == null or candidate == _survivor:
+	for pair in _hover_cache:
+		var candidate: Node3D = pair[0]
+		if not is_instance_valid(candidate):
 			continue
-		var comp: InteractableComponent = candidate.get("interactable") \
-				if "interactable" in candidate else null
-		if comp == null or not comp.enabled:
+		var comp: InteractableComponent = pair[1]
+		if not comp.enabled:
 			continue
-		var d := _survivor.global_position.distance_squared_to(candidate.global_position)
+		var d := origin.distance_squared_to(candidate.global_position)
 		if d < best_d:
 			best_d = d
 			best = candidate
@@ -144,6 +176,10 @@ func _try_interact() -> void:
 
 
 func _set_prompt(text: String) -> void:
+	# The HUD call used to fire on every scan even when the text was unchanged.
+	if text == _prompt_text:
+		return
+	_prompt_text = text
 	if _hud != null:
 		_hud.call("set_interact_prompt", text)
 

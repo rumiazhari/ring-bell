@@ -36,6 +36,23 @@ var hem_offset := Vector3.ZERO
 var _bends: Array[Vector3] = []
 var _rest_h := PackedFloat32Array()   # per-row horizontal rest lengths
 
+# --- cost control -----------------------------------------------------------------
+# Every cloth particle used to fire a swept world raycast against the whole streamed
+# space on every physics step, and the mesh was rebuilt even when nothing moved.
+# These bounds keep the same solver and the same visual result while removing the
+# per-step ray budget: only particles that actually MOVED are swept, in a rotating
+# slice, and the mesh is only re-uploaded when the cloth really changed shape.
+const SIM_INTERVAL := 3          # solve at 20 Hz on a 60 Hz physics step
+const RAY_BUDGET := 12           # swept-contact rays per solve (round-robin slice)
+const RAY_MIN_SWEEP := 0.02      # below this the particle is inside the contact margin
+const FAR_CULL := 26.0           # metres: past this a hem is not visible
+const MESH_EPS := 0.0015         # mesh re-upload threshold (metres)
+var _sim_accum := 0.0
+var _ray_cursor := 0
+var _specs_plain: Array = []
+var _specs_artic: Array = []
+var _mesh_pts := PackedVector3Array()
+
 
 func setup(p_top_r: float, p_hem_r: float, p_length: float,
 		p_cols: int, p_rows: int, material: StandardMaterial3D) -> void:
@@ -138,7 +155,16 @@ func _add_edge(a: int, b: int) -> void:
 func _physics_process(delta: float) -> void:
 	if not simulating or delta <= 0.0:
 		return
-	var dt := minf(delta, 1.0 / 60.0)
+	# Distance cull: a hem is not visible past a few metres and each cloth costs a
+	# solver plus swept rays. Far cloths keep their last pose, so nothing pops.
+	var cam := get_viewport().get_camera_3d()
+	if cam != null and cam.global_position.distance_to(global_position) > FAR_CULL:
+		return
+	_sim_accum += delta
+	if _sim_accum < float(SIM_INTERVAL) / 60.0:
+		return
+	var dt := minf(_sim_accum, 4.0 / 60.0)
+	_sim_accum = 0.0
 	var current := global_transform
 	var transport := current.affine_inverse() * _last_transform
 	if current.origin.distance_to(_last_transform.origin) > 2.0 or current.basis.get_rotation_quaternion().angle_to(_last_transform.basis.get_rotation_quaternion()) > PI * 0.65:
@@ -165,24 +191,49 @@ func _physics_process(delta: float) -> void:
 		if iteration % 2 == 1:
 			for edge in _bends:
 				_solve_pair(int(edge.x), int(edge.y), edge.z, minf(bending * 1.5, 1.0))
-		if _bends.is_empty() or iteration == 2 or iteration == 5:
+		if iteration == 2 or iteration == 5:
 			_body_contacts()
-	# World rays sweep each particle's motion and probe a small contact margin.
+	# World rays sweep each particle's motion and probe a small contact margin. Only
+	# particles that moved more than the margin are swept, and only RAY_BUDGET of them
+	# per solve (a rotating slice): a settled cloth costs zero rays, and a moving one
+	# keeps every particle constrained within a few solves while staying FPS-independent.
 	if _actor != null:
 		var space := get_world_3d().direct_space_state
-		for i in range(cols, _pts.size()):
-			if _pinned(i):
-				continue
-			var target := current * _pts[i]
-			var start := current * _prev[i] + Vector3.UP * 0.015
-			if start.distance_squared_to(target) < 0.000001:
-				continue
-			var query := PhysicsRayQueryParameters3D.create(start, target - Vector3.UP * 0.015, 1, [_actor.get_rid()])
-			var hit := space.intersect_ray(query)
-			if not hit.is_empty():
-				_pts[i] = current.affine_inverse() * (hit.position + hit.normal * 0.018)
-				_prev[i] = _pts[i]
-	_rebuild_mesh()
+		var free_count := _pts.size() - cols
+		if free_count > 0:
+			var budget := mini(RAY_BUDGET, free_count)
+			for k in budget:
+				var i := cols + ((_ray_cursor + k) % free_count)
+				if _pinned(i):
+					continue
+				var target := current * _pts[i]
+				var start := current * _prev[i] + Vector3.UP * 0.015
+				var sweep := start.distance_squared_to(target)
+				if sweep < RAY_MIN_SWEEP * RAY_MIN_SWEEP:
+					continue
+				var query := PhysicsRayQueryParameters3D.create(start, target - Vector3.UP * 0.015, 1, [_actor.get_rid()])
+				var hit := space.intersect_ray(query)
+				if not hit.is_empty():
+					_pts[i] = current.affine_inverse() * (hit.position + hit.normal * 0.018)
+					_prev[i] = _pts[i]
+			_ray_cursor = (_ray_cursor + budget) % free_count
+	if _moved_enough_to_redraw():
+		_mesh_pts = _pts.duplicate()
+		_rebuild_mesh()
+
+
+func _moved_enough_to_redraw() -> bool:
+	## Re-uploading a cloth surface every physics step was pure waste: a hanging or
+	## standing cloth barely moves between solves. Sample every third particle.
+	if _mesh_pts.size() != _pts.size():
+		return true
+	var eps2 := MESH_EPS * MESH_EPS
+	var i := 0
+	while i < _pts.size():
+		if _mesh_pts[i].distance_squared_to(_pts[i]) > eps2:
+			return true
+		i += 3
+	return false
 
 
 func _cache_capsules() -> void:
@@ -190,9 +241,13 @@ func _cache_capsules() -> void:
 	if _skeleton == null:
 		return
 	# Bone-driven capsules enclose the visible leg and torso meshes.
-	var specs: Array = [["l_thigh", Vector3(0, -0.78, 0), 0.18], ["r_thigh", Vector3(0, -0.78, 0), 0.18], ["spine_upper", Vector3(0, 0.52, 0), 0.24], ["l_upper_arm", Vector3(0, -0.50, 0), 0.065], ["r_upper_arm", Vector3(0, -0.50, 0), 0.065]]
-	if _skeleton.get_meta("articulated", false):
-		specs = [["l_thigh", Vector3(0, -0.42, 0), 0.13], ["r_thigh", Vector3(0, -0.42, 0), 0.13], ["l_calf", Vector3(0, -0.37, 0), 0.10], ["r_calf", Vector3(0, -0.37, 0), 0.10], ["spine_upper", Vector3(0, 0.32, 0), 0.19], ["l_upper_arm", Vector3(0, -0.27, 0), 0.063], ["r_upper_arm", Vector3(0, -0.27, 0), 0.063], ["l_forearm", Vector3(0, -0.25, 0), 0.052], ["r_forearm", Vector3(0, -0.25, 0), 0.052], ["spine_upper", Vector3(0, 0.48, 0), 0.115, Vector3(0, 0.35, 0)], ["spine_upper", Vector3(0, 0.36, -0.245), 0.13, Vector3(0, 0.04, -0.245)]]
+	# Built once: this used to re-allocate the whole nested spec array on every
+	# physics step, for every cloth, which is pure GC churn on a hot path.
+	if _specs_plain.is_empty():
+		_specs_plain = [["l_thigh", Vector3(0, -0.78, 0), 0.18], ["r_thigh", Vector3(0, -0.78, 0), 0.18], ["spine_upper", Vector3(0, 0.52, 0), 0.24], ["l_upper_arm", Vector3(0, -0.50, 0), 0.065], ["r_upper_arm", Vector3(0, -0.50, 0), 0.065]]
+		_specs_artic = [["l_thigh", Vector3(0, -0.42, 0), 0.13], ["r_thigh", Vector3(0, -0.42, 0), 0.13], ["l_calf", Vector3(0, -0.37, 0), 0.10], ["r_calf", Vector3(0, -0.37, 0), 0.10], ["spine_upper", Vector3(0, 0.32, 0), 0.19], ["l_upper_arm", Vector3(0, -0.27, 0), 0.063], ["r_upper_arm", Vector3(0, -0.27, 0), 0.063], ["l_forearm", Vector3(0, -0.25, 0), 0.052], ["r_forearm", Vector3(0, -0.25, 0), 0.052], ["spine_upper", Vector3(0, 0.48, 0), 0.115, Vector3(0, 0.35, 0)], ["spine_upper", Vector3(0, 0.36, -0.245), 0.13, Vector3(0, 0.04, -0.245)]]
+	var articulated: bool = _skeleton.get_meta("articulated", false)
+	var specs: Array = _specs_artic if articulated else _specs_plain
 	for spec in specs:
 		var bone := _skeleton.find_bone(spec[0])
 		var pose := global_transform.affine_inverse() * _skeleton.global_transform * _skeleton.get_bone_global_pose(bone)
