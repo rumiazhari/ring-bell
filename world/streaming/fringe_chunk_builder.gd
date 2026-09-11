@@ -5,6 +5,33 @@ extends RefCounted
 const CHUNK_M := 64.0
 const RuralArt = preload("res://art/rural_art.gd")
 
+## Tiles are matched to the terrain mesh grid (TerrainChunkBuilder.SPACING) so
+## a tiled ground surface is the same piecewise linear sheet as the ground it
+## lies on, and shares every corner height with its neighbours.
+## A wall segment: short enough that the ground under it is flat to within a few
+## centimetres, long enough not to shred the box count.
+const FRINGE_WALL_SEGMENT_M := 4.0
+
+
+## Split a ground rect into terrain-sized tiles, each with its own centre.
+static func _emit_wall_run(batcher: MeshBatcher, world_plan: WorldPlan,
+		from_world: Vector2, to_world: Vector2, thickness: float, height: float,
+		color: Color) -> void:
+	var span := from_world.distance_to(to_world)
+	if span <= 0.001:
+		return
+	var pieces := maxi(1, int(ceil(span / FRINGE_WALL_SEGMENT_M)))
+	var along_x := absf(to_world.x - from_world.x) >= absf(to_world.y - from_world.y)
+	for i in pieces:
+		var a := from_world.lerp(to_world, float(i) / float(pieces))
+		var b := from_world.lerp(to_world, float(i + 1) / float(pieces))
+		var mid := (a + b) * 0.5
+		var ground: float = world_plan.surface_height_at(mid) + WorldConstants.FRINGE_OVERLAP_LIFT_M
+		var length := a.distance_to(b)
+		var size := Vector3(length, height, thickness) if along_x else Vector3(thickness, height, length)
+		batcher.add_structural_box(Vector3(mid.x, ground + height * 0.5, mid.y), size, color)
+
+
 static func _effective_footprint(footprint: Vector2, yaw: float) -> Vector2:
 	if is_equal_approx(absf(yaw), PI * 0.5) or is_equal_approx(absf(yaw), PI * 1.5):
 		return Vector2(footprint.y, footprint.x)
@@ -208,16 +235,21 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 	# Yards as thin visual green discs (boxes)
 	for y in yard_manifests:
 		var y_rect: Rect2 = y["rect"] as Rect2
-		var y_center: Vector2 = y["center"] as Vector2
 		var y_kind: StringName = y.get("kind", &"residential_yard") as StringName
-		var yard_ground: float = world_plan.surface_height_at(y_center) + WorldConstants.FRINGE_OVERLAP_LIFT_M - 0.005
-		var yard_size := Vector3(y_rect.size.x, 0.04, y_rect.size.y)
 		var yard_col: Color = WorldConstants.COL_FRINGE_YARD_DIRT
 		if y_kind == &"market_garden" or y_kind == &"inn_yard":
 			yard_col = Color("71814d")
 		elif y_kind == &"cemetery_edge":
 			yard_col = Color("6a7a5a")
-		batcher.add_visual_box(Vector3(y_center.x, yard_ground + 0.015, y_center.y), yard_size, yard_col)
+		# A yard laid as ONE slab at its centre's height hangs in the air over
+		# every slope - the flying green plate. Lay it on the terrain itself.
+		var yard_poly := PackedVector2Array([
+			Vector2(y_rect.position.x, y_rect.position.y),
+			Vector2(y_rect.end.x, y_rect.position.y),
+			Vector2(y_rect.end.x, y_rect.end.y),
+			Vector2(y_rect.position.x, y_rect.end.y)])
+		MeshBatcher.add_ground_polygon(batcher, yard_poly, world_plan,
+				WorldConstants.FRINGE_OVERLAP_LIFT_M + 0.015, yard_col)
 	# Walls / fences / chimneys
 	for w in wall_manifests:
 		if w.has("rect"):
@@ -225,20 +257,18 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 			var w_center: Vector2 = w["center"] as Vector2
 			var w_kind: StringName = w.get("kind", &"brick_wall") as StringName
 			var w_height: float = float(w.get("height", WorldConstants.FRINGE_WALL_HEIGHT))
-			var ground_w: float = world_plan.surface_height_at(w_center) + WorldConstants.FRINGE_OVERLAP_LIFT_M
 			# Wall as 4 side segments if rect large (36x28 compound), else thin perimeter
 			# For compound large rect, create 4 walls around perimeter thickness 0.35
 			if w_rect.size.x > 18.0 and w_rect.size.y > 12.0:
 				var pw := 0.35
 				var col_brick: Color = WorldConstants.COL_FRINGE_WALL_BRICK if w_kind == &"brick_wall" else WorldConstants.COL_FRINGE_FENCE_WOOD
-				# North wall
-				batcher.add_structural_box(Vector3(w_rect.get_center().x, ground_w + w_height*0.5, w_rect.position.y + pw*0.5), Vector3(w_rect.size.x, w_height, pw), col_brick)
-				# South
-				batcher.add_structural_box(Vector3(w_rect.get_center().x, ground_w + w_height*0.5, w_rect.end.y - pw*0.5), Vector3(w_rect.size.x, w_height, pw), col_brick)
-				# West
-				batcher.add_structural_box(Vector3(w_rect.position.x + pw*0.5, ground_w + w_height*0.5, w_rect.get_center().y), Vector3(pw, w_height, w_rect.size.y - 2*pw), col_brick)
-				# East
-				batcher.add_structural_box(Vector3(w_rect.end.x - pw*0.5, ground_w + w_height*0.5, w_rect.get_center().y), Vector3(pw, w_height, w_rect.size.y - 2*pw), col_brick)
+				# A wall is a RUN of short segments, each standing on the ground
+				# beneath it: one long box at a single height floats at the far
+				# end of every slope.
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x, w_rect.position.y + pw * 0.5), Vector2(w_rect.end.x, w_rect.position.y + pw * 0.5), pw, w_height, col_brick)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x, w_rect.end.y - pw * 0.5), Vector2(w_rect.end.x, w_rect.end.y - pw * 0.5), pw, w_height, col_brick)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x + pw * 0.5, w_rect.position.y), Vector2(w_rect.position.x + pw * 0.5, w_rect.end.y), pw, w_height, col_brick)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.end.x - pw * 0.5, w_rect.position.y), Vector2(w_rect.end.x - pw * 0.5, w_rect.end.y), pw, w_height, col_brick)
 			else:
 				# Small fence around yard: generate 4 sides similarly but smaller height 1.3
 				var pw2 := 0.12
@@ -246,10 +276,10 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				var fence_col: Color = WorldConstants.COL_FRINGE_FENCE_WOOD if w_kind == &"fence" else WorldConstants.COL_FRINGE_WALL_BRICK
 				# If yard rect small, still create fence loop with posts
 				# Simplify to thin walls: use structural
-				batcher.add_structural_box(Vector3(w_rect.get_center().x, ground_w + fence_h*0.5, w_rect.position.y + pw2*0.5), Vector3(w_rect.size.x, fence_h, pw2), fence_col)
-				batcher.add_structural_box(Vector3(w_rect.get_center().x, ground_w + fence_h*0.5, w_rect.end.y - pw2*0.5), Vector3(w_rect.size.x, fence_h, pw2), fence_col)
-				batcher.add_structural_box(Vector3(w_rect.position.x + pw2*0.5, ground_w + fence_h*0.5, w_rect.get_center().y), Vector3(pw2, fence_h, w_rect.size.y - 2*pw2), fence_col)
-				batcher.add_structural_box(Vector3(w_rect.end.x - pw2*0.5, ground_w + fence_h*0.5, w_rect.get_center().y), Vector3(pw2, fence_h, w_rect.size.y - 2*pw2), fence_col)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x, w_rect.position.y + pw2 * 0.5), Vector2(w_rect.end.x, w_rect.position.y + pw2 * 0.5), pw2, fence_h, fence_col)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x, w_rect.end.y - pw2 * 0.5), Vector2(w_rect.end.x, w_rect.end.y - pw2 * 0.5), pw2, fence_h, fence_col)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.position.x + pw2 * 0.5, w_rect.position.y), Vector2(w_rect.position.x + pw2 * 0.5, w_rect.end.y), pw2, fence_h, fence_col)
+				_emit_wall_run(batcher, world_plan, Vector2(w_rect.end.x - pw2 * 0.5, w_rect.position.y), Vector2(w_rect.end.x - pw2 * 0.5, w_rect.end.y), pw2, fence_h, fence_col)
 		elif w.has("pos"):
 			var p2: Vector2 = w["pos"] as Vector2
 			var w_kind2: StringName = w.get("kind", &"chimney") as StringName
@@ -261,26 +291,21 @@ static func build_manifest(world_plan: WorldPlan, coord: Vector2i) -> Dictionary
 				batcher.add_structural_box(Vector3(p2.x, ground_c + chim_h*0.5, p2.y), Vector3(chim_rad*2, chim_h, chim_rad*2), chim_col)
 				# cap
 				batcher.add_visual_box(Vector3(p2.x, ground_c + chim_h + 0.05, p2.y), Vector3(chim_rad*2+0.2, 0.18, chim_rad*2+0.2), Color("3a2a1a"))
-	# Trees: small trunk+canopy as visual boxes (non-colliding except trunk maybe)
+	# Trees: detailed batched models. Species-specific trunk/branch/root/foliage
+	# geometry, wind sway baked into UV2, season-ready foliage colours.
 	for t in tree_manifests:
 		var tpos: Vector2 = t["pos"] as Vector2
 		var tkind: StringName = t.get("kind", &"beech") as StringName
 		var ground_t: float = world_plan.surface_height_at(tpos) + WorldConstants.FRINGE_OVERLAP_LIFT_M
-		var trunk_h: float = 2.4
-		var trunk_col: Color = WorldConstants.COL_RURAL_TREE_TRUNK
-		var canopy_col: Color = WorldConstants.COL_RURAL_TREE_BEECH
-		match tkind:
-			&"birch":
-				canopy_col = WorldConstants.COL_RURAL_TREE_BIRCH
-			&"pine":
-				canopy_col = WorldConstants.COL_RURAL_TREE_PINE
-			_:
-				canopy_col = WorldConstants.COL_RURAL_TREE_BEECH
-		# Trunk visual only
-		batcher.add_visual_box(Vector3(tpos.x, ground_t + trunk_h*0.5, tpos.y), Vector3(0.42, trunk_h, 0.42), trunk_col)
-		# Canopy
-		var canopy_sz := Vector3(1.9, 1.5, 1.9) if tkind != &"pine" else Vector3(1.6, 2.0, 1.6)
-		batcher.add_visual_box(Vector3(tpos.x, ground_t + trunk_h + canopy_sz.y*0.5 - 0.1, tpos.y), canopy_sz, canopy_col)
+		var tree_seed: int = int(WorldSeed.combine([
+			int(tpos.x * 100.0), int(tpos.y * 100.0), String(t.get("id", "")).hash()]))
+		TreeBuilder.build(batcher, Vector3(tpos.x, ground_t, tpos.y),
+			TreeBuilder.species_for_kind(tkind), {
+				"seed": tree_seed,
+				"yaw": WorldSeed.rng_for("fringe_tree_yaw", [tree_seed]).randf() * TAU,
+				"detail": TreeBuilder.Detail.CITY,
+				"collide_trunk": true,
+			})
 	# Budget enforcement: batcher already caps via build, but we check typical
 	# We'll keep batcher specs as is, but ensure verts within limits by trimming if needed? MeshBatcher will generate verts per box ~24 per box.
 	# Estimate verts: each building via BuildingBuilder ~ maybe 200-400 verts; 8 buildings => up to 3000 verts, within 2800 max maybe borderline.

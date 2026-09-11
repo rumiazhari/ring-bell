@@ -257,6 +257,73 @@ func add_visual_polygon(points: PackedVector2Array, y: float, color: Color) -> v
 	})
 
 
+## Ground surfaces follow the realized terrain. A pad emitted FLAT at the
+## height of one sample point (a block centre, a polygon centroid, the highest
+## corner of a footprint) hangs in the air over its downhill half - the "green
+## plate flying above the pavement" defect - and buries its uphill half. The
+## polygon is cut to the terrain's own 4 m grid and every cell corner samples
+## the terrain, so the pad is the same piecewise linear sheet as the ground it
+## lies on, in this chunk and the next.
+const GROUND_CELL_M := 4.0
+
+
+static func polygon_bounds(poly: PackedVector2Array) -> Rect2:
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for p in poly:
+		lo = lo.min(p)
+		hi = hi.max(p)
+	return Rect2(lo, hi - lo)
+
+
+static func _ground_area(poly: PackedVector2Array) -> float:
+	var area := 0.0
+	for i in poly.size():
+		var a := poly[i]
+		var b := poly[(i + 1) % poly.size()]
+		area += a.x * b.y - b.x * a.y
+	return absf(area) * 0.5
+
+
+static func add_ground_polygon(b: MeshBatcher, poly: PackedVector2Array,
+		world_plan: WorldPlan, lift: float, color: Color) -> void:
+	if poly.size() < 3:
+		return
+	if world_plan == null:
+		b.add_visual_polygon(poly, lift, color)
+		return
+	var bounds := polygon_bounds(poly)
+	if bounds.size.x <= GROUND_CELL_M and bounds.size.y <= GROUND_CELL_M:
+		add_ground_cell(b, poly, world_plan, lift, color)
+		return
+	var cell := GROUND_CELL_M
+	var cell_poly := PackedVector2Array()
+	cell_poly.resize(4)
+	var x := floorf(bounds.position.x / cell) * cell
+	while x < bounds.end.x:
+		var z := floorf(bounds.position.y / cell) * cell
+		while z < bounds.end.y:
+			cell_poly[0] = Vector2(x, z)
+			cell_poly[1] = Vector2(x + cell, z)
+			cell_poly[2] = Vector2(x + cell, z + cell)
+			cell_poly[3] = Vector2(x, z + cell)
+			for piece_variant in Geometry2D.intersect_polygons(poly, cell_poly):
+				var piece: PackedVector2Array = piece_variant as PackedVector2Array
+				if piece.size() >= 3 and _ground_area(piece) > 0.0005:
+					add_ground_cell(b, piece, world_plan, lift, color)
+			z += cell
+		x += cell
+
+
+static func add_ground_cell(b: MeshBatcher, poly: PackedVector2Array,
+		world_plan: WorldPlan, lift: float, color: Color) -> void:
+	var heights := PackedFloat32Array()
+	heights.resize(poly.size())
+	for i in poly.size():
+		heights[i] = world_plan.surface_height_at(poly[i]) + lift
+	b.add_visual_polygon_heights(poly, heights, color)
+
+
 func add_visual_polygon_heights(points: PackedVector2Array, heights: PackedFloat32Array, color: Color) -> void:
 	_prepared_layers.clear()
 	assert(points.size() == heights.size())
@@ -316,14 +383,28 @@ func add_box(pos: Vector3, size: Vector3, color: Color, collide := false) -> voi
 ## a pure rotation (no scaling) or collision shapes will be distorted.
 func add_box_rotated(pos: Vector3, size: Vector3, basis: Basis,
 		color: Color, collide := false, roof_layer := false,
-		material := StringName(""), owner_tag := "", floor_i := -1) -> void:
+		material := StringName(""), owner_tag := "", floor_i := -1,
+		sway := Vector2.ZERO) -> void:
 	_append_spec(pos, size, basis, color, collide, roof_layer, material,
-			owner_tag, floor_i)
+			owner_tag, floor_i, sway)
+
+
+## Tapered polygonal segment (frustum) for organic geometry: local +Y is the
+## axis, `size.x`/`size.z` are the base diameters on X/Z (so a bough can be
+## flattened) and `taper` is the top diameter as a fraction of the base.
+## Trees use this instead of boxes: a 5-6 sided taper reads as a branch, a
+## 4-5 sided one as a leaf tuft, and a near-zero taper as a root wedge.
+func add_prism_rotated(pos: Vector3, size: Vector3, basis: Basis, color: Color,
+		sides: int, taper := 1.0, collide := false,
+		material := StringName(""), sway := Vector2.ZERO) -> void:
+	_append_spec(pos, size, basis, color, collide, false, material,
+			"", -1, sway, maxi(sides, 3), taper)
 
 
 func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 		collide: bool, roof_layer: bool, material: StringName,
-		owner_tag := "", floor_i := -1) -> void:
+		owner_tag := "", floor_i := -1, sway := Vector2.ZERO,
+		sides := 0, taper := 1.0) -> void:
 	_prepared_layers.clear()
 	if not _building_transform_stack.is_empty():
 		var transform: Dictionary = _building_transform_stack.back()
@@ -338,6 +419,7 @@ func _append_spec(pos: Vector3, size: Vector3, basis: Basis, color: Color,
 	var decay: float = _decay_stack.back() if not _decay_stack.is_empty() else 0.0
 	_specs.append({
 		"id": id, "pos": pos, "size": size.abs(), "basis": basis,
+		"sway": sway, "sides": sides, "taper": taper,
 		"decay": decay,
 		"color": Color(color, alpha),
 		"collide": collide, "roof": roof_layer, "material": material,
@@ -1050,9 +1132,12 @@ func _build_layers(only: Dictionary = {}) -> Dictionary:
 		if not groups.has(key):
 			groups[key] = {"color": spec["color"], "verts": PackedVector3Array(),
 				"normals": PackedVector3Array(), "colors": PackedColorArray(),
-				"uvs": PackedVector2Array(), "idx": PackedInt32Array()}
+				"uvs": PackedVector2Array(), "uv2s": PackedVector2Array(),
+				"idx": PackedInt32Array()}
 		var buf: Dictionary = groups[key]
+		var verts_before: int = (buf["verts"] as PackedVector3Array).size()
 		_emit_box(buf, spec)
+		_fill_uv2(buf, spec, verts_before)
 	for polygon: Dictionary in _polygon_specs:
 		var polygon_key: String = String(polygon.get("layer", ""))
 		if not only.is_empty() and not only.has(polygon_key):
@@ -1060,7 +1145,8 @@ func _build_layers(only: Dictionary = {}) -> Dictionary:
 		if not groups.has(polygon_key):
 			groups[polygon_key] = {"color": polygon.get("color", Color.WHITE), "verts": PackedVector3Array(),
 				"normals": PackedVector3Array(), "colors": PackedColorArray(),
-				"uvs": PackedVector2Array(), "idx": PackedInt32Array()}
+				"uvs": PackedVector2Array(), "uv2s": PackedVector2Array(),
+				"idx": PackedInt32Array()}
 		var polygon_buf: Dictionary = groups[polygon_key]
 		_emit_polygon(polygon_buf, polygon)
 	return groups
@@ -1076,6 +1162,7 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 			buf.normals.append(normal)
 			buf.colors.append(polygon.color)
 			buf.uvs.append(Vector2(float(polygon.tile), tile_span(int(polygon.tile))))
+		_fill_uv2(buf, {}, base)
 		for i in range(1, face.size() - 1):
 			buf.idx.append_array(PackedInt32Array([base, base + i, base + i + 1]))
 		return
@@ -1098,6 +1185,7 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 		colors.append(col)
 		# Ground polygons carry the same packed (tile, span) attribute.
 		uvs.append(Vector2(poly_tile, tile_span(int(poly_tile))))
+	_fill_uv2(buf, {}, base)
 	# NOTE: never `(buf["verts"] as PackedVector3Array).append(...)` — the
 	# `as` cast copies the packed array, so appends are silently lost and the
 	# polygon renders nothing. Typed locals above share the stored array.
@@ -1116,6 +1204,11 @@ func _emit_polygon(buf: Dictionary, polygon: Dictionary) -> void:
 
 
 func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
+	# Prisms come through the same entry point: trees emit tapered polygonal
+	# segments so trunks, limbs and boughs read as round-ish, never as cuboids.
+	if int(spec.get("sides", 0)) > 2:
+		_emit_prism(buf, spec)
+		return
 	var half := (spec["size"] as Vector3) * 0.5
 	var basis: Basis = spec["basis"]
 	var pos: Vector3 = spec["pos"]
@@ -1175,6 +1268,109 @@ func _emit_box(buf: Dictionary, spec: Dictionary) -> void:
 		]))
 
 
+## Tapered prism. Sides are flat-shaded quads (4 vertices each, same budget
+## accounting as a box face) plus a fan cap at each end; the top cap is skipped
+## when the segment comes to a point, which is also what saves the vertices.
+func _emit_prism(buf: Dictionary, spec: Dictionary) -> void:
+	var size: Vector3 = spec["size"]
+	var basis: Basis = spec["basis"]
+	var pos: Vector3 = spec["pos"]
+	var sides: int = maxi(int(spec.get("sides", 5)), 3)
+	var taper: float = clampf(float(spec.get("taper", 1.0)), 0.02, 1.0)
+	var hy: float = size.y * 0.5
+	var rx: float = maxf(size.x * 0.5, 0.008)
+	var rz: float = maxf(size.z * 0.5, 0.008)
+	var tx: float = rx * taper
+	var tz: float = rz * taper
+	var col: Color = spec["color"]
+	var tile := _tile_for(spec, col)
+	var sway: Vector2 = spec.get("sway", Vector2.ZERO) as Vector2
+	for i in sides:
+		var a0: float = TAU * float(i) / float(sides)
+		var a1: float = TAU * float(i + 1) / float(sides)
+		var b0 := Vector3(cos(a0) * rx, -hy, sin(a0) * rz)
+		var b1 := Vector3(cos(a1) * rx, -hy, sin(a1) * rz)
+		var t0 := Vector3(cos(a0) * tx, hy, sin(a0) * tz)
+		var t1 := Vector3(cos(a1) * tx, hy, sin(a1) * tz)
+		var am: float = (a0 + a1) * 0.5
+		_poly_quad(buf, pos, basis, [b0, b1, t1, t0],
+			Vector3(cos(am), 0.0, sin(am)), tile, col, sway)
+	if taper >= 0.25:
+		var top_ring: Array = []
+		for i in sides:
+			var a: float = TAU * float(i) / float(sides)
+			top_ring.append(Vector3(cos(a) * tx, hy, sin(a) * tz))
+		_poly_fan(buf, pos, basis, Vector3(0, hy, 0), top_ring, Vector3.UP, tile, col, sway)
+	var bot_ring: Array = []
+	for i in sides:
+		var a: float = TAU * float(i) / float(sides)
+		bot_ring.append(Vector3(cos(a) * rx, -hy, sin(a) * rz))
+	_poly_fan(buf, pos, basis, Vector3(0, -hy, 0), bot_ring, Vector3.DOWN, tile, col, sway)
+
+
+## Flat-shaded quad in the prism's local frame. `want` only orients the facet
+## (its stored normal is the true facet normal), so convex prisms never end up
+## back-facing whichever way the taper tilts them.
+static func _poly_quad(buf: Dictionary, pos: Vector3, basis: Basis, corners: Array,
+		want: Vector3, tile: float, col: Color, sway: Vector2) -> void:
+	var cs: Array = corners
+	var wn := _quad_normal(cs)
+	if wn.dot(want) < 0.0:
+		cs = [corners[0], corners[3], corners[2], corners[1]]
+		wn = -wn
+	var verts: PackedVector3Array = buf["verts"]
+	var base := verts.size()
+	var world_n := (basis * wn).normalized()
+	for c in cs:
+		verts.append(pos + basis * (c as Vector3))
+		buf["normals"].append(world_n)
+		buf["uvs"].append(Vector2(float(tile), tile_span(tile)))
+		buf["colors"].append(col)
+	buf["idx"].append_array(PackedInt32Array([
+		base, base + 2, base + 1,
+		base, base + 3, base + 2,
+	]))
+
+
+static func _quad_normal(c: Array) -> Vector3:
+	# Normal of the two triangles actually emitted by _poly_quad.
+	var n := ((c[2] as Vector3) - (c[0] as Vector3)).cross((c[1] as Vector3) - (c[2] as Vector3))
+	if n.length_squared() < 1e-12:
+		return Vector3.UP
+	return n.normalized()
+
+
+## Triangle fan for the prism end caps: one shared centre vertex plus the ring,
+## so an n-gon cap costs n+1 vertices instead of 3n. Each triangle's winding is
+## checked against the intended outward direction, which is what keeps caps
+## visible from both ends of a drooping bough.
+static func _poly_fan(buf: Dictionary, pos: Vector3, basis: Basis, center: Vector3,
+		ring: Array, want: Vector3, tile: float, col: Color, sway: Vector2) -> void:
+	var n: int = ring.size()
+	if n < 3:
+		return
+	var verts: PackedVector3Array = buf["verts"]
+	var base := verts.size()
+	var world_n := (basis * want.normalized()).normalized()
+	verts.append(pos + basis * center)
+	buf["normals"].append(world_n)
+	buf["uvs"].append(Vector2(float(tile), tile_span(tile)))
+	buf["colors"].append(col)
+	for p in ring:
+		verts.append(pos + basis * (p as Vector3))
+		buf["normals"].append(world_n)
+		buf["uvs"].append(Vector2(float(tile), tile_span(tile)))
+		buf["colors"].append(col)
+	for i in n:
+		var i0: int = base + 1 + i
+		var i1: int = base + 1 + ((i + 1) % n)
+		var outward := (verts[i0] - verts[base]).cross(verts[i1] - verts[i0])
+		if outward.dot(world_n) >= 0.0:
+			buf["idx"].append_array(PackedInt32Array([base, i0, i1]))
+		else:
+			buf["idx"].append_array(PackedInt32Array([base, i1, i0]))
+
+
 ## Deterministic 0..1 spatial hash (integer mixing - no transcendentals, so
 ## it stays cheap at 24 vertices per box). Lattice is 0.35 m, fine enough that
 ## one big wall box still shows patchy soot and damp rather than one flat tone.
@@ -1208,6 +1404,19 @@ static func _face_defs() -> Array:
 	]
 
 
+## Pad the second UV channel (wind sway) up to the current vertex count.
+## `sway` is Vector2(weight, phase); polygons and every non-tree box contribute
+## (0,0) so the channel stays aligned with ARRAY_VERTEX. See WindSystem.
+static func _fill_uv2(buf: Dictionary, spec: Dictionary, from_vert: int) -> void:
+	var verts: PackedVector3Array = buf["verts"]
+	var uv2s: PackedVector2Array = buf["uv2s"]
+	var sway: Vector2 = spec.get("sway", Vector2.ZERO) as Vector2
+	while uv2s.size() < from_vert:
+		uv2s.append(Vector2.ZERO)
+	while uv2s.size() < verts.size():
+		uv2s.append(sway)
+
+
 func _mesh_from(groups: Dictionary) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	for key: String in groups.keys():
@@ -1218,6 +1427,14 @@ func _mesh_from(groups: Dictionary) -> ArrayMesh:
 		arrays[Mesh.ARRAY_NORMAL] = buf["normals"]
 		arrays[Mesh.ARRAY_COLOR] = buf["colors"]
 		arrays[Mesh.ARRAY_TEX_UV] = buf["uvs"]
+		# Wind sway weights ride in UV2. Only emitted when something in this
+		# layer actually carries sway data, so pure ground layers stay lean.
+		var uv2s: PackedVector2Array = buf["uv2s"]
+		if uv2s.size() > 0:
+			var vcount: int = (buf["verts"] as PackedVector3Array).size()
+			if uv2s.size() < vcount:
+				uv2s.resize(vcount)
+			arrays[Mesh.ARRAY_TEX_UV2] = uv2s
 		arrays[Mesh.ARRAY_INDEX] = buf["idx"]
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var surf_idx := mesh.get_surface_count() - 1

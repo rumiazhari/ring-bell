@@ -84,7 +84,28 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 			var center := CityPlan._rotate_plan_point((plot.rect as Rect2).get_center(), (plot.rect as Rect2).position + local.get_center(), plot.yaw)
 			b.push_layer(str(plot.id) + ":court")
 			b.push_surface(MeshBatcher.TILE_PAVING_SLAB)
-			b.add_box_rotated(Vector3(center.x, float(plot.ground_y) - 0.11, center.y), Vector3(local.size.x, 0.22, local.size.y), Basis(Vector3.UP, -float(plot.yaw)), COURTYARD_SERVICE, true)
+			# A paved court is a LEVELED platform: sample the ground under all
+			# four quadrants and drop the slab far enough that its uphill edge
+			# never floats. plot.ground_y alone is the highest sample + 8 cm, so
+			# on a slope the old 0.22 m slab hung in mid air over the low side.
+			var court_centre: Vector2 = plot.rect.get_center()
+			var court_hi := float(plot.ground_y)
+			var court_lo := float(plot.ground_y)
+			for ix in 3:
+				for iz in 3:
+					var loc := Vector2(local.size.x * float(ix) * 0.5,
+							local.size.y * float(iz) * 0.5)
+					var hp := CityPlan._rotate_plan_point(court_centre,
+							local.position + loc, plot.yaw)
+					if world_plan == null:
+						continue
+					var hh := world_plan.surface_height_at(hp)
+					court_hi = maxf(court_hi, hh)
+					court_lo = minf(court_lo, hh)
+			var court_top := court_hi + 0.02
+			var court_bottom := court_lo - 0.35
+			var court_h := maxf(0.22, court_top - court_bottom)
+			b.add_box_rotated(Vector3(center.x, court_top - court_h * 0.5, center.y), Vector3(local.size.x, court_h, local.size.y), Basis(Vector3.UP, -float(plot.yaw)), COURTYARD_SERVICE, true)
 			b.pop_surface()
 			b.pop_layer()
 	var owned_buildings: Array = _owned_buildings(plan, rect, coord)
@@ -956,10 +977,7 @@ static func _pavement(b: MeshBatcher, plan: CityPlan, block: Dictionary, chunk_r
 	var clipped := _clip_polygon_to_rect(poly, chunk_rect)
 	if clipped.size() < 3:
 		return
-	var ground_y := 0.0
-	if world_plan != null:
-		ground_y = world_plan.surface_height_at(block.get("center", Vector2.ZERO) as Vector2)
-	b.add_visual_polygon(clipped, ground_y + 0.025, color)
+	_add_ground_polygon(b, clipped, world_plan, 0.025, color)
 
 
 ## G10-P2B-FIX2: a built block is not one sidewalk polygon. The road ribbon
@@ -986,16 +1004,19 @@ static func _built_block_surfaces(b: MeshBatcher, plan: CityPlan, block: Diction
 			region_min_area = 2.0
 		if clipped_region.size() < 3 or _polygon_area(clipped_region) < region_min_area:
 			continue
-		var region_center: Vector2 = region.get("center",
-			block.get("center", Vector2.ZERO)) as Vector2
-		var region_y := world_plan.surface_height_at(region_center) if world_plan != null else 0.0
 		var region_kind: StringName = region.get("kind", &"courtyard") as StringName
 		var region_color := COURTYARD_SERVICE if region_kind == &"garden" else COURTYARD_GREEN
 		# A street garden is planted ground seen from the public realm, so it reads
 		# as green; the enclosed rear service yards keep the service tone they had.
 		if StringName(region.get("access_kind", &"")) == &"street_garden":
 			region_color = COURTYARD_GREEN
-		b.add_visual_polygon(clipped_region, region_y + 0.032, region_color)
+		_add_ground_polygon(b, clipped_region, world_plan, 0.032, region_color)
+
+
+## Ground pads follow the realized surface: see MeshBatcher.add_ground_polygon.
+static func _add_ground_polygon(b: MeshBatcher, poly: PackedVector2Array,
+		world_plan: WorldPlan, lift: float, color: Color) -> void:
+	MeshBatcher.add_ground_polygon(b, poly, world_plan, lift, color)
 
 
 static func _emit_block_sidewalks(b: MeshBatcher,
@@ -1019,11 +1040,7 @@ static func _emit_block_sidewalks(b: MeshBatcher,
 			var clipped := _clip_polygon_to_rect(sidewalk, chunk_rect)
 			if clipped.size() < 3 or _polygon_area(clipped) < 2.0:
 				continue
-			var center := chunk_rect.get_center()
-			if world_plan != null:
-				center = _polygon_center(clipped)
-			var y := world_plan.surface_height_at(center) if world_plan != null else 0.0
-			b.add_visual_polygon(clipped, y + 0.028, color)
+			_add_ground_polygon(b, clipped, world_plan, 0.028, color)
 
 
 static func _road_band_polygon(a: Vector2, z: Vector2,
@@ -1073,9 +1090,7 @@ static func _alley(b: MeshBatcher, block: Dictionary, chunk_rect: Rect2,
 	var clipped := _clip_polygon_to_rect(passage_poly, chunk_rect)
 	if clipped.size() < 3 or _polygon_area(clipped) < 2.0:
 		return
-	var center := _polygon_center(clipped)
-	var ground_y := world_plan.surface_height_at(center) if world_plan != null else 0.0
-	b.add_visual_polygon(clipped, ground_y + 0.055, ALLEY_FLOOR)
+	_add_ground_polygon(b, clipped, world_plan, 0.055, ALLEY_FLOOR)
 
 
 static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,
@@ -1090,10 +1105,8 @@ static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 	var clipped := _clip_polygon_to_rect(interior_poly, chunk_rect)
 	if clipped.size() < 3:
 		return
-	var ground_y := 0.0
-	if world_plan != null:
-		ground_y = world_plan.surface_height_at(center)
-	b.add_visual_polygon(clipped, ground_y + 0.045, PLAZA_PAVE)
+	var ground_y := world_plan.surface_height_at(center) if world_plan != null else 0.0
+	_add_ground_polygon(b, clipped, world_plan, 0.045, PLAZA_PAVE)
 	if WorldSeed.chunk_coord(center.x, center.y) != coord:
 		return
 	var bounds := _polygon_bounds(interior_poly)
@@ -1125,7 +1138,10 @@ static func _plaza(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 			continue
 		if p.distance_to(center) < 7.0:
 			continue
-		_market_stall(b, p, rng, ground_y)
+		# Each stall stands on its own patch of ground; the square centre's
+		# height is metres out on a slope.
+		_market_stall(b, p, rng,
+				world_plan.surface_height_at(p) if world_plan != null else ground_y)
 
 
 static func _market_stall(b: MeshBatcher, p: Vector2,
@@ -1204,20 +1220,21 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 		if rooted:
 			continue
 		var h := rng.randf_range(1.9, 2.6)
-		# One destructible wood prop: trunk (collides) + canopy (visual).
-		b.add_prop_def({
-			"position": Vector3(p.x, ground_y, p.y),
-			"material": &"wood",
-			"parts": [
-				{"offset": Vector3(0, h * 0.5, 0),
-						"size": Vector3(0.42, h, 0.42),
-						"color": TRUNK_COLOR, "collide": true},
-				{"offset": Vector3(0, h + 0.7, 0),
-						"size": Vector3(rng.randf_range(1.9, 2.6), 1.6,
-							rng.randf_range(1.9, 2.6)),
-						"color": CANOPY_COLOR, "collide": false},
-			],
-		})
+		# Root every tree at its own ground height: the block centre's height
+		# leaves trees floating where the park slopes.
+		var tree_y := world_plan.surface_height_at(p) if world_plan != null else ground_y
+		# Detailed batched tree (one draw call for the whole chunk) plus a
+		# collider-only prop, so a park tree stays choppable for wood.
+		var species: StringName = TreeBuilder.mix_species(
+			i + int(WorldSeed.combine([str(block["id"]).hash()])))
+		var tree_seed: int = int(WorldSeed.combine(
+			[int(p.x * 100.0), int(p.y * 100.0), i]))
+		var tree_yaw: float = rng.randf_range(0.0, TAU)
+		TreeBuilder.build(b, Vector3(p.x, tree_y, p.y), species, {
+			"seed": tree_seed, "yaw": tree_yaw,
+			"detail": TreeBuilder.Detail.CITY})
+		b.add_prop_def(TreeBuilder.prop_def(Vector3(p.x, tree_y, p.y), species,
+			{"seed": tree_seed, "yaw": tree_yaw}))
 
 
 # --- Props / apocalypse decoration pass v0 ------------------------------------

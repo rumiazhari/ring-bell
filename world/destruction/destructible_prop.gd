@@ -36,17 +36,19 @@ func setup(def: Dictionary) -> void:
 	var volume := 0.0
 	for part: Dictionary in def.get("parts", []):
 		var size: Vector3 = part["size"]
-		var mi := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = size
-		mi.mesh = box
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = part["color"]
-		mat.roughness = 0.95
-		mat.metallic = 0.35 if material_id == &"steel" else 0.0
-		mi.material_override = mat
-		mi.position = part["offset"]
-		add_child(mi)
+		if bool(part.get("visual", true)):
+			var mi := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			box.size = size
+			mi.mesh = box
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = part["color"]
+			mat.roughness = 0.95
+			mat.metallic = 0.35 if material_id == &"steel" else 0.0
+			mi.material_override = mat
+			mi.position = part["offset"]
+			mi.rotation = (part.get("basis", Basis.IDENTITY) as Basis).get_euler()
+			add_child(mi)
 
 		if bool(part.get("collide", true)):
 			var shape := CollisionShape3D.new()

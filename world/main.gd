@@ -95,6 +95,14 @@ func _ready() -> void:
 	if args.has("--buildingrepairtest"):
 		add_child(load("res://debug/city_building_repair_test.gd").new())
 		return
+	if args.has("--groundplanecapture"):
+		add_child(load("res://debug/ground_plane_capture.gd").new())
+	if args.has("--treecapture"):
+		add_child(load("res://debug/tree_capture.gd").new())
+	if args.has("--treetest"):
+		add_child(load("res://debug/prague_tree_test.gd").new())
+		return
+
 	if args.has("--citygroundcapture"):
 		add_child(load("res://debug/city_ground_capture.gd").new())
 		return
@@ -118,6 +126,38 @@ func _ready() -> void:
 			get_tree().quit(1)
 			return
 		add_child(gameplay_script.new())
+		return
+	if args.has("--praguealignmenttest"):
+		var audit_script: Variant = load("res://debug/prague_alignment_test.gd")
+		if audit_script == null or not (audit_script is GDScript) or not (audit_script as GDScript).can_instantiate():
+			push_error("[PragueAlignmentTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((audit_script as GDScript).new())
+		return
+	if args.has("--propslogictest"):
+		var props_script: Variant = load("res://debug/prague_props_test.gd")
+		if props_script == null or not (props_script is GDScript) or not (props_script as GDScript).can_instantiate():
+			push_error("[PraguePropsTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((props_script as GDScript).new())
+		return
+	if args.has("--groundtest"):
+		var ground_script: Variant = load("res://debug/prague_ground_test.gd")
+		if ground_script == null or not (ground_script is GDScript) or not (ground_script as GDScript).can_instantiate():
+			push_error("[PragueGroundTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((ground_script as GDScript).new())
+		return
+	if args.has("--interiorlogictest"):
+		var logic_script: Variant = load("res://debug/prague_interior_logic_test.gd")
+		if logic_script == null or not (logic_script is GDScript) or not (logic_script as GDScript).can_instantiate():
+			push_error("[PragueInteriorLogic] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((logic_script as GDScript).new())
 		return
 	if args.has("--praguetest"):
 		# A parse error in the harness must fail the suite, not hang it: without
@@ -330,13 +370,16 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--smoke", "--soak", "--legacy-block",
 			"--citytest", "--cityruntime", "--g10p2b-morphologytest", "--g10p2b-revealtest", "--walkthrough", "--havoctest",
 			"--areacapture", "--citygroundcapture", "--buildingrepairtest", "--chunkbudget",
+			"--groundplanecapture",
+			"--treecapture",
+			"--treetest",
 			"--abysstest",
 			"--terraintest", "--terrainmaterialtest",
 			"--hydrotest", "--hydromaterialtest",
 			"--biometest", "--biomaterialtest",
 			"--roadtest", "--settlementtest", "--roadmaterialtest",
 			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
-			"--fringetest", "--buildingcontracttest", "--g10p2a-ruralprobe",
+			"--fringetest", "--buildingcontracttest", "--propslogictest", "--g10p2a-ruralprobe",
 			"--cavetest",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",

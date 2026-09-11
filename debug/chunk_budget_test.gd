@@ -141,8 +141,14 @@ func _count_verts(node: Node) -> int:
 	var total := 0
 	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
 		var mesh: Mesh = (node as MeshInstance3D).mesh
-		for si in mesh.get_surface_count():
-			total += mesh.surface_get_array_len(si)
+		if mesh is ArrayMesh:
+			for si in mesh.get_surface_count():
+				total += (mesh.surface_get_arrays(si)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		else:
+			# Primitive meshes (BoxMesh and friends) have no surface arrays at all;
+			# their triangle soup is the only honest count. The old call here was
+			# Godot 3 API, so it errored and silently skipped every such node.
+			total = mesh.get_faces().size()
 	for child in node.get_children():
 		total += _count_verts(child)
 	return total
