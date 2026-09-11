@@ -180,9 +180,10 @@ func _setup_body() -> void:
 
 	_visual_root = Node3D.new()
 	_visual_root.name = "Visual"
+	_visual_root.rotation.y = atan2(facing.x, facing.z)
 	add_child(_visual_root)
 
-	# The player is a woman in a skirt; NPCs are varied humans dressed by
+	# The player uses the illustrated commoner outfit; NPCs are dressed by
 	# their spawn manifest color.
 	var shirt: Color = _config.get("color", Color(0.6, 0.65, 0.7))
 	var female := is_player() or bool(_config.get("female", false))
@@ -197,7 +198,7 @@ func _setup_body() -> void:
 		cfg["pants"] = Color(0.35, 0.32, 0.36)
 	_model_root = HumanoidModel.build_human(cfg)
 	# Skeleton + locomotion (in-place, ACTIVE-only)
-	_skeleton = SkeletonFactory.build_survivor_skeleton()
+	_skeleton = SkeletonFactory.build_survivor_skeleton(is_player())
 	_visual_root.add_child(_skeleton)
 	_locomotion = CharacterLocomotion.new()
 	_locomotion.name = "Locomotion"

@@ -1,6 +1,6 @@
 class_name SkeletonFactory
 extends RefCounted
-## Builds a 10-bone human skeleton (root/hips/spine_upper/head/l_thigh/l_shin/r_thigh/r_shin/l_upper_arm/r_upper_arm)
+## Default ten-bone rig; optional fourteen-bone player adds knees and elbows.
 ## Hip at y 0.86, spine_upper at 0.95 matching HumanoidModel pivots, scaled 1.2 via model attachment.
 ## Primitive meshes from HumanoidModel are attached via BoneAttachment3D per limb.
 
@@ -10,7 +10,7 @@ static func capsule_heights() -> Dictionary:
 static func bone_names() -> PackedStringArray:
 	return PackedStringArray(["root", "hips", "spine_upper", "head", "l_thigh", "l_shin", "r_thigh", "r_shin", "l_upper_arm", "r_upper_arm"])
 
-static func build_survivor_skeleton() -> Skeleton3D:
+static func build_survivor_skeleton(articulated := false) -> Skeleton3D:
 	var skel := Skeleton3D.new()
 	skel.name = "Skeleton3D"
 	var names: PackedStringArray = bone_names()
@@ -36,6 +36,22 @@ static func build_survivor_skeleton() -> Skeleton3D:
 			skel.set_bone_parent(idx, parents[i])
 		var rest := Transform3D(Basis.IDENTITY, rest_positions[i])
 		skel.set_bone_rest(idx, rest)
+	if articulated:
+		skel.set_meta("articulated", true)
+		for side in ["l", "r"]:
+			var knee := skel.add_bone(side + "_calf")
+			skel.set_bone_parent(knee, skel.find_bone(side + "_thigh"))
+			skel.set_bone_rest(knee, Transform3D(Basis.IDENTITY, Vector3(0, -0.42, 0)))
+			var ankle := skel.find_bone(side + "_shin")
+			skel.set_bone_parent(ankle, knee)
+			skel.set_bone_rest(ankle, Transform3D(Basis.IDENTITY, Vector3(0, -0.42, 0)))
+			var elbow := skel.add_bone(side + "_forearm")
+			var shoulder := skel.find_bone(side + "_upper_arm")
+			skel.set_bone_parent(elbow, shoulder)
+			skel.set_bone_rest(elbow, Transform3D(Basis.IDENTITY, Vector3(0, -0.27, 0)))
+			var shoulder_rest := skel.get_bone_rest(shoulder)
+			shoulder_rest.origin.x = -0.215 if side == "l" else 0.215
+			skel.set_bone_rest(shoulder, shoulder_rest)
 	# Live pose must start AT the rest: set_bone_rest() leaves pose at
 	# identity, which renders every bone collapsed at the skeleton origin
 	# (characters sunk to the waist, attachments buried). reset restores it.
@@ -55,6 +71,10 @@ static func attach_model(skeleton: Skeleton3D, model_root: Node3D) -> void:
 		"r_leg": "r_thigh",
 		"l_arm": "l_upper_arm",
 		"r_arm": "r_upper_arm",
+		"l_forearm": "l_forearm",
+		"r_forearm": "r_forearm",
+		"l_calf": "l_calf",
+		"r_calf": "r_calf",
 		"upper": "spine_upper",
 		"head": "head",
 	}
@@ -114,8 +134,9 @@ static func attach_model(skeleton: Skeleton3D, model_root: Node3D) -> void:
 				# Reparent skirt if not already
 				if child.get_parent() == model_root:
 					model_root.remove_child(child)
-					hips_attach.add_child(child)
+					# Establish the attachment transform before _ready captures cloth history.
 					child.position = Vector3.ZERO
+					hips_attach.add_child(child)
 					# Floor clamp is waist-relative: the node now sits at the
 					# hips bone, so the floor is hips-rest below it. Without
 					# this the clamp pins every row at the waist (flat disc).

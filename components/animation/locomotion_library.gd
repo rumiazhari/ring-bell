@@ -4,7 +4,7 @@ extends RefCounted
 ## Each clip animates Skeleton3D bone rotations only (no Skeleton3D translation tracks; root bone position stays Vector3.ZERO)
 ## Walk/Run/Sprint stride frequency maps to lerp(WALK_FREQ 6.2, RUN_FREQ 11, clamp(speed/RUN_SPEED_REF 6.4)) and loops seamlessly.
 
-static func build_library() -> AnimationLibrary:
+static func build_library(articulated := false) -> AnimationLibrary:
 	var lib := AnimationLibrary.new()
 	lib.add_animation("Idle", _build_idle())
 	lib.add_animation("Walk", _build_walk())
@@ -25,6 +25,9 @@ static func build_library() -> AnimationLibrary:
 	lib.add_animation("WallRunR", _build_wallrun_r())
 	lib.add_animation("Shimmy", _build_shimmy())
 	lib.add_animation("Drop2Hang", _build_drop2hang())
+	if articulated:
+		for clip in lib.get_animation_list():
+			_add_articulation(lib.get_animation(clip), String(clip))
 	return lib
 
 static func _track_path(bone: String) -> StringName:
@@ -860,3 +863,47 @@ static func _build_drop2hang() -> Animation:
 		[0.45, _quat_from_euler_deg(-118, 0, 8)],
 	])
 	return anim
+
+
+static func _add_articulation(anim: Animation, clip: String) -> void:
+	for side in ["l", "r"]:
+		var elbows: Array = []
+		var knees: Array = []
+		var thighs: Array = []
+		for sample in 25:
+			var t := sample / 24.0
+			var phase := t * TAU + (0.0 if side == "l" else PI)
+			var knee := 0.0
+			var elbow := 10.0
+			if clip in ["Walk", "Run", "Sprint", "CrouchWalk"]:
+				var pace := 0.0 if clip == "Walk" else 1.0
+				knee = 4.0 + maxf(cos(phase), 0.0) * lerpf(32.0, 70.0, pace)
+				elbow = lerpf(20.0, 65.0, pace) + sin(phase) * 9.0
+			elif clip in ["CrouchIdle", "Slide"]:
+				knee = 75.0
+				elbow = 35.0
+			elif clip in ["Vault", "Mantle", "ClimbUp", "StandUp"]:
+				knee = sin(t * PI) * 65.0
+				elbow = sin(t * PI) * 45.0
+			elif clip in ["LedgeHang", "Shimmy", "Drop2Hang"]:
+				elbow = 0.0
+				knee = 15.0
+			elif clip.begins_with("WallRun"):
+				knee = 35.0 + sin(phase) * 20.0
+				elbow = 55.0
+			if clip in ["CrouchIdle", "CrouchWalk", "Slide"]:
+				knee = 100.0 if clip != "Slide" else 70.0
+				var thigh := -55.0 if clip != "Slide" else -75.0
+				if clip == "CrouchWalk":
+					thigh += sin(phase) * 8.0
+					knee += sin(phase) * 8.0
+				thighs.append([t * anim.length, _quat_from_euler_deg(thigh, 0, 0)])
+			elbows.append([t * anim.length, _quat_from_euler_deg(-elbow, 0, 0)])
+			knees.append([t * anim.length, _quat_from_euler_deg(knee, 0, 0)])
+		if not thighs.is_empty():
+			for track in range(anim.get_track_count() - 1, -1, -1):
+				if String(anim.track_get_path(track)) == ":" + side + "_thigh":
+					anim.remove_track(track)
+			_add_rotation_track(anim, side + "_thigh", thighs)
+		_add_rotation_track(anim, side + "_forearm", elbows)
+		_add_rotation_track(anim, side + "_calf", knees)

@@ -99,6 +99,8 @@ static func _store_limbs(root: Node3D, upper: Node3D,
 
 ## cfg keys: female(bool), skin, shirt, pants, hair, boots(Color).
 static func build_human(cfg: Dictionary) -> Node3D:
+	if bool(cfg.get("modest", false)):
+		return IllustratedCommoner.build(cfg)
 	var female := bool(cfg.get("female", false))
 	var modest := bool(cfg.get("modest", false))
 	var rng := RandomNumberGenerator.new()

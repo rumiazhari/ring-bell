@@ -310,3 +310,32 @@ reporting mean luminance outside vs inside, plus per-room darkest point, so the
   therefore see nothing. Fix: read `_block_by_cell.values()` (or look up by cell
   for a rect) in both; then re-run `--sitecontracttest`. If street gardens were
   never actually planted in-game either, that is a second, larger find.
+
+## LOCKED DECISIONS (user, 2026-09-12, message 12099) — apply when this task starts
+
+These were given while a DIFFERENT task (performance optimization) was active.
+They are binding for THIS task and must not be re-litigated:
+
+1. **Branch base: `copilot/worldgen-fix`.** Do NOT merge or fast-forward `master`
+   first. Start work from the pushed `copilot/worldgen-fix` tip.
+2. **Door widths are kind-based, derived from one contract.** Residential/historic
+   single ~1.0-1.1 m (default 1.05); service/interior ~0.9-1.0; retail ~1.1-1.3;
+   intentional double/grand/industrial ~1.6-1.8. **Aperture, leaf, frame, collision
+   and player-capsule clearance must all derive from the SAME width table** — no
+   independent constants in `BuildingBuilder`, `CityPlan` or `Door`.
+   The ~130 entrance failures in `--buildingcontracttest` are IN SCOPE. Terrain
+   grounding (~80) and migration bypass (~35) failures are OUT OF SCOPE unless they
+   block this task or this task regresses them.
+3. **Camera cutaway = HARD CUT** for geometry that actually obstructs the camera
+   view, Zomboid/Sims style. Do not hide all walls: only the camera-side obstructing
+   wall/ceiling pieces are camera-hidden; other walls stay. Camera rotation
+   recomputes the cutaway. A short transition is allowed ONLY to prevent popping.
+   Hidden-from-camera structure MUST retain collision and shadows — so no
+   `visible = false` on structure; use render-layer/cull-mask (or SHADOWS_ONLY).
+4. **Top storey vs roof.** While the player is on the highest INTERIOR storey, that
+   storey's ceiling/roof may be hidden from the GAMEPLAY CAMERA only, while still
+   occluding shadows and colliding. The moment the player reaches the ROOF DECK
+   (via stairs or parkour), switch to rooftop/exterior mode and show the complete
+   roof, parapets, bulkhead and props. **`floor_i == n` means ROOF/EXTERIOR, not
+   interior.**
+5. Commit and push each task as it completes.

@@ -186,12 +186,12 @@ func setup(skeleton_p: Skeleton3D, model_root_p: Node3D, opts: Dictionary = {}) 
 		anim_player = AnimationPlayer.new()
 		anim_player.name = "LocomotionPlayer"
 		add_child(anim_player)
-		var lib: AnimationLibrary = LocomotionLibrary.build_library()
+		var lib: AnimationLibrary = LocomotionLibrary.build_library(skeleton != null and skeleton.get_meta("articulated", false))
 		anim_player.add_animation_library("locomotion", lib)
 	else:
 		if anim_player.has_animation_library("locomotion"):
 			anim_player.remove_animation_library("locomotion")
-		anim_player.add_animation_library("locomotion", LocomotionLibrary.build_library())
+		anim_player.add_animation_library("locomotion", LocomotionLibrary.build_library(skeleton != null and skeleton.get_meta("articulated", false)))
 	# Set root_node to skeleton so bone tracks ":<bone>" resolve
 	if skeleton != null and is_instance_valid(skeleton) and anim_player != null:
 		if skeleton.is_inside_tree() and anim_player.is_inside_tree():
@@ -445,6 +445,7 @@ func update(p: Dictionary, delta: float) -> void:
 			_phase += 1.7 * delta
 
 	_apply_pose(delta, speed, freq, run_ratio)
+	_apply_articulated_pose(speed, run_ratio)
 
 	foot_slide = _calc_foot_slide(delta)
 	# During HANG, foot_slide is 0
@@ -995,6 +996,8 @@ func _apply_pose(delta: float, speed: float, _freq: float, run_ratio: float) -> 
 		skeleton.set_bone_pose_rotation(spine_idx, q)
 	var hips_idx := skeleton.find_bone("hips")
 	if hips_idx >= 0:
+		if skeleton.get_meta("articulated", false):
+			skeleton.set_bone_pose_position(hips_idx, skeleton.get_bone_rest(hips_idx).origin)
 		if _turn_timer > 0.0:
 			var dur2: float = 0.80 if state == State.TURN_180 else 0.55
 			var prog2: float = clamp(1.0 - _turn_timer / dur2, 0.0, 1.0)
@@ -1368,3 +1371,41 @@ func get_capsule_height() -> float:
 
 func get_capsule_target() -> float:
 	return _capsule_target
+
+
+func _apply_articulated_pose(speed: float, run_ratio: float) -> void:
+	if not skeleton.get_meta("articulated", false):
+		return
+	for side in ["l", "r"]:
+		var ankle := skeleton.find_bone(side + "_shin")
+		# Ankle and knee positions remain anatomical: rotation provides foot lift.
+		skeleton.set_bone_pose_position(ankle, skeleton.get_bone_rest(ankle).origin)
+		var elbow := skeleton.find_bone(side + "_forearm")
+		var knee := skeleton.find_bone(side + "_calf")
+		if state in [State.HANG, State.SHIMMY, State.DROP2HANG]:
+			skeleton.set_bone_pose_rotation(elbow, Quaternion.IDENTITY)
+		elif state in [State.IDLE, State.WALK, State.RUN, State.SPRINT, State.TURN_L90, State.TURN_R90, State.TURN_180]:
+			var phase := _phase + (0.0 if side == "l" else PI)
+			var bend := 8.0
+			var flex := 0.0
+			if speed > 0.2:
+				bend = lerpf(20.0, 65.0, run_ratio) + sin(phase) * 9.0
+				flex = 4.0 + maxf(sin(phase), 0.0) * lerpf(32.0, 70.0, run_ratio)
+			skeleton.set_bone_pose_rotation(elbow, Quaternion.from_euler(Vector3(deg_to_rad(-bend), 0, 0)))
+			skeleton.set_bone_pose_rotation(knee, Quaternion.from_euler(Vector3(deg_to_rad(flex), 0, 0)))
+
+	if state in [State.IDLE, State.WALK, State.RUN, State.SPRINT, State.CROUCH_IDLE, State.CROUCH_WALK, State.SLIDE, State.STAND_UP, State.TURN_L90, State.TURN_R90, State.TURN_180]:
+		_ground_articulated_pose()
+
+
+func _ground_articulated_pose() -> void:
+	if not skeleton.get_meta("articulated", false):
+		return
+	var hips := skeleton.find_bone("hips")
+	var rest := skeleton.get_bone_rest(hips).origin
+	skeleton.set_bone_pose_position(hips, rest)
+	var left := skeleton.get_bone_global_pose(skeleton.find_bone("l_shin")).origin.y
+	var right := skeleton.get_bone_global_pose(skeleton.find_bone("r_shin")).origin.y
+	# Keep the lower boot at the actor's contact datum; root/capsule never move.
+	rest.y += 0.02 - minf(left, right)
+	skeleton.set_bone_pose_position(hips, rest)
