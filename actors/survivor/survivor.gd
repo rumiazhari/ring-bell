@@ -191,7 +191,8 @@ func _setup_body() -> void:
 		"shirt": shirt,
 	}
 	if female and is_player():
-		cfg["skin"] = Color(0.9, 0.74, 0.62)
+		cfg["modest"] = true
+		cfg["skin"] = Color("f2d9ca")
 		cfg["hair"] = Color(0.4, 0.27, 0.16)
 		cfg["pants"] = Color(0.35, 0.32, 0.36)
 	_model_root = HumanoidModel.build_human(cfg)

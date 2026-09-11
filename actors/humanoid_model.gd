@@ -100,6 +100,7 @@ static func _store_limbs(root: Node3D, upper: Node3D,
 ## cfg keys: female(bool), skin, shirt, pants, hair, boots(Color).
 static func build_human(cfg: Dictionary) -> Node3D:
 	var female := bool(cfg.get("female", false))
+	var modest := bool(cfg.get("modest", false))
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
@@ -131,29 +132,36 @@ static func build_human(cfg: Dictionary) -> Node3D:
 	var r_leg := _joint(root, Vector3(0.11, 0.86, 0))
 	for side in [-1.0, 1.0]:
 		var leg: Node3D = l_leg if side < 0 else r_leg
-		if female:
+		if female and not modest:
 			_box(leg, Vector3(0.12, 0.5, 0.14), Vector3(0, -0.25, 0),
 					leg_skin_m)
 			_box(leg, Vector3(0.14, 0.08, 0.24), Vector3(0, -0.47, 0.04),
 					boot_m)
 		else:
 			_box(leg, Vector3(0.16, 0.84, 0.18), Vector3(0, -0.42, 0),
-					pants_m)
+					shirt_m if modest else pants_m)
 			_box(leg, Vector3(0.14, 0.08, 0.24), Vector3(0, -0.82, 0.04),
 					boot_m)
 
 	if female:
 		# Skirt: real cloth sim (verlet ring grid pinned at the waist).
 		var skirt := SkirtCloth.new()
-		skirt.setup(0.19, 0.46, 0.58, 10, 4, skirt_m)
+		skirt.name = "Gamis" if modest else "Skirt"
+		skirt.setup(0.23 if modest else 0.19, 0.50 if modest else 0.43, 0.80 if modest else 0.58, 16 if modest else 10, 7 if modest else 4, shirt_m if modest else skirt_m)
 		root.add_child(skirt)
 
 	# --- Upper body pivot (waist) so runs lean and idles breathe. ---
 	var upper := _joint(root, Vector3(0, 0.95, 0))
 
 	# Torso, neck, head.
-	_box(upper, Vector3(shoulder * 2.0, 0.54, 0.23),
-			Vector3(0, 0.29, 0), shirt_m)
+	if modest:
+		var bodice := CylinderMesh.new()
+		bodice.top_radius = 0.215
+		bodice.bottom_radius = 0.23
+		bodice.height = 0.70
+		_part(upper, bodice, Vector3(0, 0.21, 0), shirt_m)
+	else:
+		_box(upper, Vector3(shoulder * 2.0, 0.54, 0.23), Vector3(0, 0.29, 0), shirt_m)
 	_part(upper, _capsule(0.06, 0.15), Vector3(0, 0.61, 0), skin_m)
 	_part(upper, _capsule(0.125, 0.29), Vector3(0, 0.78, 0.005), skin_m)
 	# Nose bump doubles as the facing cue (+Z).
@@ -163,8 +171,26 @@ static func build_human(cfg: Dictionary) -> Node3D:
 		_box(upper, Vector3(0.05, 0.02, 0.02),
 				Vector3(side * 0.055, 0.82, 0.118), hair_m)
 
-	# Hair.
-	if female:
+	# Fitted hijab hood leaves the face open; shoulder veil has free cloth rows.
+	if modest:
+		var veil_m := _mat(Color("d5c9b8"))
+		var collar := CylinderMesh.new()
+		collar.top_radius = 0.115
+		collar.bottom_radius = 0.16
+		collar.height = 0.19
+		_part(upper, collar, Vector3(0, 0.59, -0.02), veil_m)
+		var hood := SphereMesh.new()
+		hood.radius = 0.15
+		hood.height = 0.34
+		_part(upper, hood, Vector3(0, 0.79, -0.035), veil_m)
+		# Face panel in front of the fitted hood, covering its front surface.
+		_part(upper, _capsule(0.102, 0.235), Vector3(0, 0.775, 0.065), skin_m)
+		var veil := SkirtCloth.new()
+		veil.name = "HijabDrape"
+		veil.setup(0.115, 0.30, 0.30, 16, 5, veil_m)
+		veil.position = Vector3(0, 0.65, -0.035)
+		upper.add_child(veil)
+	elif female:
 		_box(upper, Vector3(0.28, 0.26, 0.28),
 				Vector3(0, 0.85, -0.02), hair_m)
 		_box(upper, Vector3(0.24, 0.38, 0.11),
@@ -177,7 +203,15 @@ static func build_human(cfg: Dictionary) -> Node3D:
 	var l_arm := _joint(upper, Vector3(-(shoulder + 0.06), 0.51, 0))
 	var r_arm := _joint(upper, Vector3(shoulder + 0.06, 0.51, 0))
 	for arm: Node3D in [l_arm, r_arm]:
-		_box(arm, Vector3(0.11, 0.5, 0.13), Vector3(0, -0.26, 0), shirt_m)
+		if modest:
+			var sleeve := SkirtCloth.new()
+			sleeve.name = "GamisSleeve"
+			sleeve.setup(0.085, 0.08, 0.51, 10, 4, shirt_m)
+			sleeve.pin_hem = true
+			sleeve.position = Vector3.ZERO
+			arm.add_child(sleeve)
+		else:
+			_box(arm, Vector3(0.11, 0.5, 0.13), Vector3(0, -0.26, 0), shirt_m)
 		_box(arm, Vector3(0.095, 0.15, 0.11), Vector3(0, -0.56, 0), skin_m)
 
 	_store_limbs(root, upper, l_arm, r_arm, l_leg, r_leg)

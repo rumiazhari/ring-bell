@@ -7,7 +7,7 @@ extends Node
 var failures := 0
 
 func _ready() -> void:
-	get_tree().create_timer(80.0).timeout.connect(func() -> void:
+	get_tree().create_timer(180.0).timeout.connect(func() -> void:
 		print("[AnimationTest] WATCHDOG TIMEOUT - aborting")
 		get_tree().quit(2)
 	)

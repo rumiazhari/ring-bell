@@ -44,7 +44,7 @@ def main() -> int:
     with open(outf, "w", encoding="utf-8", errors="replace") as f:
         try:
             r = subprocess.run(
-                [str(GODOT), *([] if rendered else ["--headless"]), "--path", str(PROJ), "--", flag, *game_args],
+                [str(GODOT), *([] if rendered else ["--headless"]), "--path", str(PROJ), *(["res://debug/player_clothing_preview.tscn"] if flag == "--clothingtest" else []), "--", flag, *game_args],
                 stdout=f, stderr=subprocess.STDOUT, timeout=timeout, env=test_env)
             code = r.returncode
         except subprocess.TimeoutExpired:
