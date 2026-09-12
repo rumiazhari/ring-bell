@@ -1,0 +1,116 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Started Project initialization (5 steps)[39m[0m
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Scanning file structure...[39m[0m
+WARNING: Detected another project.godot at res://junk/disposed-autopilot-20260830-1128/worktrees/t_1b367205. The folder will be ignored.
+   at: _should_skip_directory (editor/file_system/editor_file_system.cpp:3497)
+[  16% ] [90m[1mfirst_scan_filesystem[22m | Loading global class names...[39m[0m
+[  33% ] [90m[1mfirst_scan_filesystem[22m | Verifying GDExtensions...[39m[0m
+[  50% ] [90m[1mfirst_scan_filesystem[22m | Creating autoload scripts...[39m[0m
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:34)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:131)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:137)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:411)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "local_plan" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:411)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "fill_batcher".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:412)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:487)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "local_plan" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:487)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "build".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:594)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://core/autoload/debris_manager.gd:0)
+ERROR: Failed to load script "res://core/autoload/debris_manager.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+[  66% ] [90m[1mfirst_scan_filesystem[22m | Initializing plugins...[39m[0m
+MCP | plugin disabled in headless mode
+[  83% ] [90m[1mfirst_scan_filesystem[22m | Starting file scan...[39m[0m
+[92m[ DONE ][39m [1mfirst_scan_filesystem[22m
+[0m
+[   0% ] [90m[1mupdate_scripts_classes[22m | Started Registering global classes... (20 steps)[39m[0m
+[   0% ] [90m[1mupdate_scripts_classes[22m | ParkourController[39m[0m
+[   4% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[   9% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  14% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  19% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  23% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  28% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  33% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  38% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  42% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  47% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  52% ] [90m[1mupdate_scripts_classes[22m | BuildingContractValidator[39m[0m
+[  57% ] [90m[1mupdate_scripts_classes[22m | BuildingSpec[39m[0m
+[  61% ] [90m[1mupdate_scripts_classes[22m | CityPlan[39m[0m
+[  66% ] [90m[1mupdate_scripts_classes[22m | WorldConstants[39m[0m
+[  71% ] [90m[1mupdate_scripts_classes[22m | WorldPlan[39m[0m
+[  76% ] [90m[1mupdate_scripts_classes[22m | ChunkBuilder[39m[0m
+[  80% ] [90m[1mupdate_scripts_classes[22m | ChunkManager[39m[0m
+[  85% ] [90m[1mupdate_scripts_classes[22m | MeshBatcher[39m[0m
+[  90% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[92m[ DONE ][39m [1mupdate_scripts_classes[22m
+[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Started Loading editor (5 steps)[39m[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Loading editor layout...[39m[0m
+[  16% ] [90m[1mloading_editor_layout[22m | Loading docks...[39m[0m
+[  33% ] [90m[1mloading_editor_layout[22m | Reopening scenes...[39m[0m
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/main.gd:45)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/main.gd:462)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "setup_world".
+   at: GDScript::reload (res://world/main.gd:467)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "get_spawn_position".
+   at: GDScript::reload (res://world/main.gd:480)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "setup".
+   at: GDScript::reload (res://world/main.gd:501)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/main.gd:757)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "plan".
+   at: GDScript::reload (res://world/main.gd:758)
+ERROR: Failed to load script "res://world/main.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+[  50% ] [90m[1mloading_editor_layout[22m | Loading central editor layout...[39m[0m
+[  66% ] [90m[1mloading_editor_layout[22m | Loading plugin window layout...[39m[0m
+SCRIPT ERROR: Parse Error: Expected indented block after "if" block.
+   at: GDScript::reload (res://world/generation/city_plan.gd:742)
+ERROR: Failed to load script "res://world/generation/city_plan.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/city_spawner.gd:18)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/city_spawner.gd:24)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "anchor2" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/city_spawner.gd:57)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "city_plan".
+   at: GDScript::reload (res://world/city_spawner.gd:63)
+ERROR: Failed to load script "res://world/city_spawner.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/generation/world_plan.gd:19)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/generation/world_plan.gd:30)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "_init".
+   at: GDScript::reload (res://world/generation/world_plan.gd:31)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://actors/survivor/survivor.gd:0)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://actors/traversal/parkour_controller.gd:0)
+ERROR: Failed to load script "res://actors/traversal/parkour_controller.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://actors/zombie/zombie.gd:51)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "p" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://actors/zombie/zombie.gd:351)
+ERROR: Failed to load script "res://actors/zombie/zombie.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+[  83% ] [90m[1mloading_editor_layout[22m | Editor layout ready.[39m[0m
+[92m[ DONE ][39m [1mloading_editor_layout[22m
+[0m

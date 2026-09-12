@@ -1,0 +1,97 @@
+=== --biometest exit=-99 elapsed=900s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_biometest.txt ===
+[BiomeTest] PASS: chunk (0, 1) non-forest/quarry collider 0
+[BiomeTest] PASS: chunk (0, 1) verts 81
+[BiomeTest] PASS: chunk (0, 1) tris <=128
+[BiomeTest] PASS: chunk (0, 1) biome_gen_ms measured
+[BiomeTest] PASS: chunk (-1, -1) collider <=1
+[BiomeTest] PASS: chunk (-1, -1) non-forest/quarry collider 0
+[BiomeTest] PASS: chunk (-1, -1) verts 81
+[BiomeTest] PASS: chunk (-1, -1) tris <=128
+[BiomeTest] PASS: chunk (-1, -1) biome_gen_ms measured
+[BiomeTest] PASS: chunk (8, 0) collider <=1
+[BiomeTest] PASS: chunk (8, 0) forest instances <= 96
+[BiomeTest] PASS: chunk (8, 0) beech <=56
+[BiomeTest] PASS: chunk (8, 0) total typed <=96
+[BiomeTest] PASS: chunk (8, 0) quarry instances <= 96
+[BiomeTest] PASS: chunk (8, 0) verts 81
+[BiomeTest] PASS: chunk (8, 0) tris <=128
+[BiomeTest] PASS: chunk (8, 0) biome_gen_ms measured
+[BiomeTest] PASS: chunk (-2, 3) collider <=1
+[BiomeTest] PASS: chunk (-2, 3) non-forest/quarry collider 0
+[BiomeTest] PASS: chunk (-2, 3) verts 81
+[BiomeTest] PASS: chunk (-2, 3) tris <=128
+[BiomeTest] PASS: chunk (-2, 3) biome_gen_ms measured
+[BiomeTest] PASS: chunk (10, 5) collider <=1
+[BiomeTest] PASS: chunk (10, 5) forest instances <= 96
+[BiomeTest] PASS: chunk (10, 5) beech <=56
+[BiomeTest] PASS: chunk (10, 5) total typed <=96
+[BiomeTest] PASS: chunk (10, 5) verts 81
+[BiomeTest] PASS: chunk (10, 5) tris <=128
+[BiomeTest] PASS: chunk (10, 5) biome_gen_ms measured
+[BiomeTest] PASS: forest typed groups: at least 2 distinct tree silhouettes in dense chunk
+[BiomeTest] PASS: forest understory: bushes+grass present in forest chunk
+[BiomeTest] PASS: forest floor dressing: leaf litter/stone/deadwood present
+[BiomeTest] PASS: countryside vegetation: roadside/hedgerow/solitary present
+[BiomeTest] PASS: biome chunks with proxies found
+[BiomeTest] PASS: materialize biome_mat_ms (12, 8)
+[BiomeTest] PASS: materialize vertices 81 (12, 8)
+[BiomeTest] PASS: materialize collider 0/1 (12, 8)
+[BiomeTest] PASS: materialize biome_mat_ms (15, 10)
+[BiomeTest] PASS: materialize vertices 81 (15, 10)
+[BiomeTest] PASS: materialize collider 0/1 (15, 10)
+[BiomeTest] PASS: materialize biome_mat_ms (-8, 12)
+[BiomeTest] PASS: materialize vertices 81 (-8, 12)
+[BiomeTest] PASS: materialize collider 0/1 (-8, 12)
+[BiomeTest] PASS: materialize biome_mat_ms (10, 10)
+[BiomeTest] PASS: materialize vertices 81 (10, 10)
+[BiomeTest] PASS: materialize collider 0/1 (10, 10)
+[BiomeTest] PASS: materialize biome_mat_ms (-6, -6)
+[BiomeTest] PASS: materialize vertices 81 (-6, -6)
+[BiomeTest] PASS: materialize collider 0/1 (-6, -6)
+[BiomeTest] PASS: urban chunk materialize 0 instances
+[BiomeTest] PASS: urban chunk 0 collider
+[BiomeTest] PASS: active biome <=9 rural hill
+[BiomeTest] PASS: active biome == biome in ACTIVE
+[BiomeTest] PASS: bounded verts per biome chunk 81
+[BiomeTest] PASS: active biome measured t_biome_gen present
+[BiomeTest] PASS: terrain still present with biome
+[BiomeTest] PASS: water still present with biome
+[BiomeTest] PASS: at least 9 resident biome chunks around rural
+[BiomeTest] PASS: debug stats contain t_biome_gen
+[BiomeTest] PASS: debug stats contain t_biome_mat
+[BiomeTest] PASS: biome chunks present for unload test
+[BiomeTest] PASS: biome chunks unload after 480m walk
+[BiomeTest] PASS: biome chunks regenerate identical manifests after return
+[BiomeTest] PASS: generated biome excluded from save_state()
+[BiomeTest] PASS: save_state has records
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: different seed field parcels differ >=30%
+[BiomeTest] PASS: per landscape cell 0-3 parcels
+[BiomeTest] PASS: field parcel footprint and geographic gates
+[BiomeTest] PASS: CropPatch is_grown planted+2 and depleted regrow 2d via GameClock.advance
+[BiomeTest] PASS: field parcel contiguity >=9 across 5-seed arable belt
+[BiomeTest] PASS: field parcel center ownership no duplication + and - and -Z
+[BiomeTest] PASS: orchard parcel manifest equality shuffled order
+[BiomeTest] PASS: different seed orchard parcels differ >=30%
+[BiomeTest] PASS: per landscape cell 0-2 orchard parcels
+[BiomeTest] PASS: orchard parcel footprint and geographic gates
+[BiomeTest] PASS: FruitPatch is_grown planted+3 and depleted regrow 3d via GameClock.advance
+--- tail ---
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: field parcel manifest equality shuffled order
+[BiomeTest] PASS: different seed field parcels differ >=30%
+[BiomeTest] PASS: per landscape cell 0-3 parcels
+[BiomeTest] PASS: field parcel footprint and geographic gates
+[BiomeTest] PASS: CropPatch is_grown planted+2 and depleted regrow 2d via GameClock.advance
+[BiomeTest] PASS: field parcel contiguity >=9 across 5-seed arable belt
+[BiomeTest] PASS: field parcel center ownership no duplication + and - and -Z
+[BiomeTest] PASS: orchard parcel manifest equality shuffled order
+[BiomeTest] PASS: different seed orchard parcels differ >=30%
+[BiomeTest] PASS: per landscape cell 0-2 orchard parcels
+[BiomeTest] PASS: orchard parcel footprint and geographic gates
+[BiomeTest] PASS: FruitPatch is_grown planted+3 and depleted regrow 3d via GameClock.advance

@@ -1,0 +1,10 @@
+=== --q3intecamflutter exit=-99 elapsed=1500s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_q3intecamflutter.txt ===
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 2180 ms nodes 53 edges 57 (cross 16 filter 1)
+[IntFlutter] seed=19041207 tag=wall_final out=res://.hermes/autopilot/reports/q3-camera-interior/wall_final
+[CityPlan]     BLOCKS sites_loop=5646 split=1360 frontage=50663 interiors=10439 dense_min=983 finalize=4076 ms
+[CityPlan]   phases support=0 landmarks=3 roads=3387 blocks=73171 ms
+[CityPlan] GENERATED in 76563 ms (seed 19041207)

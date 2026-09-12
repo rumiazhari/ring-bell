@@ -1,0 +1,11 @@
+=== --q3boomroom exit=0 elapsed=4s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_q3boomroom.txt ===
+[BoomRoom] finished with 0 failure(s)
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[BoomRoom] station=wall-hug poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=mid-room poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=open-floor poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=wall-hug-back poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] finished with 0 failure(s)

@@ -1,0 +1,20 @@
+=== --q3boomroom exit=1 elapsed=5s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_q3boomroom.txt ===
+[BoomRoom] FAIL station=wall-hug-0.5 rendered boom moved 7.20 m over the sweep - the player sees the lens close in and out
+[BoomRoom] FAIL station=wall-hug-0.9 rendered boom moved 7.20 m over the sweep - the player sees the lens close in and out
+[BoomRoom] finished with 2 failure(s)
+--- tail ---
+[BoomRoom] FAIL station=wall-hug-0.5 rendered boom moved 7.20 m over the sweep - the player sees the lens close in and out
+[BoomRoomDiag] yaw=262.0 boom=1.80 want=9.00 d=2.23 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=264.0 boom=1.80 want=9.00 d=2.22 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=266.0 boom=1.80 want=9.00 d=2.22 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=268.0 boom=1.80 want=9.00 d=2.21 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=270.0 boom=1.80 want=9.00 d=2.21 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=272.0 boom=1.80 want=9.00 d=2.21 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=274.0 boom=1.80 want=9.00 d=2.22 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=276.0 boom=1.80 want=9.00 d=2.22 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=278.0 boom=1.80 want=9.00 d=2.23 n_y=0.00 in_shell=false party=false
+[BoomRoom] station=wall-hug-0.9 poses=181 want=9.00 raw_min=1.80 raw_max=9.00 rendered_range=7.20 hidden_clamp=0 party_clamp=0
+[BoomRoom] FAIL station=wall-hug-0.9 rendered boom moved 7.20 m over the sweep - the player sees the lens close in and out
+[BoomRoom] station=mid-room poses=181 want=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 hidden_clamp=0 party_clamp=0
+[BoomRoom] station=open-floor poses=181 want=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 hidden_clamp=0 party_clamp=0
+[BoomRoom] finished with 2 failure(s)

@@ -129,6 +129,40 @@ const CITY_COURTYARD_MAX_SURFACE_AREA_M2 := 2400.0
 const CITY_COURTYARD_MAX_REGIONS_PER_BLOCK := 4
 const CITY_EMPTY_DENSE_BLOCK_MAX_AREA_M2 := 15000.0
 const CITY_FRONTAGE_GAP_MAX_M := 1.2
+# --- City greenery: the blank ground between the buildings gets real trees ---
+# The city used to carry two kinds of greenery: `_park` blocks (TreeBuilder
+# species) and a two-box proxy for the street-garden strips. The core has no
+# park blocks at all, so in practice every city tree was a proxy cube and the
+# wide paved pavements, courtyards and plaza rims - the city's blank space -
+# stayed bare. These values plant the real species there instead. Density is
+# bounded by the per-chunk geometry budget in debug/chunk_budget_test.gd, not
+# by taste: one CITY-tier tree costs ~175 parts / 5.4k verts, so city planting
+# uses the IMPOSTOR tier (~16 parts / 462 verts), which still carries a tapered
+# trunk, limbs and clustered foliage rather than one cube.
+const CITY_TREE_LATTICE_M := 7.0
+const CITY_TREE_LATTICE_JITTER_M := 1.8
+const CITY_TREE_WALL_CLEARANCE_M := 1.3
+const CITY_TREE_KERB_CLEARANCE_M := 0.6
+const CITY_TREE_DOOR_CLEARANCE_M := 2.6
+const CITY_TREE_MIN_SPACING_M := 5.6
+const CITY_TREE_MAX_PER_CHUNK := 40
+## Box ceiling for the planting pass itself. The dense core chunk already spends
+## ~27000 of the 30000 the chunk budget allows (debug/chunk_budget_test.gd), so
+## the trees buy their coverage out of what is left rather than off the top.
+const CITY_TREE_BOX_BUDGET := 2400
+const CITY_TREE_BED_HALF_M := 1.5
+const CITY_TREE_BED_LIFT_M := 0.03
+const CITY_TREE_SCALE_MIN := 0.8
+const CITY_TREE_SCALE_MAX := 1.1
+const CITY_TREE_ALLEY_CLEARANCE_M := 1.0
+# Garden strips are narrow, so their trees are small and scaled to the strip.
+const CITY_GARDEN_TREE_SCALE_MIN := 0.5
+const CITY_GARDEN_TREE_SCALE_MAX := 0.8
+const CITY_GARDEN_TREE_CLEARANCE_M := 1.0
+# Plaza trees stand in the band between the paved pedestrian interior and the
+# square's edge, clear of the fountain and the market stalls.
+const CITY_PLAZA_TREE_INNER := 0.7
+const CITY_PLAZA_TREE_FOUNTAIN_CLEARANCE_M := 4.5
 const SURFACE_SAMPLE_EPSILON_M := 0.5
 const RIVER_BED_DEPTH_M := 2.5
 const RIVER_BANK_FREEBOARD_M := 0.65
@@ -494,6 +528,11 @@ const CITY_ROOM_VOCAB: Array[StringName] = [&"entry", &"kitchen", &"sleeping", &
 const CITY_INTERIOR_WALL_T := 0.18
 const CITY_INTERIOR_OPEN_W := 0.95
 const CITY_INTERIOR_OPEN_H := 2.05
+## Height of the picture rail above the storey floor. Single authority for the
+## dollhouse cut line: interior plaster above it goes into the wall's cut layer
+## (BuildingBuilder._interior_wall_box) and a door leaf is cut on the same line,
+## so a cut wall and the leaf hung in it always lose the same band.
+const PICTURE_RAIL_H := 1.05
 const CITY_INTERIOR_FURNITURE_VOCAB: Array[StringName] = [&"bed", &"shelf", &"table"]
 const CITY_INTERIOR_MAX_PARTITIONS_PER_BUILDING := 2
 const MAX_CITY_INTERIOR_VERTS_PER_CHUNK := 320

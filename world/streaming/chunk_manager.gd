@@ -1718,19 +1718,42 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	if chunk_node != null:
 		for child in chunk_node.get_children():
 			if child is Node3D and child.has_meta("interior_floor"):
-				child.visible = _door_visible(child, tag, max_floor, faded)
+				_apply_door_reveal(child, tag, max_floor, faded)
 
 
-## A door leaf must never outlive the wall it is hung in. The decision itself
-## lives in MeshBatcher so the gate, the tests and any future probe share one
-## rule. ChunkBuilder stamps exterior leaves with facade side + storey; leaves
-## without a side are interior partitions and keep the storey rule only.
-func _door_visible(door: Node, tag: String, max_floor: int, faded: Array) -> bool:
-	return not MeshBatcher.door_hidden(
+## A door leaf follows its wall. The decision itself lives in MeshBatcher so the
+## gate, the tests and the probes share one rule.
+##
+## ChunkBuilder stamps exterior leaves with facade side + storey, interior leaves
+## with the plan rect of the partition they are hung in. A leaf whose wall the
+## camera is looking through is CUT (band above the picture rail dropped, exactly
+## like that wall) - the older behaviour retired the whole leaf, which punched a
+## hole through the facade and left the doorway standing empty. Only a leaf whose
+## entire storey sits above the cutaway plane is HIDDEN.
+func _apply_door_reveal(door: Node, tag: String, max_floor: int, faded: Array) -> void:
+	var node := door as Node3D
+	if node == null:
+		return
+	var reveal := MeshBatcher.door_reveal(
 			str(door.get_meta("interior_building_id", "")),
 			int(door.get_meta("interior_floor", -1)),
 			str(door.get_meta("door_facade_side", "")),
-			tag, max_floor, faded)
+			str(door.get_meta("door_wall_cut_key", "")),
+			tag, max_floor, faded,
+			_floor_gate_sight_from, _floor_gate_sight_to)
+	var hidden := reveal == MeshBatcher.DoorReveal.HIDDEN
+	# Drive the leaf through its own API where it has one: the node's visible
+	# flag and its view state must never be two separate truths, or a retired
+	# leaf keeps reporting whatever cut it wore last.
+	if node.has_method("set_view_hidden"):
+		node.call("set_view_hidden", hidden)
+	elif node.visible != not hidden:
+		node.visible = not hidden
+	# Apply the verdict even while hidden, so the cut state is a function of the
+	# current reveal: otherwise a storey-above leaf keeps a stale "cut" and
+	# popping back into view reads as a cut that was never cleared.
+	if node.has_method("set_view_cut"):
+		node.call("set_view_cut", reveal == MeshBatcher.DoorReveal.CUT)
 
 
 # --- Voxel destruction -------------------------------------------------------

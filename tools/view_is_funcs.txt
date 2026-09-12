@@ -1,0 +1,4 @@
+1:class_name CityInteriorState
+2:extends RefCounted
+33:static func evaluate(city_plan: CityPlan, world_plan: WorldPlan, p3: Vector3,
+62:static func shell_of(spec: Dictionary) -> Dictionary:

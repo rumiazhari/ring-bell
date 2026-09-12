@@ -14,6 +14,8 @@ IPR's [Prague Public Space Design Manual](https://iprpraha.cz/assets/files/files
 
 Michael Rykl and Ladislav Bartoš, [Too many portals and staircases: houses 506 and 507 at Havel's Market](https://www.staletapraha.cz/incpdfs/pha-201802-0001_10_001.pdf), Staletá Praha 34(2), 2018, pp. 2–49, English annotation and German summary: the documented original plot is 13 m wide. Its passage house was subdivided, gained rear wings and changed stair positions, then was reunited. The study describes longitudinal room sequences, courtyard access, commercial frontage competing with stair space, and distinct basement circulation. This supports persistent plots containing changing wings and circulation. One documented 13 m plot is evidence for a plausible example, not a citywide mean.
 
+[Mázhaus](https://cs.wikipedia.org/wiki/M%C3%A1zhaus) with the National Heritage Institute catalogue's documented disposition of a Prague burgher house (e.g. *V Jirchářích* 12: a front two-tract building with a courtyard wing set perpendicular, the *průjezd* on the central axis, Gothic barrel-vaulted cellars, *pavlače* on the courtyard wing). The mázhaus is the vaulted, unheated front room of the ground floor — the house's communication node, from which the stair to the first floor and the cellar, and the passage to the courtyard, are reached. This is the disposition `HistoricInteriorPlan` implements.
+
 The requested 6–15 m frontage, 25–45 m depth, 3–6 typical storeys, 4–12 m courtyard span and street-width proportions are **Ring Bell design targets supplied by the user**, not statistics measured from these publications. Tests distinguish these calibration targets from geometric invariants. The city remains fictional; no source map is copied.
 
 ## The grammar
@@ -36,9 +38,15 @@ materialization`, implemented as:
 - `CityPlan._historic_buildings_for_block` — plots → wing specs (`plot_id`, `compound_id`,
   `owner_chunk`, `wing_role`, `frontage_role`, `historical_layer`, `floor_uses`,
   `circulation`) with 3–6 storey street wings and one-storey-lower annexes.
-- `HistoricInteriorPlan` — stair hall + three longitudinal zones (≥6.6 m wide wings), or a
-  shaft column with flanking rooms for narrower wings; `GROUND_PROGRAMS` gives each use real
-  room kinds.
+- `HistoricInteriorPlan` — the Prague depth plan. Plans in a canonical frame (street facade
+  on -y, stair column on the west), so all four entrance orientations get the same
+  disposition: an entry passage (the *síň*) from the street to the stair, the stair column
+  wrapped by a landing that reaches the courtyard wall, a street band of bays cut *across*
+  the frontage, a courtyard band of bays cut across the back, and a windowless middle that
+  is only ever circulation or a store (the *komora*). `DEPTH_GROUND`/`DEPTH_UPPER` give each
+  use real room kinds, ordered by depth: the public front room (the *mázhaus* of a shop or
+  tavern, the *přední pokoj* of a flat) carries the street door, and the working room (the
+  tavern or shop kitchen, the store) sits at the courtyard end.
 - `RoofPlan` — gable/hip/mansard faces per wing, ridge axis by wing role, chimney, dormer,
   attic metadata; materialized only through `MeshBatcher.add_visual_face`.
 
@@ -55,10 +63,13 @@ materialization`, implemented as:
   `historic_plot_width`, `historic_plot_depth`, `historic_compound_form`, `historic_court`,
   `historic_roof`, `historic_ground_use`, `historic_annex_use`, `historic_upper_use`,
   `historic_height_neighborhood`, `historic_height_variation`.
-- `WorldSeed.GENERATOR_VERSION` is **4** (was 2): the historic street topology, persistent
-  plots and compound ownership all change generated worlds, so a ≤3 world must not be
-  silently regenerated as this one. `SaveManager` stores `generator_version` in save
-  metadata and reports a mismatch instead of reinterpreting an old save.
+- `WorldSeed.GENERATOR_VERSION` is **5** (was 4, and 2 before that): the historic street
+  topology, persistent plots and compound ownership changed worlds at 4; **5** lifts it again
+  because the Prague *interiors* were rebuilt to the depth plan (mázhaus/hall spine, kitchens
+  against the flue, privet on every floor) and interior dressing was moved onto the walls
+  it hangs on. A ≤4 world must not be silently regenerated as this one. `SaveManager`
+  stores `generator_version` in save metadata and reports a mismatch instead of
+  reinterpreting an old save.
 
 ## Measured distributions
 
@@ -102,19 +113,44 @@ Reproduce with:
 python tools/run_suite.py --praguegameplaytest 2300     # 3 real seeds, ~8 min
 ```
 
-Interiors — a normal floor is a small number of real rooms, not a door maze:
+Interiors — a Prague house is a depth plan, not a door maze. The street front carries the
+*mázhaus*: the unheated vaulted front room that is the house's communication node, holding
+the stair, the cellar entry and the passage through to the courtyard. Chambers sit behind it
+and the kitchen sits at the courtyard end, by the flue. Both flanking walls are party walls,
+so light reaches a room only from the two ends of the plot. Two rules follow, and
+`debug/prague_interior_logic_test.gd` (an independent audit that rebuilds openness by
+probing the neighbouring lots, never the generator's own predicate) measures both.
 
-- substantial rooms per front-wing floor: p10/50/90 = 2–3/4/8 (large corner plates only
-  reach 8); service spaces (toilet, stores) are separate and never counted.
-- occupied room area p10/50/90 = 15.5 / 19.8 / 27.2 m² against the 12–22 m² normal band;
-  principal-room median 24.7 m² inside the 22–40 m² principal band.
-- rooms under 8 m²: 0.5%; rooms with more than two connections: **0**; interiors failing
-  the geometry/connectivity contract: **0**.
-- entry hall is a real 1.5–2.0 m passage beside the stairwell column (median 2.00 m);
-  partition openings are clamped to 1.3–1.6 m; a floor is cut by repeated halving, so a
-  90 m² flank becomes four ~22 m² rooms and no partition may leave a piece below 12 m².
-- 92–93% of normal floors contain an ≥18 m² room with at most two doors (a manoeuvre
-  room), and the door graph is a tree: bedrooms are never mandatory through-routes.
+```
+python tools/run_suite.py --interiorlogictest 2400     # 3 seeds, ~2 min
+```
+
+- every habitable room reaches a facade: **97 of 19,600 rooms** (1,745 m²) fail, all of them
+  in clipped "step" infill wings whose courtyard face is the neighbour's wall. Before this
+  pass it was 9,419 rooms / 195,065 m²; the old plan halved zones across the light and left
+  half the rooms of a deep plate with no window at all.
+- the street door opens into the public front room (the mázhaus) or the entry passage: **0**
+  openings into a chamber or store, **0** doors that land in no room (was 73). 98.9% of
+  street wings open into a public front room ≥12 m²; across all four wing roles, 89.1%.
+- **0** bedrooms are mandatory through-routes (a chamber is never crossed to reach another
+  chamber). Stores and privies behind a room are the historical norm and are counted
+  separately: they stay under the reported ceiling rather than being hidden.
+- the kitchens sit behind the parlour: 77.3% in the rear half of the plot, and none on the
+  street front. The remainder are deep narrow plots where the courtyard face is the
+  neighbour's wall, so the back bay is a windowless store (the *zadní komora*) and the
+  kitchen takes the second bay of the street band, the only window it can have.
+- the stair column is free floor inside circulation on **every** floor (3,791/3,791), and
+  every floor has its privet: 4,053 of 4,123 floors, 98.0% of them standing off the
+  circulation or an outside wall.
+- a floor is a small number of real rooms: substantial rooms per front-wing floor
+  p10/50/90 = 1/3/4; occupied room area p10/50/90 = 12.5 / 18.4 / 25.0 m²; principal-room
+  median **25.0 m²** inside the 22–40 m² band; rooms under 8 m² 1.1%; rooms with more than
+  two connections **0**.
+- the first bay of a floor is the big one (the *přední pokoj*), so 85.7% of normal floors
+  hold an ≥18 m² manoeuvre room with at most two doors — **still short of the 90% bar**;
+  the shortfall is small plates where the stair leaves under ~4.5 m of street depth.
+- interiors failing the geometry/connectivity contract: **22** (from 490 mid-pass; the
+  remaining cases are plate layouts where no privet host exists). Not yet zero.
 
 Street wall and density:
 
@@ -184,10 +220,73 @@ Measured over three seeds (19041207 / 19041208 / 19041209):
   figure is reported beside it and is not met).
 - blank runs longer than 15 m fell from 127–148 to **54 / 50 / 50**; bare frontage
   fell from 4.9–5.7 km to **2.22 / 1.97 / 2.06 km** (11.9–13.3% of the frontage).
-- the interior contract stays clean: `invalid_interiors 0` on all three seeds,
-  tiny rooms 0.6–0.7%, 90–92% of floors hold a manoeuvre room.
+- the interior contract is **not clean** since the depth-plan rewrite (below):
+  `invalid_interiors` 23 / 36 / 21 and 86.1–86.8% of floors hold a manoeuvre room
+  (3,180/3,682, 3,265/3,761, 3,255/3,779), against `invalid_interiors 0` and
+  90–92% before it. The rewrite bought the mázhaus depth plan and cut blind rooms
+  from 9,419 to 97; it cost some contract headroom on the smallest plates, and
+  both numbers are reported rather than traded in silence.
 - cafés and restaurants: 185–193 street wings carry the `tavern` ground-floor use
   (taproom/kitchen interiors) plus 4–10 of them laid by the wedge fill itself.
+
+## Interior plans and interior dressing
+
+`--interiorlogictest` (`debug/prague_interior_logic_test.gd`) audits the floor
+plans against the historical rules, and `--propslogictest`
+(`debug/prague_props_test.gd`) audits what the generator hangs on the house:
+props, doors and window dressings. Neither reuses the generator's own placement
+predicate — the props audit rebuilds each building's mesh, puts every emitted box
+back into footprint-local coordinates, and asks whether it stands in its own
+room, collides with another prop, a door aperture, a partition or the stair
+column, whether a wall-hung prop touches a wall, and whether every box is
+*attached* to something (a floor, a wall, the roof or another box).
+
+What the props audit found, and what changed:
+
+- the broken-pane plate was emitted at `WALL_T + 0.55` from the facade — a 3 cm
+  panel hanging 0.55 m out into the room with nothing under it. It now sits in
+  the wall cavity just behind the glass plane.
+- wall-hung dressing (wall clock, framed print, gauge) was placed on room corner
+  and lattice candidates, which sit 0.22 m inside the room: a clock hanging
+  0.17 m off the plaster. `InteriorPlan._hang_on_wall()` now snaps it onto the
+  nearest wall, 0.11 m clear of the partition board.
+- prop sub-boxes that floated free of their own prop: the fern crown sat 0.055 m
+  above its fronds, cabinet/table/ceramic top slabs sat a scaled gap above their
+  carcasses, the third drawer pull and the workbench vice hung off the top, and
+  the gauge's pipe riser began 0.6 m above the floor — a gauge floating in
+  mid-room. All now meet their own geometry.
+- the staircase is exempted as an assembly: its treads and handrail are separate
+  boxes that do not overlap by design.
+- the legacy shutter / flowerbox / lintel families never fire in the Prague core:
+  every one of the 1,274 buildings carries a `facade_plan`, and the planned path
+  emits its lintel-and-sill bands aligned to `city_window_openings()` instead.
+  A zero there is not a pass, so the audit samples the rest of the historic
+  radius as well and reports the scope it measured.
+
+Measured on seed 19041207 (1,274 buildings, 4,123 floors, 33,699 props, 27,207
+doors, 1,632,222 boxes): `out_of_room 0`, `overlap 0`, `in_wall 0`, `on_door 0`,
+`on_stair 0`, `wall_hung_floating 0`, `over_ceiling 0`; doors `to_nowhere 0`,
+`sweep_solid 0`, `sweep_furniture 0`, `no_partition 0`, `outside 0`,
+`wrong_rooms 5` (0.018%). Attachment: **118 boxes of 1,632,222** (0.007%) are not
+connected to the shell — 62 of them 0.2 × 0.2 × 0.04 m and 47 of them
+0.4 × 0.1 × 0.4 m, plus nine shop signs and plaster patches hanging on brackets
+the generator does not model. No prop, door, stair, pane or sill band is among
+them. Attachment is tested against wall boards and slabs within 0.45 m, because a
+sill or lintel band sits inside an aperture that has no wall box of its own.
+
+Floor-plan rules added with the interior pass:
+
+- a landing that has swallowed the floor (a 21 m² approach beside a 9 m² parlour)
+  keeps the approach to the stair and hands the surplus back as a room — but only
+  where that landing already reaches the courtyard wall, since the surplus has to
+  have a window.
+- a floor that came out as nothing but stores and landings promotes its largest
+  *facade-reaching* store to the room the floor is for. The windowless middle
+  store is never promoted: that is how blind rooms would be manufactured.
+- a floor too small to hold two real rooms keeps its band whole instead of
+  splitting it into two rooms that are both under the manoeuvre floor.
+- a floor with no privet anywhere else takes one off the landing by the stair
+  (the prevét of the house that had no yard to sit over).
 
 ## Known limitations (not hidden — the harness asserts what holds and reports the rest)
 
@@ -204,6 +303,14 @@ Measured over three seeds (19041207 / 19041208 / 19041209):
 - Façade grammar (openings from room boundaries and ground-floor use, item 13) is
   implemented: `HistoricFacadePlan.for_wing()` publishes a per-floor, per-side opening
   list on every historic wing and `city_window_openings()` returns it unchanged.
+- The manoeuvre-room bar — 90% of floors holding an 18 m² room — is at 86.1–86.8%
+  in the gameplay harness and 82.2% in the stricter interior audit. The shortfall
+  splits cleanly: **135 floors** belong to outbuildings whose entire interior is
+  smaller than the room being asked for (3.0 × 4.5 m side wings, 13–14 m²), and
+  **~590 floors** sit on plates big enough to hold it, where the stair column, the
+  privet and the landing leave no band 18 m² deep. Closing the first needs the
+  infill layer to stop emitting 13 m² houses as buildings; closing the second
+  needs the stair position to stop crowding the street band.
 - Street-frontage continuity is 0.663–0.695 against the 0.85 bar. The gap is structural, not
   a metric artefact: ~300 street-wall gaps remain per city and most of them resist every
   filler. A candidate house must place its *rotated* footprint inside the irregular block

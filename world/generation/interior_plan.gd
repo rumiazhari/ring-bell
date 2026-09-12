@@ -432,6 +432,11 @@ static func _door_for_partition(bid: String, fi: int, idx: int, opening: Rect2, 
 		"interior": true,
 		"room_a": a_id,
 		"room_b": b_id,
+		# The partition this leaf is hung in, in the unrotated plan frame the
+		# partition itself carries. ChunkBuilder turns it into the leaf's
+		# "door_wall_cut_key" so the dollhouse gate can cut the leaf by exactly
+		# the test it cuts that wall by (MeshBatcher.door_reveal).
+		"wall_rect": wall_rect,
 	}
 
 ## Props that hang on a wall rather than stand on the floor. Corner and lattice

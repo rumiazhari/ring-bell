@@ -1,0 +1,27 @@
+22:##   in_shell               whether that hit is inside the building the player
+56:const SHELL_MAX_SKIP := 4           # in-shell faces the rig walks past
+232:	_record("[IntFlutter] probe=%d kind=%s id=%s floors=%d frames=%d inside=%.2f boom_min=%.2f boom_max=%.2f range=%.2f lurks=%d lurk_hidden=%d reversals=%d closed_clear=%d hidden_clamp=%d hidden_flat=%d over_clamp=%d vis_clamp=%d lens_visible=%d" % [
+237:			int(m["hidden_clamp"]), int(m["hidden_flat"]), int(m["over_clamp"]),
+242:	if int(m["hidden_clamp"]) > 0:
+245:			index, int(m["hidden_clamp"]), int(m["hidden_flat"])])
+246:	if int(m["over_clamp"]) > 0:
+249:			index, int(m["over_clamp"])])
+328:##   hidden_clamp  nothing the player can see is in the way, yet the boom is
+332:##   over_clamp    a visible face is in the way, but the boom is shorter than that
+341:	var hidden_clamp := 0
+343:	var over_clamp := 0
+366:				hidden_clamp += 1
+373:				over_clamp += 1
+377:			"hidden_clamp": hidden_clamp, "hidden_flat": hidden_flat,
+378:			"over_clamp": over_clamp, "visible_clamp": visible_clamp,
+434:	var out := {"raw_hit": false, "raw_normal_y": 0.0, "raw_in_shell": false,
+436:	for _i in range(SHELL_MAX_SKIP + 2):
+445:		var in_shell := _in_shell(pos, shell, (hit["normal"] as Vector3).y)
+449:			out["raw_in_shell"] = in_shell
+450:		if not in_shell:
+462:## (in-shell). Mirrors follow_camera.gd's `_hit_in_shell`.
+463:func _in_shell(p: Vector3, shell: Dictionary, normal_y: float) -> bool:
+494:			raw = "d=%.2f n_y=%.2f in_shell=%s" % [faces[0]["d"], faces[0]["n_y"],
+495:					str(faces[0]["in_shell"])]
+498:			if not bool(face["in_shell"]):
+528:				"in_shell": _in_shell(pos, shell, (hit["normal"] as Vector3).y)})

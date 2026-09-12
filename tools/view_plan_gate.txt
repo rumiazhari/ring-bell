@@ -1,0 +1,20 @@
+10:the files to change, and the evidence each must produce. Section 9 is the exact
+47:  -> chunk_manager.apply_floor_gate(coord, tag, max_floor, faded)
+52:- `world/streaming/chunk_manager.gd:1646` `apply_floor_gate(coord, tag, max_floor, faded)`
+81:- `main.gd` gate call: `chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded)`
+86:  the gate semantics (roof is exterior for visibility purposes), not in a
+98:  (`< DOOR_W * 0.5 + PIL_W * 0.5 + 0.18`) — evidence that facade dressing can
+126:the building-contract gate `--buildingcontracttest` (currently **302 failures**:
+140:| Camera cutaway (Zomboid/Sims dollhouse) | `main.gd:_update_city_interior`, `InteriorProbe.faded_facades`, `chunk_manager.apply_floor_gate`, `MeshBatcher.reveal_*` |
+142:| Roof must not vanish at `floor_i == floors` | `apply_floor_gate(..., max_floor = floor_i)` semantics + `asset_roof` |
+182:**Evidence:** new gate `--entrancetest` (or an extension of `--doortest`) that,
+221:**Evidence:** extend `--g10p2b-revealtest` (or add `--cutawaytest`) to report, per
+227:- Make the roof **exterior** for visibility purposes: the gate must never hide
+231:- Keep `apply_floor_gate`'s record-and-replay contract (non-resident chunks).
+238:**Evidence:** gate `--rooftest`: ground → every storey → roof, then down again,
+256:**Evidence:** `--lighttest` sampling N interior points across ≥3 seeds and
+267:4. Baseline the existing gates and record the numbers: `--citytest`,
+272:6. After each change: import pre-flight, relevant gate, and **windowed manual
+276:   status line; add the new gates to `docs/world/BUILDING-CONTRACT.md`'s or a
+277:   sibling doc's gate list.
+317:They are binding for THIS task and must not be re-litigated:

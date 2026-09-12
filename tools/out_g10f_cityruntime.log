@@ -1,0 +1,59 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 811 ms nodes 53 edges 57 (cross 5 filter 0)
+[CityRuntime] PASS  chunk manager exists
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+WARNING: AnimationNodeStateMachinePlayback: parameters/playback has detected one or more looped transitions in a single frame and aborted to prevent an infinite loop. You may need to check the transition settings.
+   at: _transition_to_next_recursive (scene/animation/animation_node_state_machine.cpp:945)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityRuntime] PASS  3x3 ACTIVE ring present
+[CityRuntime] PASS  player spawned
+[CityRuntime] PASS  exterior wall blocks physics ray
+[CityRuntime] PASS  city zombies spawned
+[CityRuntime] PASS  city spawner tracks population
+[CityRuntime] PASS  door entities exist
+[CityRuntime][DBG] door=b_106_-107_N17_door_0 pos=(12.32501, 0.0, -23.13964) yaw=0.0 leaf=Leaf:<RigidBody3D#492176417406> hit_empty=false collider=Leaf:<RigidBody3D#492176417406> pos_hit=(12.32501, 1.1, -23.18464)
+[CityRuntime] PASS  closed leaf blocks doorway ray
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityRuntime] PASS  door opens via API
+[CityRuntime] PASS  open leaf reaches swing angle range
+[CityRuntime] PASS  open doorway physically passable (no RID exclusion)
+[CityRuntime] PASS  open leaf still collidable at swung position
+[CityRuntime] PASS  door closes via API
+[CityRuntime] PASS  far ring activates after teleport
+[CityRuntime] PASS  origin chunks unload when far away
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityRuntime] PASS  returning reactivates origin chunk
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityRuntime] WATCHDOG TIMEOUT - aborting

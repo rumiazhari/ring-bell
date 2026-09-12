@@ -1,0 +1,6 @@
+=== --import exit=0 elapsed=3s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_import.txt ===
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[Import] boot OK - all scripts parsed, world build skipped

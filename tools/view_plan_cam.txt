@@ -1,0 +1,30 @@
+1:# Ring Bell — Procedural urban buildings / interior / camera: continuation plan
+46:  -> InteriorProbe.faded_facades(player_xz, camera_xz_rotated_into_building_space)
+57:  `new_faded = InteriorProbe.faded_facades(p, local_camera) if floor_i < n else []`
+58:  — **the facade fade is camera-sector driven already** (the camera position is
+59:  rotated into the building's local space, so rotating the camera swaps which wall
+111:### 2.5 Camera presentation
+113:`camera/follow_camera.gd`: `PITCH_DEG -52`, `INTERIOR_PITCH_DEG -66`,
+117:`_interior` flag driven by `camera_rig.set_interior(any_inside)` from
+140:| Camera cutaway (Zomboid/Sims dollhouse) | `main.gd:_update_city_interior`, `InteriorProbe.faded_facades`, `chunk_manager.apply_floor_gate`, `MeshBatcher.reveal_*` |
+144:| Smooth follow-camera interior pitch/zoom, no popping | `follow_camera.gd` `_interior` blend, currently signalled by the retiring function |
+188:## 6. Workstream B — cutaway camera
+191:geometry between the camera and the player's current room is visually cut/faded;
+192:opposite and non-obstructing walls stay. Camera rotation updates the cut. Upper
+198:1. **Render layer + camera cull mask** — put cutaway-able geometry on a dedicated
+199:   layer and clear that bit in the *gameplay camera's* `cull_mask` while the
+201:   separate settings in Godot, so this hides geometry from our camera without
+202:   removing it from the light's shadow pass. Preferred because it is a camera
+205:   invisible to every camera, still occludes sunlight. Use when a mesh must stop
+207:3. Fade via material alpha for the camera-facing facade only (the brief allows
+208:   "cut/fade"), applied to the wall(s) in the camera's sector — `faded_facades`
+217:that sweeps the camera 360° around a player standing just inside a room and
+222:sample: camera sector, cut set, whether the opposite wall stayed drawn, whether
+235:  to the InteriorProbe-driven path (so the follow camera's interior pitch/zoom
+246:- Camera cutaway is **visual only**. A visually-cut roof/ceiling must still block
+288:- **D3 — fade vs hard cut** for the camera-facing facade (brief allows both;
+329:3. **Camera cutaway = HARD CUT** for geometry that actually obstructs the camera
+330:   view, Zomboid/Sims style. Do not hide all walls: only the camera-side obstructing
+331:   wall/ceiling pieces are camera-hidden; other walls stay. Camera rotation
+333:   Hidden-from-camera structure MUST retain collision and shadows — so no
+336:   storey's ceiling/roof may be hidden from the GAMEPLAY CAMERA only, while still

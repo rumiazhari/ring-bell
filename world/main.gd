@@ -112,6 +112,12 @@ func _ready() -> void:
 	if args.has("--q3revealcapture"):
 		add_child(load("res://debug/q3_reveal_capture.gd").new())
 		return
+	if args.has("--q3doorgate"):
+		add_child(load("res://debug/q3_door_gate_unit.gd").new())
+		return
+	if args.has("--q3doorcut"):
+		add_child(load("res://debug/q3_door_cut_test.gd").new())
+		return
 	if args.has("--q3doorwidthaudit"):
 		add_child(load("res://debug/q3_door_width_audit.gd").new())
 		return
@@ -133,6 +139,9 @@ func _ready() -> void:
 	if args.has("--q3intecamflutter"):
 		add_child(load("res://debug/q3_camera_interior_flutter.gd").new())
 		return
+	if args.has("--q3boomroom"):
+		add_child(load("res://debug/q3_camera_boom_room.gd").new())
+		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())
 	if args.has("--treecapture"):
@@ -147,8 +156,23 @@ func _ready() -> void:
 	if args.has("--chunkplanprobe"):
 		add_child(load("res://debug/chunk_plan_probe.gd").new())
 		return
+	if args.has("--treecost"):
+		add_child(load("res://debug/tree_cost_probe.gd").new())
+		return
+	if args.has("--streetshow"):
+		add_child(load("res://debug/street_tree_show.gd").new())
+		return
+	if args.has("--citytreeshot"):
+		add_child(load("res://debug/city_tree_shot.gd").new())
+		return
+	if args.has("--cityplanttime"):
+		add_child(load("res://debug/city_plant_timing.gd").new())
+		return
 	if args.has("--citygreenprobe"):
 		add_child(load("res://debug/city_green_probe.gd").new())
+		return
+	if args.has("--citygreencensus"):
+		add_child(load("res://debug/city_green_census.gd").new())
 		return
 	if args.has("--citygreencapture"):
 		add_child(load("res://debug/city_green_capture.gd").new())

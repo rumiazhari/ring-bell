@@ -1,0 +1,3 @@
+world/main.gd:877:	var state := CityInteriorState.evaluate(city_plan, chunk_manager.world_plan,
+world/main.gd:956:			var shell := CityInteriorState.shell_of(spec)
+camera/follow_camera.gd:67:## world (CityInteriorState.shell_of) while interior mode is active: the

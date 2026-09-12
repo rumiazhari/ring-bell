@@ -199,6 +199,18 @@ func _render_vantage(out: String, plan: CityPlan, core: Vector2i) -> void:
 		print("[CapProbe] FAILED to save vantage.png")
 	else:
 		print("[CapProbe] vantage=%s/vantage.png" % out)
+	# Second, fixed street-level shot: the vantage the report came from ("top
+	# right", eye height, looking along the block). Same camera in both runs.
+	_camera.global_position = focus + Vector3(-30.0, 1.7, -44.0)
+	_camera.look_at(focus + Vector3(0.0, 4.0, 0.0), Vector3.UP)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var simg := get_viewport().get_texture().get_image()
+	if simg.save_png("%s/street.png" % out) != OK:
+		failures += 1
+		print("[CapProbe] FAILED to save street.png")
+	else:
+		print("[CapProbe] street=%s/street.png" % out)
 
 
 func _setup_light() -> void:

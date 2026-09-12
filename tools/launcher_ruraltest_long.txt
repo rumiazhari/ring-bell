@@ -1,0 +1,97 @@
+=== --ruraltest exit=3221225477 elapsed=760s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_ruraltest.txt ===
+[RuralTest] PASS: chunk (0, 1) beds <=2 cap
+[RuralTest] PASS: chunk (-1, -1) wells <=2
+[RuralTest] PASS: chunk (-1, -1) forage <=4
+[RuralTest] PASS: chunk (-1, -1) hearth <=4 cap
+[RuralTest] PASS: chunk (-1, -1) stoves <=2 cap
+[RuralTest] PASS: chunk (-1, -1) beds <=2 cap
+[RuralTest] PASS: chunk (8, 0) wells <=2
+[RuralTest] PASS: chunk (8, 0) forage <=4
+[RuralTest] PASS: chunk (8, 0) hearth <=4 cap
+[RuralTest] PASS: chunk (8, 0) stoves <=2 cap
+[RuralTest] PASS: chunk (8, 0) beds <=2 cap
+[RuralTest] PASS: chunk (-2, 3) wells <=2
+[RuralTest] PASS: chunk (-2, 3) forage <=4
+[RuralTest] PASS: chunk (-2, 3) hearth <=4 cap
+[RuralTest] PASS: chunk (-2, 3) stoves <=2 cap
+[RuralTest] PASS: chunk (-2, 3) beds <=2 cap
+[RuralTest] PASS: chunk (10, 5) wells <=2
+[RuralTest] PASS: chunk (10, 5) forage <=4
+[RuralTest] PASS: chunk (10, 5) hearth <=4 cap
+[RuralTest] PASS: chunk (10, 5) stoves <=2 cap
+[RuralTest] PASS: chunk (10, 5) beds <=2 cap
+[RuralTest] PASS: chunk (16, 84) wells <=2
+[RuralTest] PASS: chunk (16, 84) forage <=4
+[RuralTest] PASS: chunk (16, 84) hearth <=4 cap
+[RuralTest] PASS: chunk (16, 84) stoves <=2 cap
+[RuralTest] PASS: chunk (16, 84) beds <=2 cap
+[RuralTest] PASS: has wells non-empty
+[RuralTest] PASS: forage ItemDB vocab rural_forage_settlement_-1_2_1_0
+[RuralTest] PASS: has forage non-empty
+[RuralTest] PASS: well prompt Draw water
+[RuralTest] PASS: well prompt dry
+[RuralTest] PASS: forage prompt Forage
+[RuralTest] PASS: forage prompt picked
+[RuralTest] PASS: hearth shuffled identical count
+[RuralTest] PASS: hearth shuffled identical pos/kind
+[RuralTest] PASS: hearth stove/bed 0-1 per building reusing furniture anchor
+[RuralTest] PASS: forage kind distinct 45/30/25 not duplicate bush fallback has all 3 kinds
+[RuralTest] PASS: forage kind bush 30-60% (45 target)
+[RuralTest] PASS: forage kind mushroom 15-45% (30 target)
+[RuralTest] PASS: stove prompt Cook meal
+[RuralTest] PASS: stove monitorable true active
+[RuralTest] PASS: bed prompt Sleep until dawn
+[RuralTest] PASS: bed monitorable true active
+[RuralTest] PASS: well depleted before advance
+[RuralTest] PASS: well refills after GameClock.advance to 04:00
+[RuralTest] PASS: forage depleted before advance
+[RuralTest] PASS: forage regrows after 2 days GameClock.advance
+[RuralTest] PASS: stove Cook meal consumes canned_food
+[RuralTest] PASS: stove reduces hunger -40
+[RuralTest] PASS: bed Sleep advances GameClock 480
+[RuralTest] PASS: bed reduces fatigue -40
+[RuralTest] PASS: -Z well no duplication
+[RuralTest] PASS: -Z forage no duplication
+[RuralTest] PASS: -Z hearth no duplication
+[RuralTest] PASS: hearth center ownership -Z no duplication
+[RuralTest] PASS: hearth pos inside owner chunk 0,0
+[RuralTest] PASS: ItemDB wheat_grain hunger 12
+[RuralTest] PASS: ItemDB barley_grain hunger 10
+[RuralTest] PASS: ItemDB flour hunger 14
+[RuralTest] PASS: ItemDB bread hunger 42
+[RuralTest] PASS: ItemDB cider thirst 38
+[RuralTest] PASS: CropPatch distinct wheat->wheat_grain not canned
+[RuralTest] PASS: CropPatch distinct barley->barley_grain
+[RuralTest] PASS: workbench per village 1 with barn
+[RuralTest] PASS: workbench hamlet 0-1 farmstead 0
+[RuralTest] PASS: workbench shuffled identical count
+[RuralTest] PASS: workbench shuffled identical pos/aabb/building
+[RuralTest] PASS: workbench footprint 1.2x0.6 and spacing >=8
+[RuralTest] PASS: workbench geographic gates urban/water/cliff/distance
+[RuralTest] PASS: workbench per chunk <=2
+[RuralTest] PASS: workbench monitorable true active
+[RuralTest] PASS: workbench prompt Bake when flour
+[RuralTest] PASS: workbench prompt Press cider when apple
+[RuralTest] PASS: workbench prompt Mill flour when wheat_grain
+[RuralTest] PASS: workbench prompt needs when lacking
+[RuralTest] PASS: workbench Mill flour consumes wheat_grain gives flour
+[RuralTest] PASS: workbench Bake bread flour->bread
+[RuralTest] PASS: workbench Press cider apple->cider
+[RuralTest] PASS: -Z workbench no duplication
+[RuralTest] finished with 0 failure(s)
+--- tail ---
+[RuralTest] PASS: workbench footprint 1.2x0.6 and spacing >=8
+[RuralTest] PASS: workbench geographic gates urban/water/cliff/distance
+[RuralTest] PASS: workbench per chunk <=2
+[RuralTest] PASS: workbench monitorable true active
+[RuralTest] PASS: workbench prompt Bake when flour
+[RuralTest] PASS: workbench prompt Press cider when apple
+[RuralTest] PASS: workbench prompt Mill flour when wheat_grain
+[RuralTest] PASS: workbench prompt needs when lacking
+[RuralTest] PASS: workbench Mill flour consumes wheat_grain gives flour
+[RuralTest] PASS: workbench Bake bread flour->bread
+[RuralTest] PASS: workbench Press cider apple->cider
+[RuralTest] PASS: -Z workbench no duplication
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[RuralTest] finished with 0 failure(s)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb

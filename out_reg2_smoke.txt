@@ -1,0 +1,115 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 830 ms nodes 53 edges 57 (cross 6 filter 0)
+WARNING: AnimationNodeStateMachinePlayback: parameters/playback has detected one or more looped transitions in a single frame and aborted to prevent an infinite loop. You may need to check the transition settings.
+   at: _transition_to_next_recursive (scene/animation/animation_node_state_machine.cpp:945)
+[SmokeTest] PASS  7 survivors spawned
+[SmokeTest] PASS  16 zombies spawned
+[SmokeTest] PASS  an active camera exists
+[SmokeTest] PASS  camera is elevated above ground
+[SmokeTest] PASS  camera looks downward
+[SmokeTest] PASS  kenji exists
+[SmokeTest] PASS  hungry NPC ate from inventory
+[SmokeTest] PASS  2 food crates exist
+[SmokeTest] PASS  crate gave item to NPC
+[SmokeTest] PASS  melee swing damaged zombie
+[SmokeTest] PASS  zombie death removed it from registry
+[SmokeTest] PASS  prior meeting advances objective
+[SmokeTest] PASS  hana exists before death
+[SmokeTest] PASS  quest failed by simulated death
+[SmokeTest] PASS  world recorded hana's death
+[SmokeTest] PASS  kenji dialogue shows grief after death
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:129)
+       [1] _wait (res://debug/smoke_test.gd:688)
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:133)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  ledge grab triggered during fall
+[SmokeTest] PASS  survivor mounted ledge top
+[SmokeTest] PASS  no fall damage from arrested fall
+[SmokeTest] PASS  plain crate ledge not flagged as rooftop
+[SmokeTest] PASS  plain crate not flagged as awning
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:179)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  tall wall does not trigger ledge grab
+[SmokeTest] PASS  survivor landed on ground (not wall)
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:204)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  cornice grab triggered during fall
+[SmokeTest] PASS  cornice grab flagged as rooftop mantle
+[SmokeTest] PASS  survivor mounted cornice top
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:239)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  radial seek grabs wall behind survivor
+[SmokeTest] PASS  radial grab mounted top
+[SmokeTest] PASS  grab charged a lip-scaled stamina cost
+[SmokeTest] PASS  lip-height stamina scaling rises with reach
+[SmokeTest] PASS  exhausted survivor cannot grab
+[SmokeTest] PASS  exhausted survivor landed on ground
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:325)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  awning grab triggered during fall
+[SmokeTest] PASS  awning grab classified as awning
+[SmokeTest] PASS  awning grab not counted as rooftop mantle
+[SmokeTest] PASS  survivor mounted awning deck
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:371)
+       [1] _wait (res://debug/smoke_test.gd:688)
+ERROR: Condition "!is_inside_tree()" is true. Returning: Transform3D()
+   at: get_global_transform (scene/3d/node_3d.cpp:649)
+   GDScript backtrace (most recent call first):
+       [0] _run_all (res://debug/smoke_test.gd:407)
+       [1] _wait (res://debug/smoke_test.gd:688)
+[SmokeTest] PASS  awning->balcony chain: balcony grab triggered during fall
+[SmokeTest] PASS  chain grab not classified as awning
+[SmokeTest] PASS  chain grab not counted as rooftop mantle
+[SmokeTest] PASS  survivor mounted balcony deck
+[SmokeTest] PASS  chain height delta within grab window (awning->balcony)
+[SmokeTest] PASS  grab signal flashes the stamina bar
+[SmokeTest] PASS  grab signal raises rooftop HUD notice
+[SmokeTest] PASS  stamina bar modulate is non-white while flash active
+[SmokeTest] PASS  HUD grab counter renders counts
+[SmokeTest] PASS  HUD grab counter tracks parkour stats
+[SmokeTest] PASS  residential room contains a bed
+[SmokeTest] PASS  residential bed hugs a wall
+[SmokeTest] PASS  retail shop has a counter
+[SmokeTest] PASS  retail shop has no beds
+[SmokeTest] PASS  far chase arcs off the direct line
+[SmokeTest] PASS  far arc still closes on survivor
+[SmokeTest] PASS  near chase commits straight to target
+[SmokeTest] PASS  flank_sign_for deterministic per id
+[SmokeTest] PASS  mixed city ids split around survivor (both sides)
+[SmokeTest] PASS  id-seeded zombie agrees with static helper
+[SaveManager] game saved -> user://saves/save_01.json (day 1, 15:44)
+[SmokeTest] PASS  save written
+[SaveManager] game loaded <- user://saves/save_01.json
+[SmokeTest] PASS  load applied
+[SmokeTest] PASS  dead NPC did NOT respawn
+[SmokeTest] PASS  living NPC respawned
+[SmokeTest] PASS  player respawned
+[SmokeTest] PASS  clock restored across load
+[SmokeTest] finished with 0 failure(s)
+WARNING: 15 ObjectDB instances were leaked at exit (run with `--verbose` for details).
+   at: cleanup (core/object/object.cpp:2536)
+ERROR: 7 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:822)

@@ -1,0 +1,97 @@
+=== --biometest exit=1 elapsed=1526s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_biometest.txt ===
+[BiomeTest] PASS: orchard parcel footprint and geographic gates
+[BiomeTest] PASS: FruitPatch is_grown planted+3 and depleted regrow 3d via GameClock.advance
+[BiomeTest] PASS: orchard parcel contiguity >=6 across 5-seed orchard belt
+[BiomeTest] PASS: orchard parcel center ownership no duplication + and - and -Z
+[BiomeTest] PASS: hedgerow true-mesh 2.0x0.45-0.75x0.4 not stretched
+[BiomeTest] PASS: orchard budgets per chunk: field <=4 orchard <=3 fruit <=3 hedgerow 8/6 canopy <=12 total <=96 verts 81/96
+[BiomeTest] PASS: GENERATOR_VERSION stays 2
+[BiomeTest] PASS: WorldPlan pure
+[BiomeTest] PASS: spawn urban_basin dry
+[BiomeTest] PASS: CityPlan IDs stable
+[BiomeTest] PASS: TerrainPlan 17x17 289/512
+[BiomeTest] PASS: hydrology CX 530-710
+[BiomeTest] PASS: hydrology width 38-50
+[BiomeTest] PASS: hydrology meander 72+18
+[BiomeTest] PASS: biome/geology vocab checks across seeds
+[BiomeTest] PASS: ItemDB wheat_grain hunger 12
+[BiomeTest] PASS: ItemDB barley_grain hunger 10
+[BiomeTest] PASS: ItemDB flour hunger 14
+[BiomeTest] PASS: ItemDB bread hunger 42
+[BiomeTest] PASS: ItemDB cider thirst 38
+[BiomeTest] PASS: CropPatch distinct wheat->wheat_grain not canned
+[BiomeTest] PASS: CropPatch distinct barley->barley_grain
+[BiomeTest] PASS: workbench at least 1 in canonical
+[BiomeTest] PASS: workbench per chunk <=2
+[BiomeTest] PASS: workbench prompt Bake bread with flour
+[BiomeTest] PASS: workbench prompt Press cider with apple
+[BiomeTest] PASS: workbench prompt Mill flour with wheat_grain
+[BiomeTest] PASS: BIOME_VOCAB contains industrial_corridor
+[BiomeTest] PASS: INDUSTRIAL_CORRIDOR_VOCAB
+[BiomeTest] PASS: industrial constants
+[BiomeTest] PASS: industrial palette 7a6a6a
+[BiomeTest] PASS: industrial dark 5e5850
+[BiomeTest] PASS: industrial lift 0.03
+[BiomeTest] PASS: industrial density threshold 0.48
+[BiomeTest] PASS: industrial max instances 6
+[BiomeTest] PASS: WorldSeed INDUSTRIAL_CORRIDOR_DOMAINS
+[BiomeTest] PASS: same-seed industrial via WorldPlan
+[BiomeTest] PASS: shuffled industrial via WorldPlan
+[BiomeTest] PASS: negative coords industrial vocab
+[BiomeTest] PASS: different seed industrial materially differs >=3/9 or placement
+[BiomeTest] PASS: industrial siting gates (quarry>0.52 strata road<80 slope<22 not cliff/water urban 350 density>0.48)
+[BiomeTest] PASS: industrial found at least 6 samples across 5 seeds (2 belts)
+[BiomeTest] PASS: industrial chunks found >=3
+[BiomeTest] PASS: industrial manifest equality shuffled
+[BiomeTest] PASS: industrial chunk (13, -6) verts 81
+[BiomeTest] PASS: industrial chunk (13, -6) tris <=128
+[BiomeTest] PASS: industrial chunk (13, -6) collider 0/1 (industrial 0 like field)
+[BiomeTest] PASS: industrial chunk (13, -6) without forest/quarry collider 0
+[BiomeTest] PASS: industrial chunk (13, -6) instances <=96
+[BiomeTest] PASS: industrial chunk (13, -6) total instances <=96
+[BiomeTest] PASS: industrial chunk (8, -8) verts 81
+[BiomeTest] PASS: industrial chunk (8, -8) tris <=128
+[BiomeTest] PASS: industrial chunk (8, -8) collider 0/1 (industrial 0 like field)
+[BiomeTest] PASS: industrial chunk (8, -8) with forest/quarry collider 1
+[BiomeTest] PASS: industrial chunk (8, -8) instances <=96
+[BiomeTest] PASS: industrial chunk (8, -8) total instances <=96
+[BiomeTest] PASS: industrial chunk (7, 28) verts 81
+[BiomeTest] PASS: industrial chunk (7, 28) tris <=128
+[BiomeTest] PASS: industrial chunk (7, 28) collider 0/1 (industrial 0 like field)
+[BiomeTest] PASS: industrial chunk (7, 28) without forest/quarry collider 0
+[BiomeTest] PASS: industrial chunk (7, 28) instances <=96
+[BiomeTest] PASS: industrial chunk (7, 28) total instances <=96
+[BiomeTest] PASS: industrial chunk (8, 26) verts 81
+[BiomeTest] PASS: industrial chunk (8, 26) tris <=128
+[BiomeTest] PASS: industrial chunk (8, 26) collider 0/1 (industrial 0 like field)
+[BiomeTest] PASS: industrial chunk (8, 26) with forest/quarry collider 1
+[BiomeTest] PASS: industrial chunk (8, 26) instances <=96
+[BiomeTest] PASS: industrial chunk (8, 26) total instances <=96
+[BiomeTest] PASS: industrial chunk (9, -2) verts 81
+[BiomeTest] PASS: industrial chunk (9, -2) tris <=128
+[BiomeTest] PASS: industrial chunk (9, -2) collider 0/1 (industrial 0 like field)
+[BiomeTest] PASS: industrial chunk (9, -2) without forest/quarry collider 0
+[BiomeTest] PASS: industrial chunk (9, -2) instances <=96
+SCRIPT ERROR: Invalid assignment of property or key 'monitorable' with value of type 'bool' on a base object of type 'Node3D (Door)'.
+SCRIPT ERROR: Invalid assignment of property or key 'monitorable' with value of type 'bool' on a base object of type 'Node3D (Door)'.
+[BiomeTest] PASS: at least 9 resident biome chunks around industrial+road transect
+[BiomeTest] PASS: at least 3 industrial_corridor chunks among residents
+[BiomeTest] PASS: unified 54 peak not 63 (industrial Area3D not counted) biome colliders <=9
+[BiomeTest] PASS: biome body count == colliders (industrial 0 collider)
+[BiomeTest] finished with 0 failure(s)
+--- tail ---
+       [3] _process (res://world/streaming/chunk_manager.gd:262)
+       [4] _run_all (res://debug/biome_test.gd:1881)
+SCRIPT ERROR: Invalid assignment of property or key 'monitorable' with value of type 'bool' on a base object of type 'Node3D (Door)'.
+   at: ChunkManager._set_fringe_enabled (res://world/streaming/chunk_manager.gd:2359)
+   GDScript backtrace (most recent call first):
+       [0] _set_fringe_enabled (res://world/streaming/chunk_manager.gd:2359)
+       [1] _materialize (res://world/streaming/chunk_manager.gd:840)
+       [2] _collect_finished_jobs (res://world/streaming/chunk_manager.gd:565)
+       [3] _process (res://world/streaming/chunk_manager.gd:262)
+       [4] _run_all (res://debug/biome_test.gd:1881)
+[BiomeTest] PASS: at least 9 resident biome chunks around industrial+road transect
+[BiomeTest] PASS: at least 3 industrial_corridor chunks among residents
+[BiomeTest] PASS: unified 54 peak not 63 (industrial Area3D not counted) biome colliders <=9
+[BiomeTest] PASS: biome body count == colliders (industrial 0 collider)
+[BiomeTest] finished with 0 failure(s)

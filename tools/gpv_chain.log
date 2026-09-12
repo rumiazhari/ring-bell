@@ -1,0 +1,247 @@
+=== --praguegameplaytest exit=6 elapsed=149s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_praguegameplaytest.txt ===
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 6 failure(s)
+--- tail ---
+[CityPlan] GENERATED in 50537 ms (seed 19041208)
+[PragueGameplayTest] allocation { "candidates": 1420, "narrow_candidates": 328, "narrow_allocated": 238, "skipped_too_narrow": 13, "failed_fit": 38897, "failed_overlap": 143195, "allocated": 1028, "seal_filled": 17, "seal_stepped": 81, "seal_widened": 113, "seal_unfilled": 177, "seal_gardened": 167, "relief_rejected": 0, "road_rejected": 17, "seal_gap_short": 42 }
+[PragueGameplayTest] actual street elevations / block perimeter = 0.72807914922754
+[PragueGameplayTest] seed=19041208 generation_and_measure_ms=54803 occupied_rooms=18759 area_p10/50/90=[15.43, 19.68, 27.22] room_count_p10/50/90=[2.0, 4.0, 8.0] principal_p50=24.52 tiny_share=0.007 door_degree_gt2=0 invalid_interiors=0 footprint=0.636 frontage=0.653 frontage_width_p10/50/90=[7.11, 10.7, 14.92] floor_rooms_p50=4.00 combat_floors=3445/3819 hall_p50=2.00 street_frontage=0.731 party=0.012 void=0.000 blanks_gt15=52 street_wings=1011 facade=1011 differs=994 shopfronts=588 blank_internal=1154m blank_boundary=1095m step_lots=80 gardens=167 garden_area=5497m2 garden_frontage=2204m residual_gardens=561 residual_area=113691m2 cafe_lots=26 step_shop_lots=29 seal_gardened=167 seal_unfilled=177
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[CityPlan]     BLOCKS sites_loop=3734 split=755 frontage=26914 interiors=6298 dense_min=372 finalize=723 ms
+[CityPlan]   phases support=283 landmarks=2 roads=2064 blocks=38802 ms
+[CityPlan] GENERATED in 41152 ms (seed 19041209)
+[PragueGameplayTest] allocation { "candidates": 1404, "narrow_candidates": 286, "narrow_allocated": 205, "skipped_too_narrow": 11, "failed_fit": 39710, "failed_overlap": 158923, "allocated": 1002, "seal_filled": 20, "seal_stepped": 90, "seal_widened": 115, "seal_unfilled": 191, "seal_gardened": 177, "relief_rejected": 16, "road_rejected": 22, "seal_gap_short": 35 }
+[PragueGameplayTest] actual street elevations / block perimeter = 0.70137812564494
+[PragueGameplayTest] seed=19041209 generation_and_measure_ms=45808 occupied_rooms=18918 area_p10/50/90=[15.42, 19.9, 27.21] room_count_p10/50/90=[2.0, 4.0, 8.0] principal_p50=24.59 tiny_share=0.007 door_degree_gt2=0 invalid_interiors=0 footprint=0.602 frontage=0.623 frontage_width_p10/50/90=[7.24, 10.6, 14.81] floor_rooms_p50=4.00 combat_floors=3527/3861 hall_p50=2.00 street_frontage=0.704 party=0.011 void=0.000 blanks_gt15=54 street_wings=964 facade=964 differs=945 shopfronts=554 blank_internal=1329m blank_boundary=1016m step_lots=88 gardens=177 garden_area=6286m2 garden_frontage=2500m residual_gardens=432 residual_area=88219m2 cafe_lots=30 step_shop_lots=38 seal_gardened=177 seal_unfilled=191
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 6 failure(s)
+GP=1
+=== --praguetest exit=2 elapsed=170s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_praguetest.txt ===
+[PragueTest] PASS input query order preserves topology
+[PragueTest] PASS fixture produces compound wings
+[PragueTest] PASS fixture_plot_0_0_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_0_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_1_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_1_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_2_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_2_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_rear floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_rear materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_side floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_side materialized building contract: []
+[PragueTest] PASS fixture_plot_0_4_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_4_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_5_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_5_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_6_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_6_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_2_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_2_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_3_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_3_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_4_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_4_front materialized building contract: []
+[PragueTest] PASS seed 19041207: historic core has real street-derived blocks (58)
+[PragueTest] PASS seed 19041207: historic core reserves plots
+[PragueTest] PASS seed 19041207: compounds produce more wings than plots
+[PragueTest] PASS seed 19041207: historic core has a real street network (197 streets)
+[PragueTest] PASS seed 19041207: narrow lanes 3.5-5.5 m share 0.32 vs target 0.30
+[PragueTest] PASS seed 19041207: ordinary streets 5.5-8 m share 0.44 vs target 0.45
+[PragueTest] PASS seed 19041207: important streets 8-11 m share 0.21 vs target 0.20
+[PragueTest] PASS seed 19041207: wide 12-16 m+ streets share 0.03 vs target 0.05
+[PragueTest] PASS seed 19041207: historic streets are shared surface / cobbled
+[PragueTest] PASS seed 19041207: street segments stay street-scale (median 26.8 m)
+[PragueTest] PASS seed 19041207: no marathon blocks between junctions (p90 48.4 m)
+[PragueTest] PASS seed 19041207: the network contains dead ends
+[PragueTest] PASS seed 19041207: dead ends are a real share of the network (0.214)
+[PragueTest] PASS seed 19041207: dead ends stay occasional, not the norm (0.214)
+[PragueTest] PASS seed 19041207: T/Y junctions outnumber four-ways (137 vs 74)
+[PragueTest] PASS seed 19041207: blocks are not near-square (median aspect 1.34)
+[PragueTest] PASS seed 19041207: blocks are irregular, not rectangles (median fill 0.58)
+[PragueTest] PASS seed 19041207: block corners are not exclusively right angles (0.31)
+[PragueTest] PASS seed 19041207: the core is not aligned to a world X/Z grid (0.10 of edges)
+[PragueTest] PASS seed 19041207: many-sided blocks are common (1.00)
+[PragueTest] PASS seed 19041207: median frontage sits in the historic 6-15 m band (10.7)
+[PragueTest] PASS seed 19041207: frontages concentrate in 6-15 m (0.88)
+[PragueTest] PASS seed 19041207: narrow 6-9 m frontages are real (0.25 of plots)
+[PragueTest] PASS seed 19041207: some plots are sealed from their court (410)
+[PragueTest] PASS seed 19041207: some courts carry more than one access (152)
+[PragueTest] PASS seed 19041207: passage kinds vary ({ "street_courtyard": true, "rear_lane_courtyard": true, "court_link": true })
+[PragueTest] PASS seed 19041207: some plots are built solid, without a courtyard (572 of 982)
+[PragueTest] PASS seed 19041207: plots are deeper than they are wide (median 16.0 m)
+[PragueTest] PASS seed 19041207: courtyards are a first-class feature (0.58 of plots)
+[PragueTest] PASS seed 19041207: courtyard area fraction is credible (0.23)
+[PragueTest] PASS seed 19041207: passages give a secondary network (0.74 per plot)
+[PragueTest] PASS seed 19041207: passages are not overgenerated (0.74 per plot)
+[PragueTest] PASS seed 19041207: some blocks stay impermeable, not most (2 of 58)
+[PragueTest] PASS seed 19041207: every plot carries a cellar manifest (0 missing)
+[PragueTest] PASS seed 19041207: cellars stay plan-only, nothing materialized unsafely (0)
+[PragueTest] PASS seed 19041207: historical layers vary across the core ({ "rebuilt_front": 341, "medieval_core": 641 })
+[PragueTest] FAIL seed 19041207: street wings sit in the historic 3-6 storey range (0.92)
+[PragueTest] PASS seed 19041207: street wings are the backbone (982)
+[PragueTest] PASS seed 19041207: courtyard annexes never out-top the street wing (annex 5 vs front 6)
+[PragueTest] PASS seed 19041207: ground-floor programs vary across the core (["caretaker", "retail", "storage", "tavern", "workshop"])
+[PragueTest] FAIL seed 19041207: street houses are mixed-use, not single-use (0.92)
+[PragueTest] PASS seed 19041207: most ground floors carry a working use (1.00)
+[PragueTest] PASS seed 19041207: the roofscape mixes gable/hip/mansard ({ "gable": 814, "hip": 399, "mansard": 122 })
+[PragueTest] PASS seed 19041207: no single roof form dominates (0.61)
+[PragueTest] PASS seed 19041207: every compound has one stable owner chunk (0 conflicts)
+[PragueTest] PASS seed 19041207: every multi-storey wing declares stair circulation (0 missing)
+[PragueTest] PASS seed 19041207: street wings are the backbone ({ "front": 982, "side": 148, "rear": 205 })
+[PragueTest] PASS seed 19041207: compounds grow rear/side wings ({ "front": 982, "side": 148, "rear": 205 })
+[PragueTest] PASS seed 19041207: stair reachability is sampled across the core (24 wings)
+[PragueTest] PASS seed 19041207: sampled interiors validate (geometry + connectivity)
+[PragueTest] PASS seed 19041207: every sampled upper floor has stair access (0 without)
+[PragueTest] PASS seed 19041207: two generations of the same seed produce identical ids
+[PragueTest] PASS seed 19041207: a different seed produces a different city
+[PragueTest] finished with 2 failure(s)
+--- tail ---
+[PragueTest] PASS seed 19041207: every sampled upper floor has stair access (0 without)
+[PragueTest] DIST seed=19041207 stairs done 29ms
+[CityPlan]     BLOCKS sites_loop=3368 split=746 frontage=26918 interiors=5837 dense_min=505 finalize=698 ms
+[CityPlan]   phases support=0 landmarks=2 roads=2043 blocks=38076 ms
+[CityPlan] GENERATED in 40122 ms (seed 19041207)
+[CityPlan]     BLOCKS sites_loop=3465 split=735 frontage=27597 interiors=5870 dense_min=535 finalize=711 ms
+[CityPlan]   phases support=0 landmarks=2 roads=2009 blocks=38916 ms
+[CityPlan] GENERATED in 40929 ms (seed 19041207)
+[CityPlan]     BLOCKS sites_loop=4010 split=681 frontage=27898 interiors=5233 dense_min=495 finalize=681 ms
+[CityPlan]   phases support=279 landmarks=1 roads=2009 blocks=39001 ms
+[CityPlan] GENERATED in 41292 ms (seed 19041214)
+[PragueTest] DIST determinism seed=19041207 same_seed_equal=true different_seed_differs=true
+[PragueTest] PASS seed 19041207: two generations of the same seed produce identical ids
+[PragueTest] PASS seed 19041207: a different seed produces a different city
+[PragueTest] finished with 2 failure(s)
+PT=1
+=== --buildingrepairtest exit=0 elapsed=87s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_buildingrepairtest.txt ===
+[BuildingRepair] finished with 0 failure(s)
+--- tail ---
+[CityPlan]     BLOCKS sites_loop=3481 split=754 frontage=27864 interiors=5981 dense_min=510 finalize=697 ms
+[CityPlan]   phases support=209 landmarks=1 roads=1595 blocks=39289 ms
+[CityPlan] GENERATED in 41096 ms (seed 19041207)
+[BuildingRepair] city buildings=2160 uses=["hospital", "police", "residential", "workshop", "retail", "government", "office", "caretaker", "tavern", "storage"]
+[BuildingRepair] residential interior lights=2
+[BuildingRepair] retail interior lights=2
+[BuildingRepair] office interior lights=3
+[BuildingRepair] workshop interior lights=3
+[BuildingRepair] police interior lights=3
+[BuildingRepair] hospital interior lights=3
+[BuildingRepair] government interior lights=3
+[BuildingRepair] tavern interior lights=2
+[BuildingRepair] storage interior lights=2
+[BuildingRepair] caretaker interior lights=2
+[BuildingRepair] finished with 0 failure(s)
+BR=0
+=== --streamingregressiontest exit=0 elapsed=211s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_streamingregressiontest.txt ===
+[StreamingRegression] PASS  oriented building pavement touches facade without entering footprint yaw 0.00
+[StreamingRegression] PASS  oriented building pavement reaches recorded street frontage yaw 0.00
+[StreamingRegression] PASS  oriented building pavement touches facade without entering footprint yaw 0.47
+[StreamingRegression] PASS  oriented building pavement reaches recorded street frontage yaw 0.47
+[StreamingRegression] PASS  oriented building pavement touches facade without entering footprint yaw -1.10
+[StreamingRegression] PASS  oriented building pavement reaches recorded street frontage yaw -1.10
+[StreamingRegression] PASS  skew crossing derives four-way connector without endpoint node seed 19041207
+[StreamingRegression] PASS  skew crossing derives four-way connector without endpoint node seed 19041208
+[StreamingRegression] PASS  skew crossing derives four-way connector without endpoint node seed -1
+[StreamingRegression] PASS  pavement mesh retains vertices and clockwise upward-visible faces
+[StreamingRegression] PASS  raised window validation tests actual foundation datum obstruction=false
+[StreamingRegression] PASS  raised window validation tests actual foundation datum obstruction=true
+[StreamingRegression] PASS  placement index matches exhaustive SAT during incremental negative-coordinate placement
+[StreamingRegression] PASS  streamed streets emit no motorcars
+[StreamingRegression] PASS  fallback level emits no motorcars
+[StreamingRegression] PASS  street owns two pavements and curbs without needing a block polygon
+[StreamingRegression] PASS  pavements leave intersecting carriageways open
+[StreamingRegression] PASS  block lane connects opposite streets seed 19041207
+[StreamingRegression] PASS  block lane connects opposite streets seed 19041208
+[StreamingRegression] PASS  block lane connects opposite streets seed -1
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 0
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 1
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 2
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 3
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 4
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 5
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 6
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041207 block 7
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 0
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 1
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 2
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 3
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 4
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 5
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 6
+[StreamingRegression] PASS  normal historic perimeter court has street access seed 19041208 block 7
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 0
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 1
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 2
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 3
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 4
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 5
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 6
+[StreamingRegression] PASS  normal historic perimeter court has street access seed -1 block 7
+[StreamingRegression] PASS  passage frontage fills more than two rows
+[StreamingRegression] PASS  passage parcels face the lane and leave it clear
+[StreamingRegression] PASS  oriented overlap agrees with independent polygon intersections
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  shallow oriented lot retains street frontage
+[StreamingRegression] PASS  shallow frontage stays within its irregular block
+[StreamingRegression] PASS  interior fixture emits geometry
+[StreamingRegression] PASS  interior fixture emits geometry
+[StreamingRegression] PASS  interiors translate exactly once at (-128.0, -64.0)
+[StreamingRegression] PASS  interior fixture emits geometry
+[StreamingRegression] PASS  interiors translate exactly once at (96.0, 128.0)
+[StreamingRegression] PASS  road broad phase preserves exhaustive oriented clearance
+[StreamingRegression] PASS  parcel and door manifests use instance seed independently of selected world
+[StreamingRegression] PASS  setback perimeter block retains its accessible rear courtyard
+[StreamingRegression] PASS  rear courtyard surface never occupies a building footprint
+[StreamingRegression] PASS  long street boundaries pack frontage instead of stopping at four parcels
+[StreamingRegression] PASS  interior road cut conserves buildable area without treating holes as blocks
+[StreamingRegression] PASS  road-subtracted block pieces exclude the full carriageway
+[StreamingRegression] PASS  large ordinary urban block is not automatically a park
+[StreamingRegression] PASS  bounded market node still produces civic space
+[StreamingRegression] PASS  concave road-cut face retains an interior parcel anchor
+[StreamingRegression] finished with 0 failure(s)
+ERROR: 13 resources still in use at exit (run with --verbose for details).
+--- tail ---
+[StreamingRegression] PASS  road broad phase preserves exhaustive oriented clearance
+[StreamingRegression] PASS  parcel and door manifests use instance seed independently of selected world
+[StreamingRegression] PASS  setback perimeter block retains its accessible rear courtyard
+[StreamingRegression] PASS  rear courtyard surface never occupies a building footprint
+[StreamingRegression] PASS  long street boundaries pack frontage instead of stopping at four parcels
+[StreamingRegression] PASS  interior road cut conserves buildable area without treating holes as blocks
+[StreamingRegression] PASS  road-subtracted block pieces exclude the full carriageway
+[StreamingRegression] PASS  large ordinary urban block is not automatically a park
+[StreamingRegression] PASS  bounded market node still produces civic space
+[StreamingRegression] PASS  concave road-cut face retains an interior parcel anchor
+[StreamingRegression] finished with 0 failure(s)
+WARNING: 456 ObjectDB instances were leaked at exit (run with `--verbose` for details).
+   at: cleanup (core/object/object.cpp:2536)
+ERROR: 13 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:822)
+SR=0
+=== --import exit=0 elapsed=2s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_import.txt ===
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[Import] boot OK - all scripts parsed, world build skipped
+IM=0

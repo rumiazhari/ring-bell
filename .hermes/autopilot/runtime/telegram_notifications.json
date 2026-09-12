@@ -1,0 +1,562 @@
+{
+  "ae629b00c9352d5d": {
+    "event_type": "test",
+    "fingerprint": "ae629b00c9352d5d",
+    "timestamp": "2026-08-30T16:15:10.021196+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "c05201a8d4a038fc": {
+    "event_type": "test-telegram",
+    "fingerprint": "c05201a8d4a038fc",
+    "timestamp": "2026-08-30T16:21:08.192008+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "a214102beea79d68": {
+    "event_type": "fail-test",
+    "fingerprint": "a214102beea79d68",
+    "timestamp": "2026-08-30T16:21:18.378093+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "b5135fea06a80f41": {
+    "event_type": "dedup-test",
+    "fingerprint": "b5135fea06a80f41",
+    "timestamp": "2026-08-30T16:21:21.702758+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "ea382650b91afe21": {
+    "event_type": "recovery",
+    "fingerprint": "ea382650b91afe21",
+    "timestamp": "2026-08-30T16:21:26.329187+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "a2850d69b2f9fe48": {
+    "event_type": "new-task",
+    "fingerprint": "a2850d69b2f9fe48",
+    "timestamp": "2026-08-30T16:25:41.817689+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "327aa39fa73e5e1a": {
+    "event_type": "activation",
+    "fingerprint": "327aa39fa73e5e1a",
+    "timestamp": "2026-08-30T16:28:08.592005+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "960a3216ff074c53": {
+    "event_type": "builder-started",
+    "fingerprint": "960a3216ff074c53",
+    "timestamp": "2026-08-30T16:34:25.315898+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "a3926b7536633ae6": {
+    "event_type": "recovery",
+    "fingerprint": "a3926b7536633ae6",
+    "timestamp": "2026-08-31T10:23:04.085313+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "c7bd5e0058c4ef31": {
+    "event_type": "recovery",
+    "fingerprint": "c7bd5e0058c4ef31",
+    "timestamp": "2026-08-31T10:33:04.991778+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "5e47b14372c77ed6": {
+    "event_type": "recovery",
+    "fingerprint": "5e47b14372c77ed6",
+    "timestamp": "2026-08-31T10:33:07.972370+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "69c2c86568d50a23": {
+    "event_type": "recovery",
+    "fingerprint": "69c2c86568d50a23",
+    "timestamp": "2026-08-31T10:43:00.482558+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "e44ea1824c41a2c7": {
+    "event_type": "recovery",
+    "fingerprint": "e44ea1824c41a2c7",
+    "timestamp": "2026-08-31T10:53:02.082392+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "f85c553e1ac190e2": {
+    "event_type": "recovery",
+    "fingerprint": "f85c553e1ac190e2",
+    "timestamp": "2026-08-31T11:03:02.596002+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "60dd1b26780cc466": {
+    "event_type": "recovery",
+    "fingerprint": "60dd1b26780cc466",
+    "timestamp": "2026-08-31T10:19:58.766512+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "1a900fc64c96688e": {
+    "event_type": "recovery",
+    "fingerprint": "1a900fc64c96688e",
+    "timestamp": "2026-08-31T11:13:05.504133+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "c94d6123e6e60fcd": {
+    "event_type": "recovery",
+    "fingerprint": "c94d6123e6e60fcd",
+    "timestamp": "2026-08-31T10:29:59.881491+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "454dfd2e037dc394": {
+    "event_type": "recovery",
+    "fingerprint": "454dfd2e037dc394",
+    "timestamp": "2026-08-31T11:22:10.787891+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "cf52570ec1740dce": {
+    "event_type": "recovery",
+    "fingerprint": "cf52570ec1740dce",
+    "timestamp": "2026-08-31T10:39:14.578306+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "a9cbea54d3e16d1c": {
+    "event_type": "recovery",
+    "fingerprint": "a9cbea54d3e16d1c",
+    "timestamp": "2026-08-31T11:31:20.354264+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "3c0062530ae07050": {
+    "event_type": "recovery",
+    "fingerprint": "3c0062530ae07050",
+    "timestamp": "2026-08-31T10:49:14.727472+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "ad79b7b000fa5787": {
+    "event_type": "recovery",
+    "fingerprint": "ad79b7b000fa5787",
+    "timestamp": "2026-08-31T11:41:09.015443+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "3d67b25f3344f018": {
+    "event_type": "recovery",
+    "fingerprint": "3d67b25f3344f018",
+    "timestamp": "2026-08-31T10:59:15.085822+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "694fc5666fdcc9d3": {
+    "event_type": "recovery",
+    "fingerprint": "694fc5666fdcc9d3",
+    "timestamp": "2026-08-31T05:45:48.586806+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "0bf82ac9971a3e87": {
+    "event_type": "recovery",
+    "fingerprint": "0bf82ac9971a3e87",
+    "timestamp": "2026-08-31T11:09:16.731216+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "627aff50ceb167d4": {
+    "event_type": "recovery",
+    "fingerprint": "627aff50ceb167d4",
+    "timestamp": "2026-08-31T05:55:16.166904+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "15f9df28e5b9d5e9": {
+    "event_type": "build-complete",
+    "fingerprint": "15f9df28e5b9d5e9",
+    "timestamp": "2026-08-30T18:39:10.752896+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "64cf8c37b5d51bd8": {
+    "event_type": "new-task",
+    "fingerprint": "64cf8c37b5d51bd8",
+    "timestamp": "2026-08-30T18:42:38.428668+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "b937fb90d90bcb30": {
+    "event_type": "builder-started",
+    "fingerprint": "b937fb90d90bcb30",
+    "timestamp": "2026-08-31T00:44:52.643765+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "1d43338aaeeef74a": {
+    "event_type": "recovery",
+    "fingerprint": "1d43338aaeeef74a",
+    "timestamp": "2026-08-31T05:11:05.119141+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "2c136865cac77afc": {
+    "event_type": "recovery",
+    "fingerprint": "2c136865cac77afc",
+    "timestamp": "2026-08-31T05:20:30.035593+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "0c5f3e211f4bbaf1": {
+    "event_type": "recovery",
+    "fingerprint": "0c5f3e211f4bbaf1",
+    "timestamp": "2026-08-31T05:30:05.256746+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "e078d1ff0106a8fe": {
+    "event_type": "recovery",
+    "fingerprint": "e078d1ff0106a8fe",
+    "timestamp": "2026-08-31T05:39:30.955897+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "f06f34a29f481422": {
+    "event_type": "recovery",
+    "fingerprint": "f06f34a29f481422",
+    "timestamp": "2026-08-31T05:49:05.682893+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "938f6db991a7934a": {
+    "event_type": "recovery",
+    "fingerprint": "938f6db991a7934a",
+    "timestamp": "2026-08-31T05:58:32.485818+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "8f5fd60460e1067b": {
+    "event_type": "recovery",
+    "fingerprint": "8f5fd60460e1067b",
+    "timestamp": "2026-08-31T02:56:31.922847+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "64cf7875869af8f1": {
+    "event_type": "recovery",
+    "fingerprint": "64cf7875869af8f1",
+    "timestamp": "2026-08-30T21:59:56.674068+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "c12a77745404fdbc": {
+    "event_type": "recovery",
+    "fingerprint": "c12a77745404fdbc",
+    "timestamp": "2026-08-31T03:06:17.400809+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "57a98fca66bcaabd": {
+    "event_type": "recovery",
+    "fingerprint": "57a98fca66bcaabd",
+    "timestamp": "2026-08-30T22:09:40.596274+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "871ac3ea3686d177": {
+    "event_type": "recovery",
+    "fingerprint": "871ac3ea3686d177",
+    "timestamp": "2026-08-31T03:15:34.285687+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "edca1ad76e9bcb45": {
+    "event_type": "recovery",
+    "fingerprint": "edca1ad76e9bcb45",
+    "timestamp": "2026-08-30T22:21:59.336520+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "2e4260a46fce074b": {
+    "event_type": "recovery",
+    "fingerprint": "2e4260a46fce074b",
+    "timestamp": "2026-08-31T03:25:02.907249+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "bb86686375afd7b7": {
+    "event_type": "recovery",
+    "fingerprint": "bb86686375afd7b7",
+    "timestamp": "2026-08-30T22:31:35.475647+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "68a5a3756f5e93fa": {
+    "event_type": "recovery",
+    "fingerprint": "68a5a3756f5e93fa",
+    "timestamp": "2026-08-31T03:37:21.159136+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "1d4de6d355987c83": {
+    "event_type": "recovery",
+    "fingerprint": "1d4de6d355987c83",
+    "timestamp": "2026-08-30T22:40:44.330967+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "a34e58e2cd711728": {
+    "event_type": "recovery",
+    "fingerprint": "a34e58e2cd711728",
+    "timestamp": "2026-08-30T22:40:47.222968+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "4efe7ea959561a8f": {
+    "event_type": "recovery",
+    "fingerprint": "4efe7ea959561a8f",
+    "timestamp": "2026-08-30T22:50:04.101019+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "41fad012547540ed": {
+    "event_type": "recovery",
+    "fingerprint": "41fad012547540ed",
+    "timestamp": "2026-08-30T22:53:36.887452+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "49d57415e85bb09b": {
+    "event_type": "recovery",
+    "fingerprint": "49d57415e85bb09b",
+    "timestamp": "2026-08-30T22:59:49.171355+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "f2f5ef57e3e3631a": {
+    "event_type": "recovery",
+    "fingerprint": "f2f5ef57e3e3631a",
+    "timestamp": "2026-08-30T23:03:05.306063+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "6b9ed8db375558ca": {
+    "event_type": "recovery",
+    "fingerprint": "6b9ed8db375558ca",
+    "timestamp": "2026-08-30T23:09:38.355219+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "103fccfa53ef38fe": {
+    "event_type": "recovery",
+    "fingerprint": "103fccfa53ef38fe",
+    "timestamp": "2026-08-30T23:12:49.867148+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "8329cc7d93ca3e61": {
+    "event_type": "recovery",
+    "fingerprint": "8329cc7d93ca3e61",
+    "timestamp": "2026-08-30T23:19:07.551787+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "f8ce8e4ecee08803": {
+    "event_type": "recovery",
+    "fingerprint": "f8ce8e4ecee08803",
+    "timestamp": "2026-08-30T23:22:40.272696+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "7be1c7222c52eb79": {
+    "event_type": "recovery",
+    "fingerprint": "7be1c7222c52eb79",
+    "timestamp": "2026-08-30T23:31:52.975965+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "082be0412d036edb": {
+    "event_type": "recovery",
+    "fingerprint": "082be0412d036edb",
+    "timestamp": "2026-08-30T23:31:56.041644+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "81094d592eca1ce0": {
+    "event_type": "recovery",
+    "fingerprint": "81094d592eca1ce0",
+    "timestamp": "2026-08-30T23:41:11.815170+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "ed01fb0751e46eab": {
+    "event_type": "recovery",
+    "fingerprint": "ed01fb0751e46eab",
+    "timestamp": "2026-08-30T23:50:42.422148+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "db523cfd74d91b59": {
+    "event_type": "recovery",
+    "fingerprint": "db523cfd74d91b59",
+    "timestamp": "2026-08-30T23:59:59.495553+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "681a9f4775f1f00c": {
+    "event_type": "recovery",
+    "fingerprint": "681a9f4775f1f00c",
+    "timestamp": "2026-08-31T00:09:44.106258+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "99dcfbba7dd8162f": {
+    "event_type": "recovery",
+    "fingerprint": "99dcfbba7dd8162f",
+    "timestamp": "2026-08-31T00:19:16.293313+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "896152a92f32bdd3": {
+    "event_type": "recovery",
+    "fingerprint": "896152a92f32bdd3",
+    "timestamp": "2026-08-31T00:32:01.732397+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "437a3aa7d770ed3c": {
+    "event_type": "new-task",
+    "fingerprint": "437a3aa7d770ed3c",
+    "timestamp": "2026-08-31T03:25:08.838720+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "81811df183693e6e": {
+    "event_type": "build-complete",
+    "fingerprint": "81811df183693e6e",
+    "timestamp": "2026-08-31T03:45:12.564428+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "0adf2b39dd3c2dff": {
+    "event_type": "new-task",
+    "fingerprint": "0adf2b39dd3c2dff",
+    "timestamp": "2026-08-31T03:48:31.154790+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "feea95c0055e9996": {
+    "event_type": "builder-started",
+    "fingerprint": "feea95c0055e9996",
+    "timestamp": "2026-08-31T03:54:46.717116+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "46003427cbae8eb8": {
+    "event_type": "build-complete",
+    "fingerprint": "46003427cbae8eb8",
+    "timestamp": "2026-08-31T06:06:15.642570+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "3ab2850fce3028cb": {
+    "event_type": "rollover",
+    "fingerprint": "3ab2850fce3028cb",
+    "timestamp": "2026-08-31T06:13:33.611995+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "c1fe83c4ff5fb62e": {
+    "event_type": "new-task",
+    "fingerprint": "c1fe83c4ff5fb62e",
+    "timestamp": "2026-08-31T06:13:39.690694+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "fbbf172c8b287e4c": {
+    "event_type": "builder-started",
+    "fingerprint": "fbbf172c8b287e4c",
+    "timestamp": "2026-08-31T06:16:32.724517+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "9bcdf7cd6671cf12": {
+    "event_type": "build-complete",
+    "fingerprint": "9bcdf7cd6671cf12",
+    "timestamp": "2026-08-31T07:26:21.229443+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "71295a1991b43fd0": {
+    "event_type": "new-task",
+    "fingerprint": "71295a1991b43fd0",
+    "timestamp": "2026-08-31T07:28:12.234360+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "033de394bad734b0": {
+    "event_type": "builder-started",
+    "fingerprint": "033de394bad734b0",
+    "timestamp": "2026-08-31T07:36:29.225134+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "256df9a6edb88dbd": {
+    "event_type": "build-complete",
+    "fingerprint": "256df9a6edb88dbd",
+    "timestamp": "2026-08-31T08:43:05.618770+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "146e893d9392854e": {
+    "event_type": "new-task",
+    "fingerprint": "146e893d9392854e",
+    "timestamp": "2026-08-31T08:46:17.240819+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "9b5bf7d744593d9f": {
+    "event_type": "builder-started",
+    "fingerprint": "9b5bf7d744593d9f",
+    "timestamp": "2026-08-31T08:51:08.110762+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "84309badb27e6fb6": {
+    "event_type": "build-complete",
+    "fingerprint": "84309badb27e6fb6",
+    "timestamp": "2026-08-31T09:52:18.726055+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "7be47070cbd47ce8": {
+    "event_type": "rollover",
+    "fingerprint": "7be47070cbd47ce8",
+    "timestamp": "2026-08-31T09:59:17.301220+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "d1789a4ea123f7b4": {
+    "event_type": "builder-started",
+    "fingerprint": "d1789a4ea123f7b4",
+    "timestamp": "2026-08-31T11:51:29.867033+00:00",
+    "ok": true,
+    "error": ""
+  },
+  "e79e071c760132fb": {
+    "event_type": "new-task",
+    "fingerprint": "e79e071c760132fb",
+    "timestamp": "2026-08-31T11:44:04.834863+00:00",
+    "ok": true,
+    "error": ""
+  }
+}

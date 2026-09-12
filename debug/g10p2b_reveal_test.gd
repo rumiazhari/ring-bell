@@ -96,22 +96,37 @@ func _ready() -> void:
 			"roof dressing hides while the player is below the deck")
 
 	# A leaf follows its wall exactly (locked decision 2): same storey, same
-	# facade letter, so no entrance can float where the cutaway removed a wall.
-	_check(not MeshBatcher.door_hidden("reveal_probe", 0, "N",
-			"reveal_probe", 0, ["S"]),
-			"entrance on a solid facade stays")
-	_check(MeshBatcher.door_hidden("reveal_probe", 0, "N",
-			"reveal_probe", 0, ["N"]),
-			"entrance retires with its cut facade")
-	_check(not MeshBatcher.door_hidden("reveal_probe", 0, "N",
-			"reveal_probe", 2, ["N"]),
-			"lower-storey entrance keeps its wall and stays")
-	_check(MeshBatcher.door_hidden("reveal_probe", 3, "",
-			"reveal_probe", 2, []),
+	# facade letter. Since the dollhouse brief changed, "follows its wall" means
+	# the leaf is CUT at the picture rail WITH that wall: retiring the whole leaf
+	# left the doorway standing empty and let the camera see through the facade.
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "N", "",
+			"reveal_probe", 0, ["S"]) == MeshBatcher.DoorReveal.FULL,
+			"entrance on a solid facade stays whole")
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "N", "",
+			"reveal_probe", 0, ["N"]) == MeshBatcher.DoorReveal.CUT,
+			"entrance is CUT with its cut facade, never retired")
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "N", "",
+			"reveal_probe", 2, ["N"]) == MeshBatcher.DoorReveal.FULL,
+			"lower-storey entrance keeps its wall and stays whole")
+	_check(MeshBatcher.door_reveal("reveal_probe", 3, "", "",
+			"reveal_probe", 2, []) == MeshBatcher.DoorReveal.HIDDEN,
 			"interior partition door above the resident storey hides")
-	_check(not MeshBatcher.door_hidden("reveal_probe", 1, "",
-			"reveal_probe", 2, ["N"]),
+	_check(MeshBatcher.door_reveal("reveal_probe", 1, "", "",
+			"reveal_probe", 2, ["N"]) == MeshBatcher.DoorReveal.FULL,
 			"interior partition door ignores facade fading")
+	# An interior leaf is cut by its OWN wall's plan rect, in the camera wedge -
+	# the same "x_z_w_h" payload (footprint-local) that wallcut: layers carry.
+	var sight_a := Vector2(0.0, 0.0)
+	var sight_b := Vector2(0.0, 4.0)
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "", "1.00_2.00_0.18_3.00",
+			"reveal_probe", 0, [], sight_a, sight_b) == MeshBatcher.DoorReveal.CUT,
+			"interior leaf whose wall the camera looks through is cut")
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "", "6.00_2.00_0.18_3.00",
+			"reveal_probe", 0, [], sight_a, sight_b) == MeshBatcher.DoorReveal.FULL,
+			"interior leaf outside the wedge stays whole")
+	_check(MeshBatcher.door_reveal("reveal_probe", 0, "", "",
+			"reveal_probe", 0, [], sight_a, sight_b) == MeshBatcher.DoorReveal.FULL,
+			"interior leaf with no wall key is never cut")
 	manager.free()
 	holder.free()
 	print("[G10P2BRevealTest] finished with %d failure(s)" % _failures)

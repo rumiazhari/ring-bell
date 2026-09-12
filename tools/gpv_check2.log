@@ -1,0 +1,116 @@
+=== --praguegameplaytest exit=2 elapsed=55s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_praguegameplaytest.txt ===
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 2 failure(s)
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[CityPlan]     BLOCKS sites_loop=4414 split=996 frontage=30499 interiors=7010 dense_min=633 finalize=964 ms
+[CityPlan]   phases support=212 landmarks=1 roads=1683 blocks=44518 ms
+[CityPlan] GENERATED in 46415 ms (seed 19041207)
+[PragueGameplayTest] allocation { "candidates": 1423, "narrow_candidates": 298, "narrow_allocated": 215, "skipped_too_narrow": 6, "failed_fit": 30316, "failed_overlap": 73578, "allocated": 972, "seal_filled": 21, "seal_unfilled": 224, "seal_gardened": 211, "relief_rejected": 17, "seal_stepped": 27, "seal_widened": 62, "road_rejected": 25, "seal_gap_short": 37 }
+[PragueGameplayTest] actual street elevations / block perimeter = 0.67119292950831
+[PragueGameplayTest] seed=19041207 generation_and_measure_ms=52500 occupied_rooms=18521 area_p10/50/90=[15.45, 19.92, 27.36] room_count_p10/50/90=[2.0, 4.0, 8.0] principal_p50=24.65 tiny_share=0.006 door_degree_gt2=0 invalid_interiors=0 footprint=0.607 frontage=0.608 frontage_width_p10/50/90=[7.65, 10.78, 14.78] floor_rooms_p50=4.00 combat_floors=3394/3697 hall_p50=2.00 street_frontage=0.675 party=0.010 void=0.000 blanks_gt15=53 street_wings=930 facade=930 differs=930 shopfronts=525 blank_internal=1256m blank_boundary=1050m step_lots=26 gardens=211 garden_area=7866m2 garden_frontage=3110m residual_gardens=419 residual_area=85542m2 cafe_lots=5 step_shop_lots=9 seal_gardened=211 seal_unfilled=224
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 2 failure(s)
+GP=1
+=== --praguetest exit=1 elapsed=169s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_praguetest.txt ===
+[PragueTest] PASS input query order preserves topology
+[PragueTest] PASS fixture produces compound wings
+[PragueTest] PASS fixture_plot_0_0_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_0_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_1_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_1_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_2_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_2_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_rear floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_rear materialized building contract: []
+[PragueTest] PASS fixture_plot_0_3_side floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_3_side materialized building contract: []
+[PragueTest] PASS fixture_plot_0_4_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_4_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_5_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_5_front materialized building contract: []
+[PragueTest] PASS fixture_plot_0_6_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_0_6_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_2_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_2_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_3_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_3_front materialized building contract: []
+[PragueTest] PASS fixture_plot_1_4_front floor geometry and connectivity: []
+[PragueTest] PASS fixture_plot_1_4_front materialized building contract: []
+[PragueTest] PASS seed 19041207: historic core has real street-derived blocks (58)
+[PragueTest] PASS seed 19041207: historic core reserves plots
+[PragueTest] PASS seed 19041207: compounds produce more wings than plots
+[PragueTest] PASS seed 19041207: historic core has a real street network (197 streets)
+[PragueTest] PASS seed 19041207: narrow lanes 3.5-5.5 m share 0.32 vs target 0.30
+[PragueTest] PASS seed 19041207: ordinary streets 5.5-8 m share 0.44 vs target 0.45
+[PragueTest] PASS seed 19041207: important streets 8-11 m share 0.21 vs target 0.20
+[PragueTest] PASS seed 19041207: wide 12-16 m+ streets share 0.03 vs target 0.05
+[PragueTest] PASS seed 19041207: historic streets are shared surface / cobbled
+[PragueTest] PASS seed 19041207: street segments stay street-scale (median 26.8 m)
+[PragueTest] PASS seed 19041207: no marathon blocks between junctions (p90 48.4 m)
+[PragueTest] PASS seed 19041207: the network contains dead ends
+[PragueTest] PASS seed 19041207: dead ends are a real share of the network (0.214)
+[PragueTest] PASS seed 19041207: dead ends stay occasional, not the norm (0.214)
+[PragueTest] PASS seed 19041207: T/Y junctions outnumber four-ways (137 vs 74)
+[PragueTest] PASS seed 19041207: blocks are not near-square (median aspect 1.34)
+[PragueTest] PASS seed 19041207: blocks are irregular, not rectangles (median fill 0.58)
+[PragueTest] PASS seed 19041207: block corners are not exclusively right angles (0.31)
+[PragueTest] PASS seed 19041207: the core is not aligned to a world X/Z grid (0.10 of edges)
+[PragueTest] PASS seed 19041207: many-sided blocks are common (1.00)
+[PragueTest] PASS seed 19041207: median frontage sits in the historic 6-15 m band (10.8)
+[PragueTest] PASS seed 19041207: frontages concentrate in 6-15 m (0.90)
+[PragueTest] PASS seed 19041207: narrow 6-9 m frontages are real (0.25 of plots)
+[PragueTest] PASS seed 19041207: some plots are sealed from their court (361)
+[PragueTest] PASS seed 19041207: some courts carry more than one access (151)
+[PragueTest] PASS seed 19041207: passage kinds vary ({ "street_courtyard": true, "rear_lane_courtyard": true, "court_link": true })
+[PragueTest] PASS seed 19041207: some plots are built solid, without a courtyard (569 of 930)
+[PragueTest] PASS seed 19041207: plots are deeper than they are wide (median 18.0 m)
+[PragueTest] PASS seed 19041207: courtyards are a first-class feature (0.61 of plots)
+[PragueTest] PASS seed 19041207: courtyard area fraction is credible (0.23)
+[PragueTest] PASS seed 19041207: passages give a secondary network (0.77 per plot)
+[PragueTest] PASS seed 19041207: passages are not overgenerated (0.77 per plot)
+[PragueTest] PASS seed 19041207: some blocks stay impermeable, not most (2 of 58)
+[PragueTest] PASS seed 19041207: every plot carries a cellar manifest (0 missing)
+[PragueTest] PASS seed 19041207: cellars stay plan-only, nothing materialized unsafely (0)
+[PragueTest] PASS seed 19041207: historical layers vary across the core ({ "rebuilt_front": 328, "medieval_core": 602 })
+[PragueTest] FAIL seed 19041207: street wings sit in the historic 3-6 storey range (0.97)
+[PragueTest] PASS seed 19041207: street wings are the backbone (930)
+[PragueTest] PASS seed 19041207: courtyard annexes never out-top the street wing (annex 5 vs front 6)
+[PragueTest] PASS seed 19041207: ground-floor programs vary across the core (["caretaker", "retail", "storage", "tavern", "workshop"])
+[PragueTest] PASS seed 19041207: street houses are mixed-use, not single-use (0.97)
+[PragueTest] PASS seed 19041207: most ground floors carry a working use (1.00)
+[PragueTest] PASS seed 19041207: the roofscape mixes gable/hip/mansard ({ "gable": 786, "hip": 383, "mansard": 118 })
+[PragueTest] PASS seed 19041207: no single roof form dominates (0.61)
+[PragueTest] PASS seed 19041207: every compound has one stable owner chunk (0 conflicts)
+[PragueTest] PASS seed 19041207: every multi-storey wing declares stair circulation (0 missing)
+[PragueTest] PASS seed 19041207: street wings are the backbone ({ "front": 930, "side": 151, "rear": 206 })
+[PragueTest] PASS seed 19041207: compounds grow rear/side wings ({ "front": 930, "side": 151, "rear": 206 })
+[PragueTest] PASS seed 19041207: stair reachability is sampled across the core (24 wings)
+[PragueTest] PASS seed 19041207: sampled interiors validate (geometry + connectivity)
+[PragueTest] PASS seed 19041207: every sampled upper floor has stair access (0 without)
+[PragueTest] PASS seed 19041207: two generations of the same seed produce identical ids
+[PragueTest] PASS seed 19041207: a different seed produces a different city
+[PragueTest] finished with 1 failure(s)
+--- tail ---
+[PragueTest] PASS seed 19041207: every sampled upper floor has stair access (0 without)
+[PragueTest] DIST seed=19041207 stairs done 29ms
+[CityPlan]     BLOCKS sites_loop=3406 split=751 frontage=25212 interiors=5897 dense_min=532 finalize=869 ms
+[CityPlan]   phases support=0 landmarks=2 roads=2001 blocks=36672 ms
+[CityPlan] GENERATED in 38676 ms (seed 19041207)
+[CityPlan]     BLOCKS sites_loop=3357 split=734 frontage=25891 interiors=5963 dense_min=523 finalize=791 ms
+[CityPlan]   phases support=0 landmarks=1 roads=2015 blocks=37262 ms
+[CityPlan] GENERATED in 39280 ms (seed 19041207)
+[CityPlan]     BLOCKS sites_loop=3874 split=596 frontage=26615 interiors=5191 dense_min=496 finalize=760 ms
+[CityPlan]   phases support=303 landmarks=2 roads=2013 blocks=37537 ms
+[CityPlan] GENERATED in 39856 ms (seed 19041214)
+[PragueTest] DIST determinism seed=19041207 same_seed_equal=true different_seed_differs=true
+[PragueTest] PASS seed 19041207: two generations of the same seed produce identical ids
+[PragueTest] PASS seed 19041207: a different seed produces a different city
+[PragueTest] finished with 1 failure(s)
+PT=1

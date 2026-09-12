@@ -1,0 +1,252 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 815 ms nodes 53 edges 57 (cross 5 filter 1)
+[CityTest] DEBUG: _run_all started
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  same-seed plans identical regardless of query order
+[CityTest] PASS  chunk (0, 0) builds identically
+[CityTest] PASS  chunk (-2, 1) builds identically
+[CityTest] PASS  chunk (3, -2) builds identically
+[CityTest] PASS  different seed produces a materially different city
+[CityTest] PASS  spawn anchor found
+[CityTest] PASS  buildings generated around spawn
+[CityTest] PASS  multi-storey buildings exist near center
+[CityTest] PASS  at least one plaza near center
+[CityTest] PASS  chunk discovery record survives save/load round-trip
+[CityTest] DEBUG: After manager2.free()
+[CityTest] DEBUG: Starting overlap validation tests
+[CityTest] PASS  building overlap validation - seed A
+[CityTest] PASS  building overlap validation - seed 19053552
+[CityTest] PASS  building overlap validation - seed 19109097
+[CityTest] PASS  building overlap validation - seed 18986886
+[CityTest] PASS  building overlap validation - seed 19141206
+[CityTest] DEBUG: Starting door manifest tests
+[CityTest] PASS  door manifest consistency
+[CityTest] DEBUG: Starting stair consistency tests
+[CityTest] PASS  stair consistency
+[CityTest] DEBUG: Starting negative coordinate tests
+[CityTest] PASS  negative coordinate blocks
+[CityTest] DEBUG: Starting chunk state transition tests
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  chunk state transitions
+[CityTest] DEBUG: Starting building-foundation acceptance tests
+[CityTest] PASS  slab coverage = footprint minus shaft (numeric)
+[CityTest] PASS  stair flight geometry (flush endpoints, slope, all storeys)
+[CityTest] PASS  stair zone opposite-edge mapping + entrance clearance
+[CityTest] PASS  stair ramp COLLIDER meets both landings (real spec bounds)
+[CityTest] PASS  furniture floor ownership + placement bounds
+[CityTest] PASS  bookshelf wall-snapped footprint matches 1.6 x 0.34 geometry
+[CityTest] PASS  facade apertures composed without solid backs
+[CityTest] PASS  facade layer keys are building-scoped f<storey>:<side>
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] slab panels ok (max 2.50 m), colliders/chunk worst sampled: 8324
+[CityTest] PASS  floor slab paneling bounded 2D (~2.5 m both axes)
+[CityTest] PASS  structural damage accumulates by material
+[CityTest] PASS  explosion-grade damage respects integrity (wood < concrete < steel)
+[CityTest] PASS  glass calibration vs ItemDB weapon damage
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  destruction deltas persist across rebuild + save/load
+[CityTest] corner doors checked: 1864
+[CityTest] PASS  corner building doors face a street (NW/NE/SE/SW)
+[CityTest] passages checked: 183 blocks pierced
+[CityTest] PASS  intra-block passages pierce both fronts unobstructed
+[CityTest] PASS  interior probe detection + facade sector math
+[CityTest] PASS  flat-roof props placed, bounded, deterministic; attic decks bare
+[CityTest] PASS  rooftop clutter: HVAC duct run, solar panel, satellite dish
+[CityTest] PASS  rooftop water-tower landmark on large retail decks
+[CityTest] PASS  bulkhead roof-exit rim: above doorway lane, gated to stairs
+[CityTest] PASS  bulkhead plant-room details: hatch+vents on cap, gated to stairs
+[CityTest] PASS  bulkhead access ladder: climbable rungs deck->rim, gated to stairs
+[CityTest] PASS  facade balconies: deck+steel lip on upper storeys, gated to multi-storey
+[CityTest] PASS  street awnings: canopy deck + steel lip on ground facade, gated to street wall
+[CityTest] PASS  construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades
+[CityTest] PASS  facade cornices + pilasters: stone ledge bands + pillar strips on historic multi-storey facades
+[CityTest] PASS  facade decay: graffiti / rust / moss visual decals on historic facades
+[CityTest] PASS  broken windows + street litter: missing panes / dark interiors + sidewalk debris on historic facades
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  streetlamp night lights: genuine darkness + avenue-aligned warm pools (deterministic)
+[CityTest] PASS  player lantern: warm handheld light at night with bob (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  window interior glow: faint warm lights behind intact historic glass at night (deterministic)
+[CityTest] PASS  volumetric ambience: ground fog + bloom halo around streetlamps/window glows at night (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  flicker/dead lamps: historic subset sputters or stays dark (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade signage: Prague shop signs + house numbers on historic facades (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade drainpipes: Prague zinc/copper downpipes + eave gutters on historic facades (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade shutters: Prague wooden shutters flanking historic windows (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade flower boxes: Prague terracotta trough + bloom under historic sills (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade window trim: Prague stone lintels above historic windows (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade window sills: Prague stone sill ledges below historic windows (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade window jambs: Prague stone jambs flanking historic windows (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade window keystones: Prague stone keystones above historic windows (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade window corbels: Prague stone sill corbels below historic sills (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade doorway portal: Prague stone jambs + lintel framing historic entrance (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade quoins: Prague rusticated corner stones on historic facades (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] PASS  facade plinth: Prague limestone base socle on historic facades (deterministic)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at catalog
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] asset: wall_2m probe OK exists true fallback false, 25 chunks with probe, caps 4
+[CityTest] PASS  asset pipeline wall_2m deterministic and budget (G9 M2)
+[RoadGen] seed 19049126 total 1136 ms nodes 45 edges 52 (cross 13 filter 0)
+[RoadGen] seed 19053552 total 1348 ms nodes 51 edges 57 (cross 7 filter 1)
+[RoadGen] seed 19109097 total 1789 ms nodes 51 edges 58 (cross 13 filter 0)
+[RoadGen] seed 18986886 total 1866 ms nodes 53 edges 56 (cross 10 filter 0)
+[CityTest] society: plan OK workers 20 distinct 5
+[CityTest] PASS  society work schedule deterministic assignment (G9 M3)
+WARNING: AnimationNodeStateMachinePlayback: parameters/playback has detected one or more looped transitions in a single frame and aborted to prevent an infinite loop. You may need to check the transition settings.
+   at: _transition_to_next_recursive (scene/animation/animation_node_state_machine.cpp:945)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[CityTest] society brain: worker soc_worker_settlement_-3_-1_0 distance did not shrink 16.91 -> 16.92
+[CityTest] FAIL  society work brain scheduling & movement (G9 M3)   ()
+[CityTest] finished with 1 failure(s)

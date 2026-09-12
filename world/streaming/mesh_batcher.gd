@@ -664,26 +664,63 @@ static func wall_cut_hidden(rect_key: String, sight_from: Vector2, sight_to: Vec
 	return Geometry2D.is_point_in_polygon(r.get_center(), tri)
 
 
+## Dollhouse reveal state for a door leaf.
+##
+## CUT is the point of this enum: a leaf whose wall the camera is looking through
+## is cut at the picture rail - the SAME line the wall is cut at - instead of
+## being retired. Removing an entrance outright left a hole in the facade where
+## the camera could see through the frame, which is what a cutaway must never do
+## (the dollhouse shows the building opened up, not gutted).
+##
+## FULL   - untouched leaf: outside the gate's tag, or a storey below the cut.
+## CUT    - entrance leaf on a faded facade, or an interior partition leaf whose
+##          own wall rect (footprint-local "x_z_w_h") sits inside the camera
+##          wedge. The leaf keeps its lower band, its collision and its swing.
+## HIDDEN - the leaf's whole storey sits above the cutaway plane. The ONLY state
+##          that retires a door, and never a sightline decision.
+enum DoorReveal { FULL, CUT, HIDDEN }
+
+
 ## A door leaf must never outlive the wall it is hung in. Exterior leaves carry
 ## the facade side they sit on (stamped by ChunkBuilder from the door manifest
-## edge), so an entrance is retired together with its wall instead of lingering
-## as a floating panel once the cutaway removes that facade. A leaf with no
-## side is an interior partition door: it is exactly the dollhouse content the
-## gate exists to expose, so it only follows the storey rule.
-##
-## The test below is deliberately the same expression as reveal_layer_hidden for
-## a facade layer key, so a leaf and its wall can never disagree: same storey,
-## same facade letter. A leaf one storey below the cutaway keeps its wall and
-## must therefore stay too.
+## edge); interior partition leaves carry the plan rect of the partition they are
+## hung in ("door_wall_cut_key", same "x_z_w_h" payload wallcut: keys use), so a
+## leaf is cut by EXACTLY the test its own wall is cut by - same storey, same
+## facade letter / same wedge. A leaf one storey below the cutaway keeps its wall
+## and must therefore stay whole too.
+static func door_reveal(building_id: String, floor_i: int, facade_side: String,
+		wall_rect_key: String, tag: String, max_floor: int, faded: Array,
+		sight_from := Vector2.INF, sight_to := Vector2.INF) -> int:
+	if max_floor < 0 or tag == "" or building_id != tag:
+		return DoorReveal.FULL
+	if floor_i > max_floor:
+		return DoorReveal.HIDDEN
+	if floor_i != max_floor:
+		return DoorReveal.FULL
+	if facade_side != "":
+		return DoorReveal.CUT if faded.has(facade_side) else DoorReveal.FULL
+	if wall_rect_key == "":
+		return DoorReveal.FULL
+	return DoorReveal.CUT if wall_cut_hidden(wall_rect_key, sight_from, sight_to) else DoorReveal.FULL
+
+
+## Layer-key payload for a door leaf's own partition rect, in the same
+## footprint-local frame the partition rects and wallcut: keys use. Stamped by
+## ChunkBuilder onto the leaf so the gate needs no second geometry lookup.
+static func door_wall_cut_key(rect: Rect2) -> String:
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return ""
+	return "%.2f_%.2f_%.2f_%.2f" % [rect.position.x, rect.position.y,
+			rect.size.x, rect.size.y]
+
+
+## True only when the leaf is retired outright (whole storey above the cutaway).
+## Kept for the harnesses that count "doors removed" as a REGRESSION signal: the
+## gate itself uses door_reveal() so a cut leaf can never be counted as removed.
 static func door_hidden(building_id: String, floor_i: int, facade_side: String,
 		tag: String, max_floor: int, faded: Array) -> bool:
-	if max_floor < 0 or tag == "" or building_id != tag:
-		return false
-	if floor_i > max_floor:
-		return true
-	if facade_side == "" or floor_i != max_floor:
-		return false
-	return faded.has(facade_side)
+	return door_reveal(building_id, floor_i, facade_side, "", tag, max_floor,
+			faded) == DoorReveal.HIDDEN
 
 
 static func reveal_asset_hidden(asset: Dictionary, tag: String,

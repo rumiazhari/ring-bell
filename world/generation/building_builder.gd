@@ -4289,7 +4289,7 @@ static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, 
 	var cut_key := wall_key if wall_key != "" else MeshBatcher.wall_cut_key(pos, size)
 	var bottom := pos.y - size.y * 0.5
 	var top := pos.y + size.y * 0.5
-	var split := ground + fi * fh + 1.05
+	var split := ground + fi * fh + WorldConstants.PICTURE_RAIL_H
 	if bottom < split:
 		var lower_h := minf(top, split) - bottom
 		var lower_col := col

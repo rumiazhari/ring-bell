@@ -13,7 +13,7 @@ extends RefCounted
 ## never silently regenerated into something else.
 
 const CHUNK_SIZE := 64                 # meters per streaming chunk edge
-const GENERATOR_VERSION := 4 # historic street topology, plots and compound ownership change generated worlds
+const GENERATOR_VERSION := 5 # Prague interiors to the depth plan; props hung on walls
 
 # ProjectSettings key so a seed can be forced via override files / CLI.
 const SEED_SETTING := "world/generation/seed"

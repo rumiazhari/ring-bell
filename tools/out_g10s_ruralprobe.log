@@ -1,0 +1,46 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+SCRIPT ERROR: Parse Error: Function "_safe_block_rect()" not found in base self.
+   at: GDScript::reload (res://world/generation/city_plan.gd:649)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "rect" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/generation/city_plan.gd:649)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://world/generation/fringe_plan.gd:0)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://world/generation/world_plan.gd:0)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://world/streaming/fringe_chunk_builder.gd:0)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:0)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://core/autoload/debris_manager.gd:0)
+ERROR: Failed to load script "res://core/autoload/debris_manager.gd" with error "Compilation failed".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
+   at: _build_streamed_city (res://world/main.gd:462)
+   GDScript backtrace (most recent call first):
+       [0] _build_streamed_city (res://world/main.gd:462)
+       [1] _ready (res://world/main.gd:102)
+[RoadGen] seed 19041207 total 820 ms nodes 53 edges 57 (cross 5 filter 0)
+SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
+   at: WorldPlan._init (res://world/generation/world_plan.gd:30)
+   GDScript backtrace (most recent call first):
+       [0] _init (res://world/generation/world_plan.gd:30)
+       [1] _spawn_city_population (res://world/main.gd:477)
+       [2] _ready (res://world/main.gd:109)
+SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
+   at: get_spawn_position (res://world/spawn_points.gd:44)
+   GDScript backtrace (most recent call first):
+       [0] get_spawn_position (res://world/spawn_points.gd:44)
+       [1] _spawn_city_population (res://world/main.gd:480)
+       [2] _ready (res://world/main.gd:109)
+SCRIPT ERROR: Invalid call. Nonexistent function 'set_player' in base 'Nil'.
+   at: _spawn_city_population (res://world/main.gd:485)
+   GDScript backtrace (most recent call first):
+       [0] _spawn_city_population (res://world/main.gd:485)
+       [1] _ready (res://world/main.gd:109)
+WARNING: AnimationNodeStateMachinePlayback: parameters/playback has detected one or more looped transitions in a single frame and aborted to prevent an infinite loop. You may need to check the transition settings.
+   at: _transition_to_next_recursive (scene/animation/animation_node_state_machine.cpp:945)
+[G10P2A] FAIL: world streamed and spawn gate released -- 
+[G10P2A] finished with 1 failure(s)

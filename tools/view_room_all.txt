@@ -1,0 +1,5 @@
+[BoomRoom] station=wall-hug poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=mid-room poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=open-floor poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] station=wall-hug-back poses=120 want=9.05 free=9.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 own_clamp=0 other_clamp=0
+[BoomRoom] finished with 0 failure(s)

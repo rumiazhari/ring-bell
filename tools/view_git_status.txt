@@ -1,0 +1,43 @@
+ M .hermes/autopilot/reports/prague-gameplay-pass/plan-19041208.png
+ M .hermes/autopilot/reports/prague-gameplay-pass/plan-19041209.png
+ M camera/follow_camera.gd
+ M debug/biome_test.gd
+ M debug/cave_test.gd
+ M debug/g10p2b_reveal_test.gd
+ M debug/hydrology_test.gd
+ M debug/q3_ceiling_cap_probe.gd
+ M debug/q3_reveal_capture.gd
+ M debug/road_test.gd
+ M docs/world/PRAGUE-MORPHOLOGY.md
+ M world/buildings/door.gd
+ M world/generation/building_builder.gd
+ M world/generation/historic_interior_plan.gd
+ M world/generation/interior_plan.gd
+ M world/generation/tree_builder.gd
+ M world/generation/world_constants.gd
+ M world/generation/world_seed.gd
+ M world/main.gd
+ M world/streaming/chunk_builder.gd
+ .../reports/prague-gameplay-pass/plan-19041208.png | Bin 724051 -> 745504 bytes
+ .../reports/prague-gameplay-pass/plan-19041209.png | Bin 679216 -> 701975 bytes
+ camera/follow_camera.gd                            | 148 ++++-
+ debug/biome_test.gd                                |   2 +-
+ debug/cave_test.gd                                 |   2 +-
+ debug/g10p2b_reveal_test.gd                        |  43 +-
+ debug/hydrology_test.gd                            |   4 +-
+ debug/q3_ceiling_cap_probe.gd                      |  12 +
+ debug/q3_reveal_capture.gd                         |  40 +-
+ debug/road_test.gd                                 |   4 +-
+ docs/world/PRAGUE-MORPHOLOGY.md                    | 149 ++++-
+ world/buildings/door.gd                            |  80 ++-
+ world/generation/building_builder.gd               |   2 +-
+ world/generation/historic_interior_plan.gd         | 628 +++++++++++++++------
+ world/generation/interior_plan.gd                  |   5 +
+ world/generation/tree_builder.gd                   |  41 +-
+ world/generation/world_constants.gd                |  39 ++
+ world/generation/world_seed.gd                     |   2 +-
+ world/main.gd                                      |  18 +
+ world/streaming/chunk_builder.gd                   | 236 +++++++-
+ world/streaming/chunk_manager.gd                   |  39 +-
+ world/streaming/mesh_batcher.gd                    |  69 ++-
+ 22 files changed, 1279 insertions(+), 284 deletions(-)

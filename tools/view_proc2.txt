@@ -1,0 +1,20 @@
+
+
+ProcessId   : 28700
+CommandLine : "C:\Users\rumia\AppData\Local\uv\cache\archive-v0\N_xIFc8hSS36q3LN\Scripts\godot-ai.exe" attach --port 80
+              00 --ws-port 9500
+
+ProcessId   : 49836
+CommandLine : "C:\Vibe Code project\Godot Project\Godot_v4.7.2-stable_win64.exe" --path . --resolution 1600x900 -- --ci
+              tygreencapture 0
+
+ProcessId   : 12932
+CommandLine : "C:\Vibe Code project\Godot Project\Godot_v4.7.2-stable_win64.exe" --headless --path . -- --q3intecamflut
+              ter
+
+ProcessId   : 48712
+CommandLine : "C:\Vibe Code project\Godot Project\Godot_v4.7.2-stable_win64.exe" --path . --windowed --resolution 1600x
+              900 -- --citygreencapture 0
+
+
+

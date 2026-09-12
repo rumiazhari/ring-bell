@@ -1,0 +1,17 @@
+=== --praguegameplaytest exit=2 elapsed=47s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_praguegameplaytest.txt ===
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 2 failure(s)
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[CityPlan]     BLOCKS sites_loop=3792 split=787 frontage=27041 interiors=6026 dense_min=505 finalize=715 ms
+[CityPlan]   phases support=208 landmarks=1 roads=1497 blocks=38870 ms
+[CityPlan] GENERATED in 40577 ms (seed 19041207)
+[PragueGameplayTest] allocation { "candidates": 1423, "narrow_candidates": 298, "narrow_allocated": 215, "skipped_too_narrow": 6, "failed_fit": 41918, "failed_overlap": 140948, "allocated": 1026, "seal_filled": 21, "seal_stepped": 81, "seal_widened": 109, "seal_unfilled": 177, "seal_gardened": 163, "relief_rejected": 17, "road_rejected": 27, "seal_gap_short": 37 }
+[PragueGameplayTest] actual street elevations / block perimeter = 0.70015019574589
+[PragueGameplayTest] seed=19041207 generation_and_measure_ms=45135 occupied_rooms=18457 area_p10/50/90=[15.47, 19.99, 27.4] room_count_p10/50/90=[2.0, 4.0, 8.0] principal_p50=24.65 tiny_share=0.007 door_degree_gt2=0 invalid_interiors=0 footprint=0.613 frontage=0.631 frontage_width_p10/50/90=[7.25, 10.7, 14.73] floor_rooms_p50=4.00 combat_floors=3435/3743 hall_p50=2.00 street_frontage=0.704 party=0.010 void=0.000 blanks_gt15=55 street_wings=982 facade=982 differs=968 shopfronts=561 blank_internal=1346m blank_boundary=1123m step_lots=78 gardens=163 garden_area=6150m2 garden_frontage=2469m residual_gardens=419 residual_area=85542m2 cafe_lots=20 step_shop_lots=35 seal_gardened=163 seal_unfilled=177
+[PragueGameplayTest] FAIL buildable street frontage >=85%
+[PragueGameplayTest] FAIL no blank frontage run longer than 15m
+[PragueGameplayTest] finished with 2 failure(s)

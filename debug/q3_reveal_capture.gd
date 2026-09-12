@@ -106,9 +106,24 @@ func run() -> void:
 		var dp: Vector3 = d["position"]
 		var yaw := float(d.get("yaw", 0.0))
 		var out := Vector3(sin(yaw + PI * 0.5), 0.0, cos(yaw + PI * 0.5))
+		var side: String = ["N", "E", "S", "W"][clampi(int(d.get("edge", 0)), 0, 3)]
 		await _shot("06_street_door",
 				Vector3(dp.x, ground_y + 1.65, dp.z) + out * 4.2,
 				Vector3(dp.x, ground_y + 1.15, dp.z))
+		# DOOR CUTAWAY PROOF: the entrance's own facade is the faded side, so the
+		# wall and its leaf must both be cut at the picture rail. The leaf stays
+		# in the view - halved - instead of being retired with the wall.
+		var close := Vector3(dp.x, ground_y + 1.30, dp.z) + out * 2.4
+		var close_at := Vector3(dp.x, ground_y + 0.85, dp.z)
+		await _shot("11_door_closeup_full", close, close_at)
+		await _gate_and_shot(batcher, chunk_node, tag, 0, [side], "12_door_closeup_cut",
+				close, close_at, n)
+		await _gate_and_shot(batcher, chunk_node, tag, 0, [side], "09_street_door_cut",
+				Vector3(dp.x, ground_y + 1.65, dp.z) + out * 4.2,
+				Vector3(dp.x, ground_y + 1.15, dp.z), n)
+		await _gate_and_shot(batcher, chunk_node, tag, 0, [side], "10_inside_door_cut",
+				Vector3(dp.x, ground_y + 1.60, dp.z) - out * 3.8,
+				Vector3(dp.x, ground_y + 1.00, dp.z), n)
 	# Second pass: a FLAT-roof building, whose roof layer carries the parapet
 	# ring and the stair bulkhead with its roof-access doorway.
 	var flat := _pick_flat_building(plan, tag)
@@ -258,22 +273,31 @@ func _gate_and_shot(batcher: MeshBatcher, chunk_node: Node3D, tag: String, max_f
 		if hide:
 			hidden_layers.append(key)
 	var doors_hidden := 0
+	var doors_cut := 0
 	for child in chunk_node.get_children():
 		if child is Node3D and child.has_meta("interior_floor"):
-			var dfloor := int(child.get_meta("interior_floor"))
-			var dfacade := str(child.get_meta("door_facade_side", ""))
-			var vis := not MeshBatcher.door_hidden(str(child.get_meta("interior_building_id", "")),
-					dfloor, dfacade, tag, max_floor, faded)
-			(child as Node3D).visible = vis
-			if not vis:
+			# Same rule as ChunkManager._apply_door_reveal: a leaf whose wall is
+			# gone from the camera view is CUT at the picture rail with it.
+			var reveal := MeshBatcher.door_reveal(
+					str(child.get_meta("interior_building_id", "")),
+					int(child.get_meta("interior_floor", -1)),
+					str(child.get_meta("door_facade_side", "")),
+					str(child.get_meta("door_wall_cut_key", "")),
+					tag, max_floor, faded)
+			(child as Node3D).visible = reveal != MeshBatcher.DoorReveal.HIDDEN
+			if child.has_method("set_view_cut"):
+				child.call("set_view_cut", reveal == MeshBatcher.DoorReveal.CUT)
+			if reveal == MeshBatcher.DoorReveal.HIDDEN:
 				doors_hidden += 1
+			elif reveal == MeshBatcher.DoorReveal.CUT:
+				doors_cut += 1
 	var roof_keys: Array[String] = []
 	for key: String in batcher.layer_nodes.keys():
 		if key.begins_with(tag + ":") and key.substr(tag.length() + 1).begins_with("roof"):
 			roof_keys.append(key)
-	print("[Q3Reveal] %s max_floor=%d faded=%s hidden_layers=%d/%d hidden_roof_layers=%d roof_keys=%s doors_hidden=%d" % [
+	print("[Q3Reveal] %s max_floor=%d faded=%s hidden_layers=%d/%d hidden_roof_layers=%d roof_keys=%s doors_hidden=%d doors_cut=%d" % [
 		label, max_floor, str(faded), hidden_layers.size(), batcher.layer_nodes.size(),
-		_count_present(roof_keys, hidden_layers), str(roof_keys), doors_hidden])
+		_count_present(roof_keys, hidden_layers), str(roof_keys), doors_hidden, doors_cut])
 	await _shot(label, cam_pos, cam_target)
 
 

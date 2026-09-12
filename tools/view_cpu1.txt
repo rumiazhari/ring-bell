@@ -1,0 +1,14 @@
+
+
+ProcessId       : 12932
+ParentProcessId : 40876
+CPUs            : 844
+CreationDate    : 12/09/2026 22.43.29
+
+ProcessId       : 32036
+ParentProcessId : 27684
+CPUs            : 92
+CreationDate    : 12/09/2026 22.56.25
+
+
+

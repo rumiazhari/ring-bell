@@ -38,6 +38,10 @@ var interactable: InteractableComponent
 var _frame: StaticBody3D
 var _leaf: RigidBody3D
 var _hinge: HingeJoint3D
+var _leaf_lower: MeshInstance3D      # below the picture rail - never removed
+var _leaf_upper: MeshInstance3D      # above it - the band the cutaway may drop
+var _view_cut := false
+var _view_hidden := false
 var _open_angle := 0.0        # signed radians; 0 = closed
 var _target_angle_cached := 0.0
 var _drive_ticks := 0
@@ -104,16 +108,21 @@ func _ready() -> void:
 	var leaf_size := Vector3(w - 0.08, h - 0.04, 0.09)
 	var leaf_center := Vector3(-side * w * 0.5, h * 0.5, 0)
 
-	var mesh_instance := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = leaf_size
-	mesh_instance.mesh = box
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color("4a3623")
 	mat.roughness = 0.85
-	mesh_instance.material_override = mat
-	mesh_instance.position = leaf_center
-	_leaf.add_child(mesh_instance)
+	# TWO PIECES, one cut line. The leaf is split at the picture rail so the
+	# dollhouse cutaway can drop the band above it exactly like the wall the leaf
+	# is hung in (see set_view_cut) instead of retiring the whole door. The piece
+	# below the rail is never removed by any camera state.
+	var leaf_bottom := leaf_center.y - leaf_size.y * 0.5
+	var leaf_top := leaf_center.y + leaf_size.y * 0.5
+	var cut_y := clampf(WorldConstants.PICTURE_RAIL_H, leaf_bottom, leaf_top)
+	_leaf_lower = _leaf_piece(_leaf, mat, leaf_center.x, leaf_size.x, leaf_size.z,
+		leaf_bottom, cut_y, "LeafLower")
+	if leaf_top - cut_y > 0.02:
+		_leaf_upper = _leaf_piece(_leaf, mat, leaf_center.x, leaf_size.x, leaf_size.z,
+			cut_y, leaf_top, "LeafUpper")
 
 	var shape := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
@@ -148,6 +157,63 @@ func _ready() -> void:
 
 
 # --- Public API --------------------------------------------------------------
+
+## One slab of the leaf between two heights (metres, leaf-local). Hung under the
+## physics body, so every piece swings with the door.
+static func _leaf_piece(parent: Node3D, mat: StandardMaterial3D, center_x: float,
+		width: float, depth: float, y0: float, y1: float, piece_name: String) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = piece_name
+	var box := BoxMesh.new()
+	box.size = Vector3(width, maxf(y1 - y0, 0.01), depth)
+	mi.mesh = box
+	mi.material_override = mat
+	mi.position = Vector3(center_x, (y0 + y1) * 0.5, 0.0)
+	parent.add_child(mi)
+	return mi
+
+
+# --- Public API --------------------------------------------------------------
+
+## Dollhouse cutaway: drop the leaf's band above the picture rail, exactly like
+## the wall the leaf is hung in. The lower band and every physical property
+## (collision, mass, swing, passthrough, prompt) are untouched, so a CUT door
+## still blocks the player and still swings open.
+func set_view_cut(cut: bool) -> void:
+	# A leaf that ends below the rail has no band to drop - the cut is a no-op
+	# rather than a claim about geometry that does not exist.
+	cut = cut and _leaf_upper != null
+	if _view_cut == cut:
+		return
+	_view_cut = cut
+	_apply_view_state()
+
+
+## The door's whole storey sits above the cutaway plane: no leaf at all. This is
+## the ONLY state that retires a door - it is never used to clear a sightline.
+func set_view_hidden(hidden: bool) -> void:
+	if _view_hidden == hidden:
+		return
+	_view_hidden = hidden
+	_apply_view_state()
+
+
+## Render state only. A cut leaf keeps CASTING SHADOWS for the band it lost - the
+## same treatment hidden structure gets (locked decision 3) - so the dollhouse
+## interior stays lit exactly like the full building.
+func _apply_view_state() -> void:
+	visible = not _view_hidden
+	if _leaf_upper != null:
+		_leaf_upper.cast_shadow = (
+			MeshInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY if _view_cut
+			else MeshInstance3D.SHADOW_CASTING_SETTING_ON)
+
+
+## Read-back for probes/tests: "full", "cut" or "hidden".
+func view_state_name() -> String:
+	if _view_hidden:
+		return "hidden"
+	return "cut" if _view_cut else "full"
 
 func toggle() -> void:
 	match state:

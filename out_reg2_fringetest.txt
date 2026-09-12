@@ -1,0 +1,287 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 1286 ms nodes 53 edges 57 (cross 9 filter 0)
+[RoadGen] seed 20275774 total 1389 ms nodes 50 edges 56 (cross 8 filter 0)
+[FringeTest] PASS: fringe same-seed identical count
+[FringeTest] PASS: fringe same-seed identical ids/centers
+[FringeTest] PASS: fringe_buildings_in shuffled identical
+[FringeTest] PASS: different seed fringe differs
+[FringeTest] PASS: negative fringe has buildings
+[FringeTest] PASS: no hard radial: density varies at same radius
+[FringeTest] PASS: inner fringe has buildings
+[FringeTest] PASS: outer fringe has buildings
+[FringeTest] PASS: peri urban has buildings
+[FringeTest] PASS: density gradient inner>outer
+[FringeTest] PASS: density gradient outer>peri
+[FringeTest] PASS: road-oriented >70% within 40m
+[FringeTest] PASS: door faces road >60%
+[FringeTest] PASS: no water fringe_-1_-2_0
+[FringeTest] PASS: no floodplain fringe_-1_-2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-2_0
+[FringeTest] PASS: no water fringe_-1_-2_2
+[FringeTest] PASS: no floodplain fringe_-1_-2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-2_2
+[FringeTest] PASS: no water fringe_-1_-2_5
+[FringeTest] PASS: no floodplain fringe_-1_-2_5
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-2_5
+[FringeTest] PASS: no water fringe_-1_-3_2
+[FringeTest] PASS: no floodplain fringe_-1_-3_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-3_2
+[FringeTest] PASS: no water fringe_-1_-4_0
+[FringeTest] PASS: no floodplain fringe_-1_-4_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-4_0
+[FringeTest] PASS: no water fringe_-1_-4_1
+[FringeTest] PASS: no floodplain fringe_-1_-4_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_-4_1
+[FringeTest] PASS: no water fringe_-1_1_3
+[FringeTest] PASS: no floodplain fringe_-1_1_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_1_3
+[FringeTest] PASS: no water fringe_-1_2_0
+[FringeTest] PASS: no floodplain fringe_-1_2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_2_0
+[FringeTest] PASS: no water fringe_-1_2_1
+[FringeTest] PASS: no floodplain fringe_-1_2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_2_1
+[FringeTest] PASS: no water fringe_-1_2_2
+[FringeTest] PASS: no floodplain fringe_-1_2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_2_2
+[FringeTest] PASS: no water fringe_-1_2_4
+[FringeTest] PASS: no floodplain fringe_-1_2_4
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_2_4
+[FringeTest] PASS: no water fringe_-1_2_5
+[FringeTest] PASS: no floodplain fringe_-1_2_5
+[FringeTest] PASS: dist_water > BANK+2 fringe_-1_2_5
+[FringeTest] PASS: no water fringe_-2_-1_2
+[FringeTest] PASS: no floodplain fringe_-2_-1_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_-1_2
+[FringeTest] PASS: no water fringe_-2_-2_1
+[FringeTest] PASS: no floodplain fringe_-2_-2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_-2_1
+[FringeTest] PASS: no water fringe_-2_-2_4
+[FringeTest] PASS: no floodplain fringe_-2_-2_4
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_-2_4
+[FringeTest] PASS: no water fringe_-2_-2_6
+[FringeTest] PASS: no floodplain fringe_-2_-2_6
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_-2_6
+[FringeTest] PASS: no water fringe_-2_0_1
+[FringeTest] PASS: no floodplain fringe_-2_0_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_0_1
+[FringeTest] PASS: no water fringe_-2_0_2
+[FringeTest] PASS: no floodplain fringe_-2_0_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_0_2
+[FringeTest] PASS: no water fringe_-2_1_0
+[FringeTest] PASS: no floodplain fringe_-2_1_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_1_0
+[FringeTest] PASS: no water fringe_-2_2_0
+[FringeTest] PASS: no floodplain fringe_-2_2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_2_0
+[FringeTest] PASS: no water fringe_-2_2_1
+[FringeTest] PASS: no floodplain fringe_-2_2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-2_2_1
+[FringeTest] PASS: no water fringe_-3_-1_1
+[FringeTest] PASS: no floodplain fringe_-3_-1_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_-1_1
+[FringeTest] PASS: no water fringe_-3_-1_2
+[FringeTest] PASS: no floodplain fringe_-3_-1_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_-1_2
+[FringeTest] PASS: no water fringe_-3_-1_3
+[FringeTest] PASS: no floodplain fringe_-3_-1_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_-1_3
+[FringeTest] PASS: no water fringe_-3_-2_0
+[FringeTest] PASS: no floodplain fringe_-3_-2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_-2_0
+[FringeTest] PASS: no water fringe_-3_-2_2
+[FringeTest] PASS: no floodplain fringe_-3_-2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_-2_2
+[FringeTest] PASS: no water fringe_-3_0_0
+[FringeTest] PASS: no floodplain fringe_-3_0_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_0_0
+[FringeTest] PASS: no water fringe_-3_0_1
+[FringeTest] PASS: no floodplain fringe_-3_0_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_0_1
+[FringeTest] PASS: no water fringe_-3_0_2
+[FringeTest] PASS: no floodplain fringe_-3_0_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_0_2
+[FringeTest] PASS: no water fringe_-3_2_0
+[FringeTest] PASS: no floodplain fringe_-3_2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_2_0
+[FringeTest] PASS: no water fringe_-3_2_1
+[FringeTest] PASS: no floodplain fringe_-3_2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-3_2_1
+[FringeTest] PASS: no water fringe_-4_-1_0
+[FringeTest] PASS: no floodplain fringe_-4_-1_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-4_-1_0
+[FringeTest] PASS: no water fringe_-4_0_0
+[FringeTest] PASS: no floodplain fringe_-4_0_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_-4_0_0
+[FringeTest] PASS: no water fringe_-4_0_1
+[FringeTest] PASS: no floodplain fringe_-4_0_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_-4_0_1
+[FringeTest] PASS: no water fringe_0_-2_0
+[FringeTest] PASS: no floodplain fringe_0_-2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_-2_0
+[FringeTest] PASS: no water fringe_0_-2_5
+[FringeTest] PASS: no floodplain fringe_0_-2_5
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_-2_5
+[FringeTest] PASS: no water fringe_0_-3_2
+[FringeTest] PASS: no floodplain fringe_0_-3_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_-3_2
+[FringeTest] PASS: no water fringe_0_1_1
+[FringeTest] PASS: no floodplain fringe_0_1_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_1_1
+[FringeTest] PASS: no water fringe_0_1_2
+[FringeTest] PASS: no floodplain fringe_0_1_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_1_2
+[FringeTest] PASS: no water fringe_0_1_3
+[FringeTest] PASS: no floodplain fringe_0_1_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_1_3
+[FringeTest] PASS: no water fringe_0_2_0
+[FringeTest] PASS: no floodplain fringe_0_2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_2_0
+[FringeTest] PASS: no water fringe_0_2_1
+[FringeTest] PASS: no floodplain fringe_0_2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_2_1
+[FringeTest] PASS: no water fringe_0_2_2
+[FringeTest] PASS: no floodplain fringe_0_2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_2_2
+[FringeTest] PASS: no water fringe_0_2_3
+[FringeTest] PASS: no floodplain fringe_0_2_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_2_3
+[FringeTest] PASS: no water fringe_0_2_5
+[FringeTest] PASS: no floodplain fringe_0_2_5
+[FringeTest] PASS: dist_water > BANK+2 fringe_0_2_5
+[FringeTest] PASS: no water fringe_1_-1_0
+[FringeTest] PASS: no floodplain fringe_1_-1_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-1_0
+[FringeTest] PASS: no water fringe_1_-1_1
+[FringeTest] PASS: no floodplain fringe_1_-1_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-1_1
+[FringeTest] PASS: no water fringe_1_-1_2
+[FringeTest] PASS: no floodplain fringe_1_-1_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-1_2
+[FringeTest] PASS: no water fringe_1_-1_3
+[FringeTest] PASS: no floodplain fringe_1_-1_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-1_3
+[FringeTest] PASS: no water fringe_1_-2_0
+[FringeTest] PASS: no floodplain fringe_1_-2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-2_0
+[FringeTest] PASS: no water fringe_1_-2_1
+[FringeTest] PASS: no floodplain fringe_1_-2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-2_1
+[FringeTest] PASS: no water fringe_1_-2_2
+[FringeTest] PASS: no floodplain fringe_1_-2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-2_2
+[FringeTest] PASS: no water fringe_1_-2_3
+[FringeTest] PASS: no floodplain fringe_1_-2_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-2_3
+[FringeTest] PASS: no water fringe_1_-4_0
+[FringeTest] PASS: no floodplain fringe_1_-4_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-4_0
+[FringeTest] PASS: no water fringe_1_-4_1
+[FringeTest] PASS: no floodplain fringe_1_-4_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_-4_1
+[FringeTest] PASS: no water fringe_1_0_3
+[FringeTest] PASS: no floodplain fringe_1_0_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_0_3
+[FringeTest] PASS: no water fringe_1_0_6
+[FringeTest] PASS: no floodplain fringe_1_0_6
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_0_6
+[FringeTest] PASS: no water fringe_1_1_0
+[FringeTest] PASS: no floodplain fringe_1_1_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_1_0
+[FringeTest] PASS: no water fringe_1_1_1
+[FringeTest] PASS: no floodplain fringe_1_1_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_1_1
+[FringeTest] PASS: no water fringe_1_1_4
+[FringeTest] PASS: no floodplain fringe_1_1_4
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_1_4
+[FringeTest] PASS: no water fringe_1_1_6
+[FringeTest] PASS: no floodplain fringe_1_1_6
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_1_6
+[FringeTest] PASS: no water fringe_1_2_1
+[FringeTest] PASS: no floodplain fringe_1_2_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_2_1
+[FringeTest] PASS: no water fringe_1_2_2
+[FringeTest] PASS: no floodplain fringe_1_2_2
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_2_2
+[FringeTest] PASS: no water fringe_1_2_3
+[FringeTest] PASS: no floodplain fringe_1_2_3
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_2_3
+[FringeTest] PASS: no water fringe_1_2_5
+[FringeTest] PASS: no floodplain fringe_1_2_5
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_2_5
+[FringeTest] PASS: no water fringe_1_3_0
+[FringeTest] PASS: no floodplain fringe_1_3_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_1_3_0
+[FringeTest] PASS: no water fringe_3_-1_0
+[FringeTest] PASS: no floodplain fringe_3_-1_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_3_-1_0
+[FringeTest] PASS: no water fringe_3_-1_1
+[FringeTest] PASS: no floodplain fringe_3_-1_1
+[FringeTest] PASS: dist_water > BANK+2 fringe_3_-1_1
+[FringeTest] PASS: no water fringe_3_-2_0
+[FringeTest] PASS: no floodplain fringe_3_-2_0
+[FringeTest] PASS: dist_water > BANK+2 fringe_3_-2_0
+[FringeTest] PASS: no water fringe_lm_1_-2_b0
+[FringeTest] PASS: no floodplain fringe_lm_1_-2_b0
+[FringeTest] PASS: dist_water > BANK+2 fringe_lm_1_-2_b0
+[FringeTest] PASS: no water fringe_lm_1_-2_b1
+[FringeTest] PASS: no floodplain fringe_lm_1_-2_b1
+[FringeTest] PASS: dist_water > BANK+2 fringe_lm_1_-2_b1
+[FringeTest] PASS: no fringe overlap in sample
+[FringeTest] PASS: no city overlap
+[FringeTest] PASS: slope fringe_-1_-2_0 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_-2_0
+[FringeTest] PASS: slope fringe_-1_-2_2 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_-2_2
+[FringeTest] PASS: slope fringe_-1_-2_5 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_-2_5
+[FringeTest] PASS: slope fringe_-1_-3_2 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_-3_2
+[FringeTest] PASS: slope fringe_-1_-4_0 < 22.0
+[FringeTest] PASS: not cliff fringe_-1_-4_0
+[FringeTest] PASS: slope fringe_-1_-4_1 < 22.0
+[FringeTest] PASS: not cliff fringe_-1_-4_1
+[FringeTest] PASS: slope fringe_-1_1_3 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_1_3
+[FringeTest] PASS: slope fringe_-1_2_0 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_2_0
+[FringeTest] PASS: slope fringe_-1_2_1 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_2_1
+[FringeTest] PASS: slope fringe_-1_2_2 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_2_2
+[FringeTest] PASS: slope fringe_-1_2_4 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_2_4
+[FringeTest] PASS: slope fringe_-1_2_5 < 18.0
+[FringeTest] PASS: not cliff fringe_-1_2_5
+[FringeTest] PASS: fringe manifest shuffled equality
+[FringeTest] PASS: fringe center ownership +X no duplication
+[FringeTest] PASS: fringe center ownership -X no duplication
+[FringeTest] PASS: fringe center ownership +Z no duplication
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe visible at 400m chunk
+[FringeTest] PASS: fringe doors exist
+[FringeTest] PASS: chunk (0, 0) fringe verts <=2800
+[FringeTest] PASS: chunk (0, 0) fringe collider <=1
+[FringeTest] PASS: chunk (1, 0) fringe verts <=2800
+[FringeTest] PASS: chunk (1, 0) fringe collider <=1
+[FringeTest] PASS: chunk (0, 1) fringe verts <=2800
+[FringeTest] PASS: chunk (0, 1) fringe collider <=1
+[FringeTest] PASS: chunk (-1, -1) fringe verts <=2800
+[FringeTest] PASS: chunk (-1, -1) fringe collider <=1
+[FringeTest] PASS: chunk (6, 4) fringe verts <=2800
+[FringeTest] PASS: chunk (6, 4) fringe collider <=1
+[FringeTest] PASS: chunk (-4, 2) fringe verts <=2800
+[FringeTest] PASS: chunk (-4, 2) fringe collider <=1
+[FringeTest] PASS: archetype diversity >=5
+[FringeTest] PASS: has industrial archetype
+[FringeTest] PASS: has residential archetype
+[FringeTest] PASS: landmarks sparse 2-40
+[FringeTest] PASS: landmarks spacing >=180
+[FringeTest] PASS: industrial near primary >30%
+[FringeTest] finished with 0 failure(s)

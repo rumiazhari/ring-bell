@@ -1,0 +1,6 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 816 ms nodes 53 edges 57 (cross 5 filter 1)
+WORKER soc_worker_settlement_-3_-1_0 home=(-2192.636, -800.7318) work=(-2208.996, -796.4341) dist=16.9142436981201 work_kind=?
+   building rural_settlement_-3_-1_0_1 kind=barn center=(-2210.608, -798.8169) fp=(8.293736, 12.10295) contract=false at_home=false at_work=true segment_crosses=true

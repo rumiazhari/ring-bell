@@ -37,6 +37,14 @@ const MIN_COLLIDE_DISTANCE := 1.8  # never collapse the lens into the player
 const COLLIDE_ORIGIN_H := 1.05     # ray leaves the player's chest, not their feet
 const COLLIDE_SNAP_IN := true      # shrink instantly, ease back out
 const COLLIDE_GROW_SPEED := 6.0
+## INTERIOR SHELL EXEMPTION: the geometry of the building the player is standing
+## in is the layer the interior presentation CUTS AWAY from the camera, so the
+## boom has to see through it rather than clamp to it (see _resolve_boom_length).
+const SHELL_MAX_SKIP := 4          # in-shell faces one boom length may cross
+const SHELL_SLIP_M := 0.04         # step past a skipped face before re-casting
+const SHELL_INSET_M := 0.02        # a party wall stays the NEIGHBOUR's face
+const SHELL_WALL_NORMAL_Y := 0.5   # |normal.y| below this = a VERTICAL face
+const SHELL_FLAT_NORMAL_Y := -0.35 # legacy "downward" test, shell-less callers
 
 var target: Node3D = null
 
@@ -55,6 +63,17 @@ var _boom := DEFAULT_DISTANCE
 var _collide := true               # RB_CAM_COLLIDE=0 disables (A/B capture)
 var _pitch := PITCH_DEG
 var _interior := false
+## Footprint band of the building the player is standing in, handed over by the
+## world (CityInteriorState.shell_of) while interior mode is active: the
+## plan-space rect, the yaw that rotates it into the world, and the building's
+## vertical extent in world Y. Empty means "unknown", which falls back to the
+## pre-shell behaviour.
+var _shell_rect := Rect2()
+var _shell_yaw := 0.0
+var _shell_y := Vector2.ZERO
+## RB_CAM_SHELL_OFF=1 replays the pre-shell rule for A/B captures: in-shell faces
+## are then judged only by their normal (the behaviour the exemption replaced).
+var _shell_ab := false
 var _shake := 0.0
 var _camera: Camera3D
 var _cam_base := Vector3.ZERO      # un-shaken boom position
@@ -63,6 +82,7 @@ var _cam_base := Vector3.ZERO      # un-shaken boom position
 func _ready() -> void:
 	add_to_group(&"camera_rig")
 	_collide = OS.get_environment("RB_CAM_COLLIDE") != "0"
+	_shell_ab = OS.get_environment("RB_CAM_SHELL_OFF") == "1"
 	_camera = Camera3D.new()
 	_camera.fov = 55.0
 	add_child(_camera)
@@ -92,8 +112,18 @@ func _wanted_boom_length() -> float:
 
 
 ## Boom length that keeps line of sight: cast from the player's chest toward the
-## wanted lens position and stop short of the first solid hit. Without this the
+## wanted lens position and stop short of the first SOLID hit. Without this the
 ## lens sits inside roofs/facades and the player sees a slab filling the frame.
+##
+## The one exception is the building the player is STANDING IN. Its geometry is
+## the interior presentation's cutaway layer - the world hides the pieces between
+## the camera and the player (collision and shadows stay) - so clamping to it
+## means clamping to something the player cannot even see. That is what made the
+## view pump in and out while walking near a wall indoors: the boom collapsed
+## onto the hidden facade (~1.8 m) for as long as the ray grazed it, and sprang
+## straight back to the interior length the moment it did not. Faces landing
+## inside the player's own footprint band are therefore stepped over; the first
+## face of any OTHER building still stops the boom.
 func _resolve_boom_length() -> float:
 	var want := _wanted_boom_length()
 	if not _collide:
@@ -108,24 +138,89 @@ func _resolve_boom_length() -> float:
 	var wdir := (global_transform.basis * _boom_dir_local()).normalized()
 	if wdir.length_squared() < 0.5:
 		return want
-	var q := PhysicsRayQueryParameters3D.create(
-			origin, origin + wdir * (want + COLLIDE_MARGIN))
+	var q := PhysicsRayQueryParameters3D.create(origin, origin + wdir * want)
 	q.collide_with_areas = false
 	q.collide_with_bodies = true
 	var body := target if target is CollisionObject3D else null
 	if body != null:
 		q.exclude = [body]
-	var hit := space.intersect_ray(q)
-	if hit.is_empty():
-		return want
-	# Indoors the boom aims at the ceiling above the player, and that plane is
-	# the storey slab the interior presentation is built around (the cutaway
-	# layer). Clamping to it would collapse the interior view into a head cam,
-	# so downward-facing hits are ignored while the rig is in interior mode.
-	if _interior and (hit["normal"] as Vector3).y < -0.35:
-		return want
-	var dist := origin.distance_to(hit["position"]) - COLLIDE_MARGIN
-	return clampf(dist, MIN_COLLIDE_DISTANCE, want)
+	var reach := want + COLLIDE_MARGIN
+	var from := origin
+	var steps := 0
+	for _step in range(SHELL_MAX_SKIP + 1):
+		var travel := reach - from.distance_to(origin)
+		if travel <= 0.05:
+			break
+		q.from = from
+		q.to = from + wdir * travel
+		var hit := space.intersect_ray(q)
+		if hit.is_empty():
+			return want
+		var hp: Vector3 = hit["position"]
+		if _skippable(hit, hp):
+			from = hp + wdir * SHELL_SLIP_M
+			steps += 1
+			continue
+		# Legacy rule (no footprint handed over, or RB_CAM_SHELL_OFF=1 A/B): keep
+		# forgiving the storey slab above the player's head, as this used to.
+		if _interior and (_shell_ab or _shell_rect.size.x <= 0.0) \
+				and (hit["normal"] as Vector3).y < SHELL_FLAT_NORMAL_Y:
+			return want
+		var d := origin.distance_to(hp)
+		var clamped := clampf(d - COLLIDE_MARGIN, MIN_COLLIDE_DISTANCE, want)
+		_shell_diag(hit, hp, d, want, clamped, steps)
+		return clamped
+	return want
+
+
+## RB_CAM_SHELL_DIAG=1 names the face that stopped the boom and why the shell
+## exemption did not step over it: the attribution step when an interior clamp
+## has no face the player can see.
+func _shell_diag(hit: Dictionary, hp: Vector3, d: float, want: float,
+		boom: float, steps: int) -> void:
+	if OS.get_environment("RB_CAM_SHELL_DIAG") == "":
+		return
+	var coll: Variant = hit.get("collider")
+	var ny := (hit["normal"] as Vector3).y
+	var local := CityPlan._rotate_plan_point(_shell_rect.get_center(),
+			Vector2(hp.x, hp.z), -_shell_yaw)
+	var inset := SHELL_INSET_M if absf(ny) < SHELL_WALL_NORMAL_Y else 0.0
+	print("[CamShellDiag] boom=%.2f want=%.2f yaw=%.3f d=%.2f n_y=%.2f in_shell=%s ab=%s steps=%d interior=%s local=%s rect=%s inset=%.2f inside=%s band=%s y=%.2f coll=%s" % [
+			boom, want, _yaw, d, ny,
+			str(_hit_in_shell(hp, ny)), str(_shell_ab), steps, str(_interior),
+			"%.2f,%.2f" % [local.x, local.y], str(_shell_rect), inset,
+			str(_shell_rect.grow(-inset).has_point(local)), str(_shell_y), hp.y,
+			coll.get_class() if coll is Object else "null"])
+
+
+## A face the boom may look through because the interior presentation already
+## cuts it away: inside the player's own footprint band AND static world
+## geometry. A body inside the shell (prop, actor) still blocks the lens.
+func _skippable(hit: Dictionary, hp: Vector3) -> bool:
+	if _shell_ab or not _hit_in_shell(hp, (hit["normal"] as Vector3).y):
+		return false
+	var collider: Variant = hit.get("collider")
+	return collider == null or collider is StaticBody3D
+
+
+## Is this world-space hit inside the footprint band of the building the player
+## is in? Faces lying exactly ON the boundary are ambiguous - the party wall
+## shared with the neighbour lives there and is NOT cut away, so it must still
+## stop the boom - but so does the player's own slab where it meets its own
+## wall. The normal settles it: a VERTICAL face on the boundary is that party
+## wall (inset a hair, so it keeps blocking); a FLAT one is the room's own
+## ceiling/slab corner (no inset - it is the shell the cutaway hides).
+func _hit_in_shell(p: Vector3, normal_y: float) -> bool:
+	if _shell_rect.size.x <= 0.0 or _shell_rect.size.y <= 0.0:
+		return false
+	if p.y < _shell_y.x or p.y > _shell_y.y:
+		return false
+	# Back into the footprint's own plan frame the way world/main.gd does it,
+	# through the same helper that built the transform (-yaw is the inverse).
+	var local := CityPlan._rotate_plan_point(_shell_rect.get_center(),
+			Vector2(p.x, p.z), -_shell_yaw)
+	var inset := SHELL_INSET_M if absf(normal_y) < SHELL_WALL_NORMAL_Y else 0.0
+	return _shell_rect.grow(-inset).has_point(local)
 
 
 ## P0-4: world position of the ACTUAL Camera3D lens (not the player-follow
@@ -163,6 +258,31 @@ func set_interior(interior: bool) -> void:
 	if _interior == interior:
 		return
 	_interior = interior
+	if not interior:
+		clear_interior_shell()
+
+
+## The world hands the rig the footprint band of the building the player is
+## inside so the boom can look THROUGH the cutaway layer instead of clamping to
+## it. An empty/degenerate rect withdraws it.
+func set_interior_shell(rect: Rect2, yaw: float, y_band: Vector2) -> void:
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0 or y_band.y <= y_band.x:
+		clear_interior_shell()
+		return
+	_shell_rect = rect
+	_shell_yaw = yaw
+	_shell_y = y_band
+
+
+func clear_interior_shell() -> void:
+	_shell_rect = Rect2()
+	_shell_yaw = 0.0
+	_shell_y = Vector2.ZERO
+
+
+## Footprint band currently exempted from boom collision (empty = none).
+func interior_shell_rect() -> Rect2:
+	return _shell_rect
 
 
 func is_interior() -> bool:

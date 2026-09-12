@@ -1,0 +1,18 @@
+=== --q3boomroom exit=0 elapsed=7s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_q3boomroom.txt ===
+[BoomRoom] finished with 0 failure(s)
+--- tail ---
+[BoomRoomDiag] yaw=336.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=338.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=340.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=342.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=344.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=346.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=348.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=350.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=352.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=354.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=356.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=358.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoomDiag] yaw=360.0 boom=9.00 want=16.00 d=-1.00 n_y=0.00 in_shell=false party=false
+[BoomRoom] station=open-floor poses=181 want=16.00 raw_min=9.00 raw_max=9.00 rendered_range=0.00 hidden_clamp=0 party_clamp=0
+[BoomRoom] finished with 0 failure(s)

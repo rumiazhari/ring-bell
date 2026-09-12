@@ -1,0 +1,11 @@
+=== --q3boomroom exit=1 elapsed=4s log=C:\Vibe Code project\Godot Project\ring-bell\tools\out_q3boomroom.txt ===
+[BoomRoom] FAIL station=wall-hug boom pulled in by the room the player is IN on 43 poses - the cutaway hides that geometry, so the lens steps with no visible cause
+[BoomRoom] finished with 1 failure(s) (legacy rule: RB_CAM_SHELL_OFF=1)
+--- tail ---
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[BoomRoom] station=wall-hug poses=120 want=9.05 free=9.00 raw_min=1.80 raw_max=9.00 rendered_range=7.20 own_clamp=43 other_clamp=0
+[BoomRoom] FAIL station=wall-hug boom pulled in by the room the player is IN on 43 poses - the cutaway hides that geometry, so the lens steps with no visible cause
+[BoomRoom] INFO station=wall-hug rendered boom moved 7.20 m, all of it own-geometry: this is the reported pump
+[BoomRoom] finished with 1 failure(s) (legacy rule: RB_CAM_SHELL_OFF=1)

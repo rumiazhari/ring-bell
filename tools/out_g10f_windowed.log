@@ -1,0 +1,36 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+Vulkan 1.4.341 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce RTX 5060 Laptop GPU
+
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
+[RoadGen] seed 19041207 total 860 ms nodes 53 edges 57 (cross 5 filter 0)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+WARNING: AnimationNodeStateMachinePlayback: parameters/playback has detected one or more looped transitions in a single frame and aborted to prevent an infinite loop. You may need to check the transition settings.
+   at: _transition_to_next_recursive (scene/animation/animation_node_state_machine.cpp:945)
+[G10P2A] PASS: world streamed and spawn gate released
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[G10P2A] city capture res://captures/g10p2a_city_building_exterior.png err=0 at (-56.27685, 1.6, 50.51783)
+[G10P2A] city capture res://captures/g10p2a_city_building_door.png err=0 at (-45.77685, 1.6, 29.58266)
+[G10P2A] city capture res://captures/g10p2a_city_building_interior.png err=0 at (-47.27685, 1.6, 29.58266)
+[G10P2A] city capture res://captures/g10p2a_city_building_roof.png err=0 at (-56.27685, 18.5, 25.58266)
+[G10P2A] PASS: city windowed captures saved
+[G10P2A] teleported to rural house rural_settlement_0_1_1_0 at chunk (5, 24) (dist 1602 m, cottage 7x8.3)
+[AssetPipeline] asset wall_2m resolve exists true fallback false at res://art/modules/wall_2m.glb
+[G10P2A] PASS: rural house chunk materialized after teleport
+[G10P2A] PASS: universal assembler evidence found in live manifest
+[G10P2A] PASS: rural door CLOSED blocks the aperture
+[G10P2A] PASS: rural door OPEN leaves the aperture physically clear
+[G10P2A] PASS: structural wall beside the door blocks
+[G10P2A] PASS: contract house has window apertures
+[G10P2A] PASS: window aperture holds a real pane in the wall
+[G10P2A] PASS: interior floor slab at grade (walkable floor)
+[G10P2A] PASS: single-storey house needs no vertical circulation
+[G10P2A] PASS: gabled roof assembled
+[G10P2A] PASS: interior program present
+[G10P2A] capture res://captures/g10p2a_rural_house_exterior.png err=0
+[G10P2A] capture res://captures/g10p2a_rural_house_door.png err=0
+[G10P2A] capture res://captures/g10p2a_rural_house_interior.png err=0
+[G10P2A] PASS: all windowed captures saved
+[G10P2A] finished with 0 failure(s)

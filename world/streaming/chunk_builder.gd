@@ -137,6 +137,7 @@ static func fill_batcher(b: MeshBatcher, plan: CityPlan, coord: Vector2i,
 	var _t_build := Time.get_ticks_usec()
 	_scatter_props(b, plan, rect, coord, world_plan)
 	_plant_garden_trees(b, plan, rect, world_plan)
+	_plant_city_greens(b, plan, rect, coord, world_plan)
 	if debug_profile:
 		_slow.sort_custom(func(a: Array, c: Array) -> bool: return float(a[1]) > float(c[1]))
 		print("[ChunkPlan] %s roads=%.0f pave=%.0f blocks=%.0f owned=%.0f buildings=%.0f props=%.0f TOTAL=%.0f ms" % [
@@ -221,6 +222,13 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 					var door2 := Door.new()
 					door2.set_meta("interior_building_id", str(grounded_spec["id"]))
 					door2.set_meta("interior_floor", fi)
+					# The leaf's wall rect in footprint-local metres - the same frame
+					# wall_cut_key()/wallcut: keys use - so the gate needs no second
+					# geometry lookup to decide whether this leaf's wall is cut.
+					var door_wall: Rect2 = dm2.get("wall_rect", Rect2()) as Rect2
+					door_wall.position -= (grounded_spec["rect"] as Rect2).position
+					door2.set_meta("door_wall_cut_key",
+							MeshBatcher.door_wall_cut_key(door_wall))
 					door2.name = String(dm2["id"])
 					door2.setup(dm2)
 					chunk.add_child(door2)
@@ -1244,6 +1252,199 @@ static func _park(b: MeshBatcher, plan: CityPlan, block: Dictionary,
 			{"seed": tree_seed, "yaw": tree_yaw}))
 
 
+## Fill the city's blank ground with the real tree species.
+##
+## Before this pass the city carried no real trees at all: `_park` plants the
+## TreeBuilder species, but the city core has no park blocks, so the only city
+## tree was the two-box proxy in `_plant_garden_trees`. The wide paved
+## pavements, the open block interiors and the plaza rims - exactly the
+## surfaces a player sees as empty - stayed bare. This pass plants the species
+## mix the parks use on a lattice anchored to the GLOBAL grid, so neighbouring
+## chunks continue each other's rows instead of leaving a bald strip at every
+## seam, and it never plants the same tree twice.
+static func _plant_city_greens(b: MeshBatcher, plan: CityPlan, rect: Rect2,
+		coord: Vector2i, world_plan: WorldPlan = null) -> void:
+	var step := WorldConstants.CITY_TREE_LATTICE_M
+	var jitter := WorldConstants.CITY_TREE_LATTICE_JITTER_M
+	# A tree never stands in a door's swing, or the leaf jams on its trunk.
+	var door_pts: Array[Vector2] = []
+	for spec in plan.buildings_in_rect(rect.grow(8.0)):
+		for dm in spec.get("doors", []):
+			var dp: Vector3 = dm["position"]
+			door_pts.append(Vector2(dp.x, dp.z))
+	var road_edges: Array = plan.city_road_segments_in(rect.grow(12.0))
+	var blocks: Array[Dictionary] = []
+	for cell in plan.cells_in_rect(rect.grow(step)):
+		var block := plan.cell_block(cell)
+		if block.is_empty():
+			continue
+		var bounds: Rect2 = block.get("bounds", block.get("rect", Rect2())) as Rect2
+		if bounds.grow(step).intersects(rect):
+			blocks.append(block)
+	if blocks.is_empty():
+		return
+	var accepted: Array[Vector2] = []
+	var planted := 0
+	# The pass buys its trees out of the same per-chunk box budget the buildings
+	# already dominate, so it stops once its own share of it is spent, instead of
+	# trusting the tree cap alone to stay affordable.
+	var boxes_start := b._box_count
+	var spent := false
+	var gx := floorf(rect.position.x / step) * step - step
+	while gx <= rect.end.x + step and not spent:
+		var gz := floorf(rect.position.y / step) * step - step
+		while gz <= rect.end.y + step:
+			var cell_rng := WorldSeed.rng_for("city_tree_cell",
+				[int(round(gx * 10.0)), int(round(gz * 10.0))])
+			var p := Vector2(gx + cell_rng.randf_range(-jitter, jitter),
+				gz + cell_rng.randf_range(-jitter, jitter))
+			gz += step
+			if planted >= WorldConstants.CITY_TREE_MAX_PER_CHUNK:
+				break
+			if b._box_count - boxes_start > WorldConstants.CITY_TREE_BOX_BUDGET:
+				spent = true
+				break
+			# One lattice cell belongs to exactly one chunk.
+			if WorldSeed.chunk_coord(p.x, p.y) != coord:
+				continue
+			if not rect.grow(-0.6).has_point(p):
+				continue
+			var blocked := false
+			for d in door_pts:
+				if d.distance_to(p) < WorldConstants.CITY_TREE_DOOR_CLEARANCE_M:
+					blocked = true
+					break
+			if blocked:
+				continue
+			for q in accepted:
+				if q.distance_to(p) < WorldConstants.CITY_TREE_MIN_SPACING_M:
+					blocked = true
+					break
+			if blocked:
+				continue
+			var block := _city_tree_ground(blocks, p, road_edges)
+			if block.is_empty():
+				continue
+			# Counted whether or not the point survives the next pass, so the
+			# spacing test sees every tree already standing in this chunk.
+			accepted.append(p)
+			_plant_city_tree(b, block, p, world_plan, planted)
+			planted += 1
+		gx += step
+
+
+## The block a plantable point stands on, or {} when the point is ground no
+## city tree may occupy: the carriageway, a wall's clearance, an alley, a
+## plaza's paved interior, a park (which plants its own trees), or the ground
+## already owned by another chunk.
+static func _city_tree_ground(blocks: Array[Dictionary], p: Vector2,
+		road_edges: Array) -> Dictionary:
+	for block: Dictionary in blocks:
+		var kind: StringName = block["kind"]
+		if kind == &"park":
+			continue
+		var poly: PackedVector2Array = block.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 3 or not _point_in_polygon(poly, p):
+			continue
+		var center: Vector2 = block.get("center", Vector2.ZERO) as Vector2
+		if kind == &"plaza":
+			# The square's trees ring the paved interior the way a real
+			# square's do, and the fountain keeps its own clearance.
+			var inner := PackedVector2Array()
+			for v: Vector2 in poly:
+				inner.append(center.lerp(v, WorldConstants.CITY_PLAZA_TREE_INNER))
+			if inner.size() >= 3 and _point_in_polygon(inner, p):
+				return {}
+			if p.distance_to(center) \
+					< WorldConstants.CITY_PLAZA_TREE_FOUNTAIN_CLEARANCE_M:
+				return {}
+		for spec_variant in block.get("buildings", []) as Array:
+			var spec: Dictionary = spec_variant as Dictionary
+			if CityPlan._spec_world_bounds(spec).grow(
+					WorldConstants.CITY_TREE_WALL_CLEARANCE_M).has_point(p):
+				return {}
+		var passage: Dictionary = block.get("passage", {}) as Dictionary
+		var passage_poly: PackedVector2Array = passage.get("polygon",
+			PackedVector2Array()) as PackedVector2Array
+		if passage_poly.size() >= 3 and (_point_in_polygon(passage_poly, p) \
+				or _polygon_boundary_distance(p, passage_poly) \
+					< WorldConstants.CITY_TREE_ALLEY_CLEARANCE_M):
+			return {}
+		if not _city_tree_kerb_clear(road_edges, p):
+			return {}
+		return block
+	return {}
+
+
+## Trees stand on the pavement, never in the carriageway.
+static func _city_tree_kerb_clear(road_edges: Array, p: Vector2) -> bool:
+	for edge: Dictionary in road_edges:
+		var poly: PackedVector2Array = edge.get("polyline",
+			PackedVector2Array()) as PackedVector2Array
+		if poly.size() < 2:
+			continue
+		var half := float(edge.get("width", 0.0)) * 0.5
+		if _polyline_distance(p, poly) \
+				< half + WorldConstants.CITY_TREE_KERB_CLEARANCE_M:
+			return false
+	return true
+
+
+## Plant one city tree: a pit of opened ground in the paving, the batched
+## species tree itself, and a collider prop so it stays choppable for wood.
+static func _plant_city_tree(b: MeshBatcher, block: Dictionary, p: Vector2,
+		world_plan: WorldPlan, index: int) -> void:
+	var seed_key := [int(round(p.x * 100.0)), int(round(p.y * 100.0)), index]
+	var shape := WorldSeed.rng_for("city_tree_shape", seed_key)
+	var tree_seed: int = int(WorldSeed.combine(seed_key))
+	var yaw := shape.randf_range(0.0, TAU)
+	var scale := shape.randf_range(WorldConstants.CITY_TREE_SCALE_MIN,
+		WorldConstants.CITY_TREE_SCALE_MAX)
+	var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
+	# One species per block, the way a real street or square is planted in one
+	# species, instead of a different tree every seven metres.
+	var species: StringName = TreeBuilder.mix_species(
+		int(WorldSeed.combine([str(block["id"]).hash()])))
+	_planting_pit(b, p, yaw, world_plan)
+	var opts := {
+		"seed": tree_seed, "yaw": yaw, "scale": scale,
+		"detail": TreeBuilder.Detail.STREET,
+	}
+	TreeBuilder.build(b, Vector3(p.x, ground_y, p.y), species, opts)
+	b.add_prop_def(TreeBuilder.prop_def(Vector3(p.x, ground_y, p.y), species, opts))
+
+
+## The square of opened ground a city tree stands in, so a tree in the paving
+## reads as planted rather than as a prop parked on a slab.
+static func _planting_pit(b: MeshBatcher, p: Vector2, yaw: float,
+		world_plan: WorldPlan) -> void:
+	var half := WorldConstants.CITY_TREE_BED_HALF_M
+	var ax := Vector2(cos(yaw), sin(yaw)) * half
+	var az := Vector2(-sin(yaw), cos(yaw)) * half
+	_add_ground_polygon(b, PackedVector2Array([
+		p - ax - az, p + ax - az, p + ax + az, p - ax + az,
+	]), world_plan, WorldConstants.CITY_TREE_BED_LIFT_M, GRASS)
+
+
+## Distance from `p` to the nearest edge of a polygon (0.0 when it stands on
+## an edge), used to keep trees out of the alleys between the blocks.
+static func _polygon_boundary_distance(p: Vector2, poly: PackedVector2Array) -> float:
+	var best := INF
+	for i in poly.size():
+		best = minf(best, Geometry2D.get_closest_point_to_segment(
+			p, poly[i], poly[(i + 1) % poly.size()]).distance_to(p))
+	return best
+
+
+static func _polyline_distance(p: Vector2, poly: PackedVector2Array) -> float:
+	var best := INF
+	for i in range(1, poly.size()):
+		best = minf(best, Geometry2D.get_closest_point_to_segment(
+			p, poly[i - 1], poly[i]).distance_to(p))
+	return best
+
+
 # --- Props / apocalypse decoration pass v0 ------------------------------------
 
 ## Plant the street gardens. The lot fitter leaves filled strips where no house
@@ -1279,24 +1480,24 @@ static func _plant_garden_trees(b: MeshBatcher, plan: CityPlan, rect: Rect2,
 			if clearance < 1.1:
 				continue
 			var ground_y := world_plan.surface_height_at(p) if world_plan != null else 0.0
-			b.add_prop_def({
-				"position": Vector3(p.x, ground_y, p.y),
-				"yaw": rng.randf_range(0.0, TAU),
-				"material": &"wood",
-				"parts": [
-					{
-						"offset": Vector3(0, 1.3, 0),
-						"size": Vector3(0.42, 2.6, 0.42),
-						"color": WorldConstants.COL_RURAL_TREE_TRUNK,
-						"collide": true,
-					},
-					{
-						"offset": Vector3(0, 3.3, 0),
-						"size": Vector3(2.6, 2.0, 2.6),
-						"color": Color("4d6b39").lightened(rng.randf() * 0.3),
-					},
-				],
-			})
+			# A real species tree, not a two-box proxy: the same TreeBuilder the
+			# parks use, scaled to a strip a few metres wide.
+			var species: StringName = TreeBuilder.mix_species(
+				int(WorldSeed.combine([int(p.x * 10.0), int(p.y * 10.0)])))
+			var shape := WorldSeed.rng_for("garden_tree_shape",
+				[int(p.x * 100.0), int(p.y * 100.0)])
+			var tree_seed: int = int(WorldSeed.combine(
+				[int(p.x * 100.0), int(p.y * 100.0)]))
+			var tree_opts := {
+				"seed": tree_seed,
+				"yaw": shape.randf_range(0.0, TAU),
+				"scale": shape.randf_range(WorldConstants.CITY_GARDEN_TREE_SCALE_MIN,
+					WorldConstants.CITY_GARDEN_TREE_SCALE_MAX),
+				"detail": TreeBuilder.Detail.STREET,
+			}
+			TreeBuilder.build(b, Vector3(p.x, ground_y, p.y), species, tree_opts)
+			b.add_prop_def(TreeBuilder.prop_def(
+				Vector3(p.x, ground_y, p.y), species, tree_opts))
 			planted += 1
 
 

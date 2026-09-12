@@ -21,7 +21,18 @@ extends RefCounted
 ## Realistic dimensions are researched per species (Czech/Prague planting stock):
 ## see docs/world/TREES.md.
 
-enum Detail { IMPOSTOR = 0, CITY = 1, FEATURE = 2 }
+## Detail tiers. `STREET` is the city street tree: the trunk and limbs of an
+## impostor, but with its crown actually filled in. An impostor is cheap because
+## it skips the canopy fill, and a crown with its envelope empty is exactly what
+## reads as a bare stub at eye level - which is what a street tree must not be.
+enum Detail { IMPOSTOR = 0, CITY = 1, FEATURE = 2, STREET = 3 }
+
+
+## True for the tiers that buy their cheapness by dropping structure (roots,
+## crown fill, second-order limbs).
+static func _lite(detail: int) -> bool:
+	return detail == Detail.IMPOSTOR or detail == Detail.STREET
+
 
 const VERTS_PER_BOX := 24
 
@@ -47,6 +58,7 @@ const MAX_VERTS := {
 	Detail.IMPOSTOR: 520,
 	Detail.CITY: 8200,
 	Detail.FEATURE: 9200,
+	Detail.STREET: 5200,
 }
 
 ## Part caps per detail tier. Foliage is dropped first when over budget, so the
@@ -56,6 +68,7 @@ const MAX_PARTS := {
 	Detail.IMPOSTOR: 16,
 	Detail.CITY: 240,
 	Detail.FEATURE: 280,
+	Detail.STREET: 160,
 }
 
 ## Species table. Heights/trunk radii are mature-tree ranges in metres on good
@@ -160,7 +173,7 @@ static func generate(species: StringName, rng: RandomNumberGenerator,
 	# stops at the crown base leaves the upper tree with no log at all - and
 	# every limb, bough and whorl is hung off a real spine node, so nothing
 	# starts in mid-air beside the trunk.
-	var seg_n: int = 4 if detail == Detail.IMPOSTOR else 6
+	var seg_n: int = 4 if _lite(detail) else 6
 	var seg_len: float = h / float(seg_n)
 	var tip_frac: float = 0.30 if evergreen else 0.24
 	var nodes: Array[Vector3] = []
@@ -179,7 +192,7 @@ static func generate(species: StringName, rng: RandomNumberGenerator,
 	nodes.append(pos)
 
 	# --- roots: 3-5 buttress wedges, flush on the ground (sway weight 0.0).
-	if detail != Detail.IMPOSTOR:
+	if not _lite(detail):
 		var root_n: int = 3 + int(rng.randf() * 3.0)
 		for i in root_n:
 			var ang: float = TAU * float(i) / float(root_n) + rng.randf_range(-0.25, 0.25)
@@ -197,7 +210,7 @@ static func generate(species: StringName, rng: RandomNumberGenerator,
 		_add_conifer(parts, nodes, pos, dir, spec, rng, phase, h, r0, crown_base,
 			crown_r, detail, leaf_span, sp)
 	else:
-		var base_n: int = 3 if detail == Detail.IMPOSTOR else 3 + int(rng.randf() * 2.0)
+		var base_n: int = 3 if _lite(detail) else 3 + int(rng.randf() * 2.0)
 		# Limbs must actually climb: the first order covers most of the gap
 		# between the crown base and the species height, children finish it.
 		# High-droop species (birch) get extra upward bias to pay for the sag.
@@ -222,6 +235,12 @@ static func generate(species: StringName, rng: RandomNumberGenerator,
 		# Tuft count follows the crown's area, so a wide chestnut crown gets the same
 		# tuft density as a narrow birch one instead of the same number of tufts.
 		var fills: int = clampi(16 + int(crown_r * crown_r * 6.0), 30, 60)
+		if detail == Detail.STREET:
+			# A street tree's crown must read closed at eye level without the
+			# thirty tufts a park tree spends. Enough to stop sky showing through
+			# the middle of the canopy, few enough that a whole street of them
+			# stays inside the chunk's box budget.
+			fills = clampi(8 + int(crown_r * crown_r * 2.0), 10, 16)
 		for f in fills:
 			var fa: float = rng.randf() * TAU
 			# sqrt() spreads the tufts evenly over the crown's area, not its radius.
@@ -263,7 +282,7 @@ static func _limb(parts: Array[Dictionary], start: Vector3, dir: Vector3, length
 		radius: float, order: int, spec: Dictionary, rng: RandomNumberGenerator,
 		phase: float, detail: int, h: float, density: float, leaf_span: float,
 		sp: StringName, bark: Color) -> void:
-	var segs: int = 1 if (detail == Detail.IMPOSTOR or order >= int(spec["orders"])) else 2
+	var segs: int = 1 if (_lite(detail) or order >= int(spec["orders"])) else 2
 	var seg_len: float = length / float(segs)
 	var p := start
 	var d := dir
@@ -281,7 +300,7 @@ static func _limb(parts: Array[Dictionary], start: Vector3, dir: Vector3, length
 	if order < int(spec["orders"]):
 		# The outermost order stays single-branched: the part budget is better
 		# spent on foliage than on yet more twig segments.
-		var kids: int = 1 if order == int(spec["orders"]) - 1 else (2 if detail == Detail.IMPOSTOR else 2 + (1 if rng.randf() < 0.45 else 0))
+		var kids: int = 1 if order == int(spec["orders"]) - 1 else (2 if _lite(detail) else 2 + (1 if rng.randf() < 0.45 else 0))
 		for k in kids:
 			var kd := (d + Vector3(rng.randf_range(-0.6, 0.6),
 				rng.randf_range(-0.25, 0.45), rng.randf_range(-0.6, 0.6))).normalized()
@@ -297,7 +316,7 @@ static func _limb(parts: Array[Dictionary], start: Vector3, dir: Vector3, length
 static func _add_leaves(parts: Array[Dictionary], tip: Vector3, dir: Vector3,
 		rng: RandomNumberGenerator, phase: float, h: float, leaf_span: float,
 		density: float, sp: StringName, detail: int) -> void:
-	var clusters: int = 1 if detail == Detail.IMPOSTOR else 6 + (1 if rng.randf() < 0.5 else 0)
+	var clusters: int = 1 if detail == Detail.IMPOSTOR else (3 if detail == Detail.STREET else 6 + (1 if rng.randf() < 0.5 else 0))
 	if density < 0.8 and rng.randf() > density + 0.15:
 		clusters = 2
 	for c in clusters:
@@ -362,7 +381,7 @@ static func _add_conifer(parts: Array[Dictionary], nodes: Array[Vector3], top: V
 				detail, h, 0.6, leaf_span, sp, bark)
 	# A spruce needs enough tiers to be a continuous cone rather than a stack of
 	# plates; the pine's crown is short and wide, so its whorls are fewer.
-	var tiers: int = 2 if detail == Detail.IMPOSTOR else (4 if umbrella else 5)
+	var tiers: int = 2 if detail == Detail.IMPOSTOR else (4 if detail == Detail.STREET else (4 if umbrella else 5))
 	for i in tiers:
 		var t: float = float(i) / float(maxf(float(tiers - 1), 1.0))
 		var y: float = lo + span * t
@@ -373,7 +392,7 @@ static func _add_conifer(parts: Array[Dictionary], nodes: Array[Vector3], top: V
 		# A spruce whorl carries many short branches at the skirt and fewer near the
 		# tip; four around a nine-metre skirt left every bough isolated from its
 		# neighbours, which is precisely what "floating clumps" was.
-		var boughs: int = 3 if detail == Detail.IMPOSTOR else (4 if umbrella else 8 + int(round((1.0 - t) * 2.0)))
+		var boughs: int = 3 if detail == Detail.IMPOSTOR else (8 + int(round((1.0 - t) * 2.0)) if detail == Detail.STREET and not umbrella else (4 if detail == Detail.STREET else (4 if umbrella else 8 + int(round((1.0 - t) * 2.0)))))
 		var spin: float = rng.randf() * TAU
 		var by: float = base.y
 		for b in boughs:
@@ -434,6 +453,8 @@ static func _add_conifer(parts: Array[Dictionary], nodes: Array[Vector3], top: V
 	# crown - that is the whole point of a pine's bare upper trunk.
 	if detail != Detail.IMPOSTOR:
 		var cfills: int = 28 + int(rng.randf() * 13.0)
+		if detail == Detail.STREET:
+			cfills = 20 + int(rng.randf() * 9.0)
 		var clump: float = crown_r * 0.32
 		for f in cfills:
 			var fa: float = rng.randf() * TAU
@@ -455,7 +476,7 @@ static func _add_conifer(parts: Array[Dictionary], nodes: Array[Vector3], top: V
 				false, _sway(fy, h, phase), true, 5, 0.35))
 	# Dead snags: a few bare stubs low on the trunk.
 	for tw in 2:
-		if detail == Detail.IMPOSTOR:
+		if _lite(detail):
 			break
 		var ta: float = rng.randf() * TAU
 		var td := Vector3(cos(ta), 0.28, sin(ta)).normalized()

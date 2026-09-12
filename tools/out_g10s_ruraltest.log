@@ -1,0 +1,41 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:34)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:131)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:137)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:411)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "local_plan" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:411)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "fill_batcher".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:412)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:487)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "local_plan" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:487)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "build".
+   at: GDScript::reload (res://world/streaming/chunk_manager.gd:594)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://core/autoload/debris_manager.gd:0)
+ERROR: Failed to load script "res://core/autoload/debris_manager.gd" with error "Compilation failed".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Parse Error: Could not parse global class "CityPlan" from "res://world/generation/city_plan.gd".
+   at: GDScript::reload (res://world/main.gd:45)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/main.gd:462)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "setup_world".
+   at: GDScript::reload (res://world/main.gd:467)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "get_spawn_position".
+   at: GDScript::reload (res://world/main.gd:480)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "setup".
+   at: GDScript::reload (res://world/main.gd:501)
+SCRIPT ERROR: Parse Error: Could not resolve class "CityPlan", because of a parser error.
+   at: GDScript::reload (res://world/main.gd:757)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "plan".
+   at: GDScript::reload (res://world/main.gd:758)
+ERROR: Failed to load script "res://world/main.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+[godot_ai game_helper] registered mcp capture (debugger active=false, logger=true)
