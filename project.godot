@@ -57,3 +57,30 @@ common/enable_pause_aware_picking=true
 
 lights_and_shadows/directional_shadow/size=2048
 anti_aliasing/quality/msaa_3d=2
+
+[shader_globals]
+
+environment_wetness={
+"type": "float",
+"value": 0.0
+}
+environment_rain_intensity={
+"type": "float",
+"value": 0.0
+}
+environment_storm={
+"type": "float",
+"value": 0.0
+}
+environment_wind_vector={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+environment_night_factor={
+"type": "float",
+"value": 0.0
+}
+environment_hour={
+"type": "float",
+"value": 12.0
+}

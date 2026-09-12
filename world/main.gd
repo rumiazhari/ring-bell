@@ -30,7 +30,12 @@ const SpawnPoints = preload("res://world/spawn_points.gd")
 var hud: HUD
 var dialogue_ui: DialogueUI
 var camera_rig: FollowCamera
-var day_night: DayNightController
+# Legacy: the world no longer instantiates DayNightController - the isolated
+# environment subsystem (world/environment/) is the one authoritative owner of
+# sky, sun, moon, ambient light, fog, weather and rain.  The class stays in the
+# repository because debug/world_test.gd builds it directly to assert its
+# constants.
+var environment: EnvironmentManager
 var player: Survivor
 
 var _player_controller: PlayerController
@@ -227,6 +232,30 @@ func _ready() -> void:
 			return
 		add_child((logic_script as GDScript).new())
 		return
+	if args.has("--envtest"):
+		# Environment subsystem contract harness.  It builds its own minimal
+		# world (camera + EnvironmentManager) and returns before the streamed
+		# city is built, so it stays independent of the city/interior tracks.
+		var env_script: Variant = load("res://debug/environment_test.gd")
+		if env_script == null or not (env_script is GDScript) or not (env_script as GDScript).can_instantiate():
+			push_error("[EnvironmentTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((env_script as GDScript).new())
+		return
+	if args.has("--envcapture"):
+		# Environment visual matrix capture (`debug/environment_capture.gd`).
+		# Windowed only: the fixture renders a street canyon and stores PNGs plus
+		# readability metrics under res://captures/environment/.  Like --envtest it
+		# returns before the streamed city exists, so the capture stays valid while
+		# the city/interior tracks are mid-overhaul.
+		var cap_script: Variant = load("res://debug/environment_capture.gd")
+		if cap_script == null or not (cap_script is GDScript) or not (cap_script as GDScript).can_instantiate():
+			push_error("[EnvCapture] capture harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((cap_script as GDScript).new())
+		return
 	if args.has("--praguetest"):
 		# A parse error in the harness must fail the suite, not hang it: without
 		# this guard nothing quits the tree and the runner burns its timeout.
@@ -313,6 +342,9 @@ func _ready() -> void:
 	#   godot --headless --path . -- --soak         day/night + AI stability
 	#   godot --headless --path . -- --citytest     city determinism checks
 	#   godot --headless --path . -- --cityruntime  streamed-city integration
+#   godot --headless --path . -- --envtest      environment subsystem contract
+#     (+ --envtime=18:30 --envweather=storm --envquality=low --envwetness=0.4
+#        --envwind=12,45 --envdump for direct environment debugging)
 	var user_args := OS.get_cmdline_user_args()
 	if user_args.has("--smoke") or user_args.has("--soak"):
 		var tester: Node = load("res://debug/smoke_test.gd").new()
@@ -408,6 +440,12 @@ func _ready() -> void:
 		var testers_perf: Node = load("res://debug/perf_probe.gd").new()
 		testers_perf.name = "PerfProbe"
 		add_child(testers_perf)
+	elif user_args.has("--envperf"):
+		# Environment cost comparison (clear / heavy rain / storm) on the real
+		# streamed city: needs a GPU, so it runs here next to the perf bisection.
+		var tester_ep: Node = load("res://debug/environment_perf.gd").new()
+		tester_ep.name = "EnvironmentPerf"
+		add_child(tester_ep)
 	elif user_args.has("--cavetest"):
 		var tester6g: Node = load("res://debug/cave_test.gd").new()
 		tester6g.name = "CaveTest"
@@ -497,7 +535,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--roadtest", "--settlementtest", "--roadmaterialtest",
 			"--ruraltest", "--settlementbuildingtest", "--ruralfabrictest",
 			"--fringetest", "--buildingcontracttest", "--sitecontracttest", "--propslogictest", "--g10p2a-ruralprobe",
-			"--perftest",
+			"--perftest", "--envperf",
 			"--cavetest",
 			"--pausemenutest", "--pausemenucapture",
 		"--fringe-capture", "--fringe-dump", "--seed",
@@ -506,8 +544,9 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--parkourtest",
 			"--import", "--shot", "--doortest", "--g10p1-capture",
 			"--g10p2b-capture",
-			"--meleeprobe", "--meleetest", "--meleecapture", "--meleedirprobe"
-			]
+			"--meleeprobe", "--meleetest", "--meleecapture", "--meleedirprobe",
+		"--envtest", "--envcapture"
+		]
 	for f in test_flags:
 		if args.has(f):
 			return false
@@ -624,9 +663,13 @@ func _create_game_ui() -> void:
 		add_child(dialogue_ui)
 		dialogue_ui.dialogue_opened.connect(_on_dialogue_opened)
 		dialogue_ui.dialogue_closed.connect(_on_dialogue_closed)
-	if day_night == null:
-		day_night = DayNightController.new()
-		add_child(day_night)
+	if environment == null:
+		# One authoritative environment system: time, weather, sky, lighting,
+		# fog, rain, wetness, wind, ambience (see world/environment/).  It
+		# replaces the legacy DayNightController, which used to own the sun and
+		# the WorldEnvironment here.
+		environment = EnvironmentManager.new()
+		add_child(environment)
 	if camera_rig == null:
 		camera_rig = FollowCamera.new()
 		add_child(camera_rig)
@@ -1008,12 +1051,21 @@ func save_state() -> Dictionary:
 			data["crates"].append(crate.save_state())
 	if _mode == WorldMode.STREAMED_CITY and chunk_manager != null:
 		data["chunks"] = chunk_manager.save_state()
+	if environment != null and is_instance_valid(environment):
+		# Success criterion 10: environment state (time, weather, transition
+		# progress, wetness, wind, quality) travels with the save.
+		data["environment"] = environment.save_state()
 	return data
 
 
 func load_state(data: Dictionary) -> void:
 	if dialogue_ui != null and is_instance_valid(dialogue_ui):
 		dialogue_ui.close()
+	if environment != null and is_instance_valid(environment) and data.has("environment"):
+		# Environment state is WORLD state, not chunk state: it comes back
+		# before the city is rebuilt, so the first frame after a load already
+		# has the saved time of day and weather.
+		environment.load_state(data["environment"])
 	for node in get_tree().get_nodes_in_group(&"survivors"):
 		node.queue_free()
 	for node in get_tree().get_nodes_in_group(&"zombies"):

@@ -216,6 +216,11 @@ func _probe_swing(entry: Dictionary) -> void:
 	var min_body := INF
 	var travel := 0.0
 	var prev_tip := rest_tip
+	# Front-side coverage: the WORST front component anywhere in the clip, and the
+	# front component at the last frame. A swing that only crosses the front
+	# mid-arc still reads as "behind the player" for the rest of the clip.
+	var min_front := INF
+	var end_front := 0.0
 	var frames := 0
 	var got: StringName = &""
 	while _survivor.melee.state() != MeleeCombat.State.IDLE and frames < FRAME_CAP:
@@ -238,6 +243,9 @@ func _probe_swing(entry: Dictionary) -> void:
 		travel += step_len
 		prev_tip = tip
 		min_body = minf(min_body, _dist_to_body_axis(tip))
+		var pv := _axes(tip - _survivor.global_position)
+		min_front = minf(min_front, float(pv["front"]))
+		end_front = float(pv["front"])
 
 	if got == &"":
 		got = _survivor.melee.current_clip()
@@ -276,7 +284,7 @@ func _probe_swing(entry: Dictionary) -> void:
 	else:
 		_front_bad += 1
 
-	print("[MeleeDirProbe] %-7s %s aim(side=%+.2f front=%+.2f) | STRIKE_d side=%+.2f up=%+.2f front=%+.2f speed=%.1fm/s | dot=%+.2f %s | frames=%d hit_f=%d max_step=%.2f tip_h=%.2f body_gap=%.2f travel=%.2f len=%.2f" % [
+	print("[MeleeDirProbe] %-7s %s aim(side=%+.2f front=%+.2f) | STRIKE_d side=%+.2f up=%+.2f front=%+.2f speed=%.1fm/s | dot=%+.2f %s | frames=%d hit_f=%d max_step=%.2f tip_h=%.2f body_gap=%.2f travel=%.2f len=%.2f min_f=%+.2f end_f=%+.2f" % [
 		clip, sel,
 		a["side"], a["front"],
 		m["side"], m["up"], m["front"], strike_vec.length() / window_s,
@@ -285,7 +293,9 @@ func _probe_swing(entry: Dictionary) -> void:
 		(rest_tip - rest_hand).length(),
 		min_body if min_body < INF else -1.0,
 		travel,
-		rest_tip.distance_to(rest_hand)])
+		rest_tip.distance_to(rest_hand),
+		min_front if min_front < INF else -9.0,
+		end_front])
 
 	# Held orientation at rest, in the actor's frame: a weapon that points into
 	# the character's back at rest is wrong before any swing plays.
