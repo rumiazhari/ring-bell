@@ -63,14 +63,55 @@ func _ready() -> void:
 	var fresh_rec: Dictionary = manager._chunks.get(gated_coord, {}) as Dictionary
 	var fresh_layers: Dictionary = fresh_rec.get("layers", {}) as Dictionary
 	var fresh_layer: MeshInstance3D = fresh_layers.get("reveal_probe:f0:N|g", null) as MeshInstance3D
-	_check(fresh_layer != null and not fresh_layer.visible,
-			"materialization reapplies stored gate to fresh composite layer")
+	_check(fresh_layer != null and fresh_layer.visible
+			and fresh_layer.cast_shadow == MeshInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY,
+			"materialization reapplies stored gate to fresh composite layer "
+			+ "(hidden from camera, still casting shadow)")
 	var fresh_assets: Array = fresh_rec.get("asset_nodes", []) as Array
 	var fresh_asset: Node3D = null
 	if not fresh_assets.is_empty():
 		fresh_asset = fresh_assets[0] as Node3D
 	_check(fresh_asset != null and not fresh_asset.visible,
 			"materialization reapplies stored gate to fresh wall_2m")
+
+	# The roof is exterior (locked decision 4): floor_i == n is the deck the
+	# player stands on, so the roof layer and its dressing must survive there
+	# and only hide while the player is strictly below the deck.
+	_check(not MeshBatcher.reveal_layer_hidden("reveal_probe:roof",
+			"reveal_probe", 3, [], 3),
+			"roof stays while the player stands on the deck")
+	_check(MeshBatcher.reveal_layer_hidden("reveal_probe:roof",
+			"reveal_probe", 2, [], 3),
+			"roof hides while the player is one storey below the deck")
+	_check(MeshBatcher.reveal_layer_hidden("reveal_probe:roof",
+			"reveal_probe", 3, [], -1),
+			"roof hides when no deck storey is known (legacy callers)")
+	_check(not MeshBatcher.reveal_asset_hidden(
+			{"floor_i": 3, "building_id": "reveal_probe", "roof": true},
+			"reveal_probe", 3, [], 3),
+			"roof dressing survives with the deck")
+	_check(MeshBatcher.reveal_asset_hidden(
+			{"floor_i": 3, "building_id": "reveal_probe", "roof": true},
+			"reveal_probe", 2, [], 3),
+			"roof dressing hides while the player is below the deck")
+
+	# A leaf follows its wall exactly (locked decision 2): same storey, same
+	# facade letter, so no entrance can float where the cutaway removed a wall.
+	_check(not MeshBatcher.door_hidden("reveal_probe", 0, "N",
+			"reveal_probe", 0, ["S"]),
+			"entrance on a solid facade stays")
+	_check(MeshBatcher.door_hidden("reveal_probe", 0, "N",
+			"reveal_probe", 0, ["N"]),
+			"entrance retires with its cut facade")
+	_check(not MeshBatcher.door_hidden("reveal_probe", 0, "N",
+			"reveal_probe", 2, ["N"]),
+			"lower-storey entrance keeps its wall and stays")
+	_check(MeshBatcher.door_hidden("reveal_probe", 3, "",
+			"reveal_probe", 2, []),
+			"interior partition door above the resident storey hides")
+	_check(not MeshBatcher.door_hidden("reveal_probe", 1, "",
+			"reveal_probe", 2, ["N"]),
+			"interior partition door ignores facade fading")
 	manager.free()
 	holder.free()
 	print("[G10P2BRevealTest] finished with %d failure(s)" % _failures)

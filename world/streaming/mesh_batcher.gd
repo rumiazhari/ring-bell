@@ -528,13 +528,23 @@ func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: Strin
 ## One reveal predicate is shared by structural layer nodes and queued assets.
 ## Keeping the parser here prevents ChunkManager and test probes from growing
 ## subtly different floor/facade/roof rules.
+##
+## `roof_floor` is the deck storey (floor_i == floors, see locked decision 4).
+## The ROOF IS EXTERIOR for visibility purposes: it is cut only while the
+## player is strictly BELOW the deck. The moment the player stands on the deck
+## (or anywhere above it) the complete roof - cap, parapets, bulkhead, props -
+## stays visible, because there is no longer a ceiling between the eye and the
+## sky. Passing roof_floor < 0 keeps the legacy rule (roof hidden whenever the
+## gate is active) for callers that predate the deck.
 static func reveal_layer_hidden(layer_key: String, tag: String,
-		max_floor: int, faded: Array) -> bool:
+		max_floor: int, faded: Array, roof_floor: int = -1) -> bool:
 	if max_floor < 0 or tag == "" or not layer_key.begins_with(tag + ":"):
 		return false
 	var suffix := layer_key.substr(tag.length() + 1)
 	if suffix.begins_with("roof"):
-		return true
+		if roof_floor < 0:
+			return true
+		return max_floor < roof_floor
 	if not suffix.begins_with("f"):
 		return false
 	var rest := suffix.substr(1)
@@ -551,12 +561,34 @@ static func reveal_layer_hidden(layer_key: String, tag: String,
 	return fl > max_floor or (fl == max_floor and (facade_name == "cutaway" or faded.has(facade_name)))
 
 
+## A door leaf must never outlive the wall it is hung in. Exterior leaves carry
+## the facade side they sit on (stamped by ChunkBuilder from the door manifest
+## edge), so an entrance is retired together with its wall instead of lingering
+## as a floating panel once the cutaway removes that facade. A leaf with no
+## side is an interior partition door: it is exactly the dollhouse content the
+## gate exists to expose, so it only follows the storey rule.
+##
+## The test below is deliberately the same expression as reveal_layer_hidden for
+## a facade layer key, so a leaf and its wall can never disagree: same storey,
+## same facade letter. A leaf one storey below the cutaway keeps its wall and
+## must therefore stay too.
+static func door_hidden(building_id: String, floor_i: int, facade_side: String,
+		tag: String, max_floor: int, faded: Array) -> bool:
+	if max_floor < 0 or tag == "" or building_id != tag:
+		return false
+	if floor_i > max_floor:
+		return true
+	if facade_side == "" or floor_i != max_floor:
+		return false
+	return faded.has(facade_side)
+
+
 static func reveal_asset_hidden(asset: Dictionary, tag: String,
-		max_floor: int, faded: Array) -> bool:
+		max_floor: int, faded: Array, roof_floor: int = -1) -> bool:
 	# An explicitly keyed asset is always a child of the same structural layer.
 	# Interior wall modules use the generic f<floor> layer and therefore also
 	# carry facade_sides below.
-	if reveal_layer_hidden(str(asset.get("layer", "")), tag, max_floor, faded):
+	if reveal_layer_hidden(str(asset.get("layer", "")), tag, max_floor, faded, roof_floor):
 		return true
 	if max_floor < 0 or tag == "" \
 			or str(asset.get("building_id", "")) != tag:
@@ -567,7 +599,11 @@ static func reveal_asset_hidden(asset: Dictionary, tag: String,
 	if asset_floor > max_floor:
 		return true
 	if bool(asset.get("roof", false)):
-		return true
+		# Roof dressing is exterior: it follows the roof layer rule, so it
+		# survives while the player is standing on the deck.
+		if roof_floor < 0:
+			return true
+		return max_floor < roof_floor
 	if asset_floor != max_floor:
 		return false
 	var sides: Array = asset.get("facade_sides", []) as Array

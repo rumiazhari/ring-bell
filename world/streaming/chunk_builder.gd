@@ -191,6 +191,13 @@ static func build(parent: Node3D, plan: CityPlan, coord: Vector2i,
 					continue
 				var door := Door.new()
 				door.name = String(dm["id"])
+				# Exterior leaves carry the facade they are hung in and the
+				# storey they belong to, so the cutaway can retire the opening
+				# together with its wall instead of leaving a floating panel.
+				door.set_meta("interior_building_id", str(grounded_spec["id"]))
+				door.set_meta("interior_floor", 0)
+				door.set_meta("door_facade_side",
+						["N", "E", "S", "W"][clampi(int(dm.get("edge", 0)), 0, 3)])
 				door.setup(dm)
 				chunk.add_child(door)
 				doors += 1

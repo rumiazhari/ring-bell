@@ -116,6 +116,10 @@ var _floor_gate_coord := Vector2i(99, 99)
 var _floor_gate_tag := ""
 var _floor_gate_max_floor := -1
 var _floor_gate_faded: Array = []
+# Deck storey of the resident building (floor_i == floors in the manifest).
+# The roof is exterior, so it is only hidden while the player is strictly
+# below this storey.
+var _floor_gate_roof_floor := -1
 
 var _pending: Array[Vector2i] = []
 var _inflight := {}                    # Vector2i -> {batcher, task_id}
@@ -1271,7 +1275,7 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	# manager-owned gate after all fresh layer and asset nodes are available.
 	if coord == _floor_gate_coord:
 		apply_floor_gate(coord, _floor_gate_tag, _floor_gate_max_floor,
-				_floor_gate_faded)
+				_floor_gate_faded, _floor_gate_roof_floor)
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
 	_terrain_colliders_total += terrain_cols
@@ -1644,7 +1648,7 @@ func door_states(coord: Vector2i) -> Dictionary:
 ## per-layer but the SET changes only when the camera sector changes, which
 ## reads as a smooth swap rather than flicker.
 func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
-		faded: Array = []) -> void:
+		faded: Array = [], roof_floor: int = -1) -> void:
 	# Remember the current request even when the chunk is not resident yet.
 	# A later _materialize() replaces the record and must replay this exact
 	# state onto the newly created layer and asset nodes.
@@ -1652,6 +1656,7 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	_floor_gate_tag = tag
 	_floor_gate_max_floor = max_floor
 	_floor_gate_faded = faded.duplicate()
+	_floor_gate_roof_floor = roof_floor
 	if not _chunks.has(coord):
 		return
 	var rec: Dictionary = _chunks[coord]
@@ -1660,13 +1665,23 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	for key: Variant in rec.get("layers", {}).keys():
 		var layer_key := String(key)
 		var hide := MeshBatcher.reveal_layer_hidden(layer_key, tag,
-				max_floor, faded)
+				max_floor, faded, roof_floor)
 		if bool(applied.get(layer_key, false)) != hide:
 			applied[layer_key] = hide
 			changed = true
 			var node: Node = rec["layers"][layer_key]
 			if node != null and is_instance_valid(node):
-				(node as MeshInstance3D).visible = not hide
+				var layer_mi := node as MeshInstance3D
+				if layer_mi != null:
+					# Locked decision 3: structure hidden from the camera keeps
+					# casting shadows, so the dollhouse interior is lit exactly
+					# like the full building. Never visible=false on structure:
+					# SHADOWS_ONLY renders the mesh into the shadow pass only.
+					layer_mi.cast_shadow = MeshInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY \
+							if hide else MeshInstance3D.SHADOW_CASTING_SETTING_ON
+					layer_mi.visible = true
+				else:
+					node.visible = not hide
 	for asset_variant in rec.get("asset_nodes", []) as Array:
 		var asset: Node = asset_variant as Node
 		if asset == null or not is_instance_valid(asset) or asset.is_queued_for_deletion():
@@ -1682,7 +1697,7 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 			"roof": bool(asset.get_meta("asset_roof", false)),
 		}
 		var asset_hide := MeshBatcher.reveal_asset_hidden(asset_def, tag,
-				max_floor, faded)
+				max_floor, faded, roof_floor)
 		var asset_visible := not asset_hide
 		if asset.visible != asset_visible:
 			asset.visible = asset_visible
@@ -1693,7 +1708,19 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	if chunk_node != null:
 		for child in chunk_node.get_children():
 			if child is Node3D and child.has_meta("interior_floor"):
-				child.visible = max_floor < 0 or str(child.get_meta("interior_building_id", "")) != tag or int(child.get_meta("interior_floor")) <= max_floor
+				child.visible = _door_visible(child, tag, max_floor, faded)
+
+
+## A door leaf must never outlive the wall it is hung in. The decision itself
+## lives in MeshBatcher so the gate, the tests and any future probe share one
+## rule. ChunkBuilder stamps exterior leaves with facade side + storey; leaves
+## without a side are interior partitions and keep the storey rule only.
+func _door_visible(door: Node, tag: String, max_floor: int, faded: Array) -> bool:
+	return not MeshBatcher.door_hidden(
+			str(door.get_meta("interior_building_id", "")),
+			int(door.get_meta("interior_floor", -1)),
+			str(door.get_meta("door_facade_side", "")),
+			tag, max_floor, faded)
 
 
 # --- Voxel destruction -------------------------------------------------------

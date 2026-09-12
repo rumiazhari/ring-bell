@@ -34,8 +34,8 @@ const PITCH_DEG := 34.0              # within safe CharacterBody floor angle
 const RAMP_T := 0.22                 # ramp collider thickness
 const RAMP_OVERLAP := 0.2            # flight tucks onto landings (no step)
 const RAIL_SETBACK := 0.6            # rail stops this far short of each flight end
-const DOOR_W := 1.5
-const DOOR_H := 2.25
+const DOOR_W := WorldConstants.DOOR_W_PERSON   # one authority: DOOR_KIND_W
+const DOOR_H := WorldConstants.DOOR_H_PERSON
 const DOOR_FRAME := 0.06               # jamb clearance: aperture = DOOR_W + this
 const WIN_W := 1.15
 const WIN_H := 1.35

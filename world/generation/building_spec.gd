@@ -28,9 +28,9 @@ extends RefCounted
 ## interior (see BuildingArchetype.min_quality and the validator).
 
 const WALL_T := 0.35            # reference: BuildingBuilder.WALL_T
-const DOOR_W := 1.5             # reference: BuildingBuilder.DOOR_W
+const DOOR_W := WorldConstants.DOOR_W_PERSON   # reference: DOOR_KIND_W
 const DOOR_FRAME := 0.06
-const DOOR_H := 2.25
+const DOOR_H := WorldConstants.DOOR_H_PERSON
 const WIN_W := 1.15
 const WIN_H := 1.35
 const WIN_SILL := 0.85

@@ -44,7 +44,7 @@ const PASSAGE_HALF := Vector2(1.8, 2.5)
 const PASSAGE_CLEAR := 0.6
 const WALL_PALETTES := 8
 const ROOF_PALETTES := 5
-const DOOR_W := 1.5
+const DOOR_W := WorldConstants.DOOR_W_PERSON    # one authority: DOOR_KIND_W
 
 const _CITY_BOUNDARY_SIDES := 32
 const _CITY_SITE_CANDIDATES := 1200
@@ -52,6 +52,12 @@ const _CITY_MAX_SITES := 300
 const _CITY_EDGE_EPS := 0.001
 const _CITY_ROAD_BLOCK_CLEARANCE := 2.4
 const _CITY_MIN_SPLIT_BLOCK_AREA := 70.0
+# InteriorPlan receives the same raw lot-face openness that the independent
+# Prague audit derives from all accepted lots. Keep this spatial probe cheap and
+# deterministic: one 0.8 m sample per face, indexed in 8 m cells.
+const _INTERIOR_FACE_PROBE_M := 0.8
+const _INTERIOR_FACE_GRID_M := 8.0
+const _INTERIOR_FACE_GROW_M := 1.0
 
 # Kept as compatibility storage for old callers that clear CityPlan caches.
 # No morphology code reads these as a street lattice.
@@ -1185,6 +1191,9 @@ func _generate_city_blocks() -> void:
 	var _b4 := Time.get_ticks_usec()
 	_all_buildings.sort_custom(_dict_id_cmp)
 	_finalize_block_fabric()
+	# The complete lot set is available only after every deterministic frontage
+	# pass. Publish adjacency before any consumer builds an interior again.
+	_attach_historic_open_faces()
 	var _b5 := Time.get_ticks_usec()
 	if float(_b5 - _b0) / 1000.0 >= 400.0:
 		print("[CityPlan]     BLOCKS sites_loop=%.0f split=%.0f frontage=%.0f interiors=%.0f dense_min=%.0f finalize=%.0f ms" % [
@@ -1316,6 +1325,56 @@ func _finalize_block_fabric() -> void:
 		else:
 			block["void_reason"] = &"bounded_enclosed_courtyard" if not regions.is_empty() else &"bounded_backyard"
 		_block_by_cell[block["cell"]] = block
+## Publish lot-face openness to historic BuildingSpecs after the complete lot set
+## exists. This is the generation-side counterpart of the independent audit's
+## 0.8 m far-side probe; the raw edge order remains N, E, S, W.
+func _attach_historic_open_faces() -> void:
+	var boxes: Array[Rect2] = []
+	var polygons: Array[PackedVector2Array] = []
+	var grid: Dictionary = {}
+	for spec_variant in _all_buildings:
+		var spec: Dictionary = spec_variant as Dictionary
+		var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var poly: PackedVector2Array = _lot_corners(rect, float(spec.get("yaw", 0.0)))
+		var box: Rect2 = _polygon_bounds(poly)
+		var index := polygons.size()
+		polygons.append(poly)
+		boxes.append(box)
+		var expanded := box.grow(_INTERIOR_FACE_GROW_M)
+		var x0 := int(floor(expanded.position.x / _INTERIOR_FACE_GRID_M))
+		var x1 := int(floor(expanded.end.x / _INTERIOR_FACE_GRID_M))
+		var y0 := int(floor(expanded.position.y / _INTERIOR_FACE_GRID_M))
+		var y1 := int(floor(expanded.end.y / _INTERIOR_FACE_GRID_M))
+		for cx in range(x0, x1 + 1):
+			for cy in range(y0, y1 + 1):
+				var key := Vector2i(cx, cy)
+				if not grid.has(key):
+					grid[key] = []
+				(grid[key] as Array).append(index)
+	for spec_i in _all_buildings.size():
+		var spec: Dictionary = _all_buildings[spec_i]
+		if not spec.has("compound_id"):
+			continue
+		var rect: Rect2 = spec.get("rect", Rect2()) as Rect2
+		var corners: PackedVector2Array = polygons[spec_i]
+		var center := rect.get_center()
+		var open_faces: Array[bool] = [true, true, true, true]
+		for edge_i in 4:
+			var mid := (corners[edge_i] + corners[(edge_i + 1) % 4]) * 0.5
+			var outward := mid - center
+			if outward.length_squared() < 1e-6:
+				continue
+			var probe := mid + outward.normalized() * _INTERIOR_FACE_PROBE_M
+			var key := Vector2i(int(floor(probe.x / _INTERIOR_FACE_GRID_M)),
+				int(floor(probe.y / _INTERIOR_FACE_GRID_M)))
+			for other_i: int in grid.get(key, []) as Array:
+				if boxes[other_i].has_point(probe) and Geometry2D.is_point_in_polygon(probe, polygons[other_i]):
+					open_faces[edge_i] = false
+					break
+		spec["open_faces"] = open_faces
+		# Facade openings are another consumer of room kinds; rebuild them after
+		# adjacency has reclassified any windowless cells as service.
+		spec["facade_plan"] = HistoricFacades.for_wing(spec)
 
 
 ## Derive one shared rear-court/garden surface from the owning block face.
@@ -2679,13 +2738,23 @@ func _historic_buildings_for_block(block: Dictionary) -> Array[Dictionary]:
 			spec.style.attic = true
 			spec.style.roof_plan = HistoricRoofs.for_wing(spec)
 			spec.extra_door_edges = [2] if wi == 0 and not plot.passages.is_empty() else []
-			spec.door_w = 2.6 if wi == 0 and not plot.passages.is_empty() and float(plot.frontage_m) >= 9.0 else 1.5
-			spec.door_h = 2.7 if spec.door_w > 2.0 else 2.2
+			# Locked decision 2: door widths are kind-based and come from the
+			# one table in WorldConstants. The carriage passage is the only
+			# "grand" opening; every later wing/back door is a service door.
+			var entry_kind: StringName = WorldConstants.door_kind_for_entrance(
+					str(spec.use), not plot.passages.is_empty(),
+					float(plot.frontage_m), wi > 0)
+			spec.door_w = WorldConstants.door_kind_width(entry_kind)
+			spec.door_h = WorldConstants.door_kind_height(entry_kind)
 			spec.facade_plan = HistoricFacades.for_wing(spec)
 			spec.doors = []
 			var door_edges: Array = [int(wing.door_edge)] + spec.extra_door_edges
 			for de: int in door_edges:
 				var door := _door_manifest(spec.id, rect, de, seed_used)
+				# The aperture pass in BuildingBuilder cuts every wing door at
+				# spec.door_w, so both leaves must read the same value: a
+				# passage house has the grand opening at each end of the
+				# carriage way, never a wide hole behind a narrow leaf.
 				door.width = spec.door_w
 				door.height = spec.door_h
 				door.id = "%s_door_%d" % [spec.id, de]
@@ -4005,7 +4074,7 @@ static func _door_manifest(building_id: String, lot: Rect2, edge: int, explicit_
 		"yaw": yaw,
 		"edge": edge,
 		"width": DOOR_W,
-		"height": 2.25,
+		"height": WorldConstants.DOOR_H_PERSON,
 		"hinge": "left" if hinge_left else "right",
 		"locked": false,
 		"open_angle": 95.0,

@@ -95,6 +95,12 @@ func _ready() -> void:
 	if args.has("--buildingrepairtest"):
 		add_child(load("res://debug/city_building_repair_test.gd").new())
 		return
+	if args.has("--q3revealcapture"):
+		add_child(load("res://debug/q3_reveal_capture.gd").new())
+		return
+	if args.has("--q3doorwidthaudit"):
+		add_child(load("res://debug/q3_door_width_audit.gd").new())
+		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())
 	if args.has("--treecapture"):
@@ -857,7 +863,7 @@ func _update_city_interior() -> void:
 				or floor_i != _gate_floor or new_faded != _faded:
 			if _gate_coord != Vector2i(99, 99):
 				chunk_manager.apply_floor_gate(_gate_coord, "", -1)
-			chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded)
+			chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded, n)
 		_gate_coord = owner_coord
 		_gate_tag = tag
 		_gate_floor = floor_i

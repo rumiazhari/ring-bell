@@ -806,6 +806,61 @@ const CONTRACT_DOOR_W_MIN := 0.8
 const CONTRACT_DOOR_W_MAX := 2.0
 const CONTRACT_DOOR_H_MIN := 1.9
 const CONTRACT_DOOR_H_MAX := 2.8
+
+## Door widths are KIND-BASED (locked decision 2). This table is the single
+## authority: the aperture, the leaf, the frame, the collider and the
+## player-capsule clearance all read it, so no module may invent its own width.
+## Values sit inside CONTRACT_DOOR_W_MIN..MAX on purpose - the historical
+## 2.6 m carriage-passage entrance was outside human scale.
+const DOOR_W_PERSON := 1.05       # residential / historic single leaf
+const DOOR_W_SERVICE := 0.95      # service door, interior partition, cellar
+const DOOR_W_RETAIL := 1.2        # shop door with glazing
+const DOOR_W_GRAND := 1.7         # intentional double / industrial leaf pair
+const DOOR_H_PERSON := 2.2
+const DOOR_H_SERVICE := 2.1
+const DOOR_H_RETAIL := 2.35
+const DOOR_H_GRAND := 2.5
+const DOOR_KIND_W := {
+	&"person": DOOR_W_PERSON,
+	&"service": DOOR_W_SERVICE,
+	&"retail": DOOR_W_RETAIL,
+	&"grand": DOOR_W_GRAND,
+}
+## Height follows the same kind: a grand opening is a tall carriage arch, not a
+## scaled-up person door.
+const DOOR_KIND_H := {
+	&"person": DOOR_H_PERSON,
+	&"service": DOOR_H_SERVICE,
+	&"retail": DOOR_H_RETAIL,
+	&"grand": DOOR_H_GRAND,
+}
+
+
+## Width in metres for a door kind. Unknown kinds fall back to the person door
+## rather than silently becoming a random extra-wide opening.
+static func door_kind_width(kind: StringName) -> float:
+	return float(DOOR_KIND_W.get(kind, DOOR_KIND_W[&"person"]))
+
+
+static func door_kind_height(kind: StringName) -> float:
+	return float(DOOR_KIND_H.get(kind, DOOR_KIND_H[&"person"]))
+
+
+## The door kind a generated building entrance should use. A Prague house with a
+## carriage passage needs the one wide opening (grand); a shop front gets glass,
+## a back/service entrance stays narrow.
+static func door_kind_for_entrance(use: String, has_passage: bool,
+		frontage_m: float, service: bool = false) -> StringName:
+	if service:
+		return &"service"
+	if has_passage and frontage_m >= 9.0:
+		return &"grand"
+	match use:
+		"retail", "shop", "workshop":
+			return &"retail"
+		"tavern":
+			return &"grand"
+	return &"person"
 ## Window aperture human-scale band (m).
 const CONTRACT_WIN_W_MIN := 0.6
 const CONTRACT_WIN_W_MAX := 1.6

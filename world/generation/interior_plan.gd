@@ -25,11 +25,11 @@ const ROOM_PROGRAM_FALLBACKS := {
 }
 
 const WALL_T := 0.35 # outer wall legacy (CityPlan lot inset)
-const DOOR_W := 1.5
+const DOOR_W := WorldConstants.DOOR_W_PERSON   # one authority: DOOR_KIND_W
 # City interior partition thickness and opening authoritative via WorldConstants (G9 M1)
 const WALL_T_INTERIOR: float = 0.18 # == WorldConstants.CITY_INTERIOR_WALL_T
-const OPEN_W: float = 0.95 # == WorldConstants.CITY_INTERIOR_OPEN_W
-const OPEN_H: float = 2.05 # == WorldConstants.CITY_INTERIOR_OPEN_H
+const OPEN_W: float = WorldConstants.CITY_INTERIOR_OPEN_W # one authority for interior leaf/aperture
+const OPEN_H: float = WorldConstants.CITY_INTERIOR_OPEN_H
 
 static func build_for_building(spec: Dictionary) -> Dictionary:
 	var bid: String = str(spec.get("id", "b"))
@@ -130,14 +130,14 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 			var wy := toilet_rect.position.y if edge == 2 else lobby_rect.position.y - 0.09
 			wall = Rect2(wx0, wy, wx1 - wx0, 0.18)
 			var wcx := wall.get_center().x
-			topen = Rect2(wcx - 0.65, wall.position.y - 0.5 + 0.09, 1.3, 1.0)
+			topen = Rect2(wcx - OPEN_W * 0.5, wall.position.y - 0.5 + 0.09, OPEN_W, 1.0)
 		else:
 			var wy0 := lobby_rect.position.y + 0.3
 			var wy1 := lobby_rect.end.y - 0.3
 			var wx := lobby_rect.end.x - 0.09 if edge == 1 else lobby_rect.position.x
 			wall = Rect2(wx, wy0, 0.18, wy1 - wy0)
 			var wcy := wall.get_center().y
-			topen = Rect2(wall.position.x - 0.5 + 0.09, wcy - 0.65, 1.0, 1.3)
+			topen = Rect2(wall.position.x - 0.5 + 0.09, wcy - OPEN_W * 0.5, 1.0, OPEN_W)
 		parts.append({"id": "%s_f0_p0" % bid, "a": lobby_id, "b": "%s_f0_toilet_2" % bid, "rect": wall, "opening": topen, "planned_clearance": true})
 		var tdm := _door_for_partition(bid, 0, doors.size(), topen, wall, lobby_id, "%s_f0_toilet_2" % bid, fh, rng)
 		# Leaf span equals the aperture span along the wall.
@@ -181,12 +181,12 @@ static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2,
 		elif i == 2:
 			door_y = fp.get_center().y
 		var wall := Rect2(divider - 0.09, room.position.y, 0.18, room.size.y)
-		var opening := Rect2(divider - 0.5, door_y - 0.65, 1.0, 1.3)
+		var opening := Rect2(divider - 0.5, door_y - OPEN_W * 0.5, 1.0, OPEN_W)
 		parts.append({"id": "%s_f%d_p%d" % [bid, fi, parts.size()], "a": hall_id, "b": room_id, "rect": wall, "opening": opening, "planned_clearance": true})
 		var dm := _door_for_partition(bid, fi, doors.size(), opening, wall, hall_id, room_id, fh, rng)
-		# Leaf span must equal the aperture span along the wall (1.3 here): derive
-		# it from the opening instead of a re-typed magic constant. This wall is
-		# vertical (size.x=0.18), so the aperture length along the wall is size.y.
+		# Leaf span must equal the aperture span along the wall (OPEN_W here):
+		# derive it from the opening instead of a re-typed magic constant. This
+		# wall is vertical (size.x=0.18), so the aperture length is size.y.
 		dm["width"] = opening.size.y
 		doors.append(dm)
 		if i > 0:
@@ -364,6 +364,34 @@ static func _door_for_partition(bid: String, fi: int, idx: int, opening: Rect2, 
 		"room_a": a_id,
 		"room_b": b_id,
 	}
+
+## Props that hang on a wall rather than stand on the floor. Corner and lattice
+## candidates sit ~0.22 m inside the room, which leaves a clock or a print
+## hovering off the plaster; these are moved onto the nearest wall instead.
+const HANG_KINDS: Array[String] = ["wallclock", "print", "gauge"]
+## Clear of the 0.18 m partition board that straddles a room boundary.
+const HANG_OFFSET := 0.11
+
+
+static func _hang_on_wall(rr: Rect2, corner: Vector2, extent: Vector2) -> Vector2:
+	var c := corner + extent * 0.5
+	var dl := c.x - rr.position.x
+	var dr := rr.end.x - c.x
+	var dt := c.y - rr.position.y
+	var db := rr.end.y - c.y
+	var m := minf(minf(dl, dr), minf(dt, db))
+	var x := c.x
+	var y := c.y
+	if m == dl:
+		x = rr.position.x + HANG_OFFSET + extent.x * 0.5
+	elif m == dr:
+		x = rr.end.x - HANG_OFFSET - extent.x * 0.5
+	elif m == dt:
+		y = rr.position.y + HANG_OFFSET + extent.y * 0.5
+	else:
+		y = rr.end.y - HANG_OFFSET - extent.y * 0.5
+	return Vector2(x, y) - extent * 0.5
+
 
 static func _rects_adjacent(ra: Rect2, rb: Rect2) -> bool:
 	if absf(ra.end.x - rb.position.x) < 0.06 or absf(rb.end.x - ra.position.x) < 0.06:
@@ -688,7 +716,10 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 						gx += step
 					gy += step
 			for corner in candidates:
-				var occupied := Rect2(corner, extent)
+				var place: Vector2 = corner
+				if kind in HANG_KINDS:
+					place = _hang_on_wall(room["rect"] as Rect2, corner, extent)
+				var occupied := Rect2(place, extent)
 				var clear := true
 				# Visitor clearance: taller props (ferns, coat stands, cabinets,
 				# lamps) keep a wider gap from neighbours so nothing reads as
