@@ -1,5 +1,6 @@
 class_name CharacterLocomotion
 extends Node
+const Proportions = preload("res://actors/player_proportions.gd")
 ## Owns AnimationPlayer + AnimationTree (StateMachine), update() contract, foot_slide/hand_snap telemetry
 ## Capsule drives position; skeleton drives pose; ACTIVE-only tick.
 ## P-C3: vault/mantle/hang/climb + crouch/slide/stand_up with capsule lerp 0.18s, 15 clips, root<0.005.
@@ -1168,7 +1169,8 @@ func _aim_arm_at(b_idx: int, tgt: Vector3) -> float:
 	var zA: Vector3 = xA.cross(yA).normalized()
 	xA = yA.cross(zA).normalized()
 	skeleton.set_bone_pose_rotation(b_idx, Quaternion(Basis(xA, yA, zA).orthonormalized()))
-	return absf(dist - ARM_SHOULDER_TO_HAND)
+	var reach := Proportions.ARM_REACH if skeleton.get_meta("articulated", false) else ARM_SHOULDER_TO_HAND
+	return absf(dist - reach)
 
 func _apply_hang_ik() -> void:
 	if skeleton == null or not is_instance_valid(skeleton):
@@ -1385,6 +1387,10 @@ func _apply_articulated_pose(speed: float, run_ratio: float) -> void:
 		if state in [State.HANG, State.SHIMMY, State.DROP2HANG]:
 			skeleton.set_bone_pose_rotation(elbow, Quaternion.IDENTITY)
 		elif state in [State.IDLE, State.WALK, State.RUN, State.SPRINT, State.TURN_L90, State.TURN_R90, State.TURN_180]:
+			var shoulder := skeleton.find_bone(side + "_upper_arm")
+			var shoulder_angles := skeleton.get_bone_pose_rotation(shoulder).get_euler()
+			shoulder_angles.z = deg_to_rad(-8.0 if side == "l" else 8.0)
+			skeleton.set_bone_pose_rotation(shoulder, Quaternion.from_euler(shoulder_angles))
 			var phase := _phase + (0.0 if side == "l" else PI)
 			var bend := 8.0
 			var flex := 0.0
@@ -1407,5 +1413,5 @@ func _ground_articulated_pose() -> void:
 	var left := skeleton.get_bone_global_pose(skeleton.find_bone("l_shin")).origin.y
 	var right := skeleton.get_bone_global_pose(skeleton.find_bone("r_shin")).origin.y
 	# Keep the lower boot at the actor's contact datum; root/capsule never move.
-	rest.y += 0.02 - minf(left, right)
+	rest.y += Proportions.ANKLE_Y - minf(left, right)
 	skeleton.set_bone_pose_position(hips, rest)

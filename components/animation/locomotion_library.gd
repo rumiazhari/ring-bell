@@ -866,6 +866,17 @@ static func _build_drop2hang() -> Animation:
 
 
 static func _add_articulation(anim: Animation, clip: String) -> void:
+	# Loose coat needs natural arm clearance around the narrower adult shoulders.
+	if clip in ["Idle", "Walk", "Run", "Sprint", "TurnL90", "TurnR90", "Turn180", "CrouchIdle", "CrouchWalk"]:
+		for track in anim.get_track_count():
+			var path := String(anim.track_get_path(track))
+			if path not in [":l_upper_arm", ":r_upper_arm"]:
+				continue
+			for key in anim.track_get_key_count(track):
+				var rotation: Quaternion = anim.track_get_key_value(track, key)
+				var angles := rotation.get_euler()
+				angles.z = deg_to_rad(-8.0 if path == ":l_upper_arm" else 8.0)
+				anim.track_set_key_value(track, key, Quaternion.from_euler(angles))
 	for side in ["l", "r"]:
 		var elbows: Array = []
 		var knees: Array = []

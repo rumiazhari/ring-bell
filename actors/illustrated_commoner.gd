@@ -1,5 +1,6 @@
 class_name IllustratedCommoner
 extends RefCounted
+const Proportions = preload("res://actors/player_proportions.gd")
 ## Authored profiles and facial surfaces; all positions match the existing rig.
 ## Every visible part is an ArrayMesh, directly beneath its attachment pivot.
 
@@ -59,6 +60,7 @@ static func surface(parent: Node3D, label: String, vertices: PackedVector3Array,
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var part := MeshInstance3D.new()
 	part.name = label
+	part.set_meta("authored_part", label)
 	part.mesh = mesh
 	part.material_override = mat
 	parent.add_child(part)
@@ -210,15 +212,15 @@ static func build(cfg: Dictionary) -> Node3D:
 	root.set_meta("skin_material", skin)
 	root.set_meta("all_materials", [wool, vest, scarf, binding, leather, brass, skin, ink])
 	root.set_meta("authored_commoner", true)
-	var upper := HumanoidModel._joint(root, Vector3(0, 0.95, 0))
-	var left_leg := HumanoidModel._joint(root, Vector3(-0.11, 0.86, 0))
-	var right_leg := HumanoidModel._joint(root, Vector3(0.11, 0.86, 0))
-	var left_arm := HumanoidModel._joint(upper, Vector3(-0.215, 0.51, 0))
-	var right_arm := HumanoidModel._joint(upper, Vector3(0.215, 0.51, 0))
-	var left_forearm := HumanoidModel._joint(left_arm, Vector3(0, -0.27, 0))
-	var right_forearm := HumanoidModel._joint(right_arm, Vector3(0, -0.27, 0))
-	var left_calf := HumanoidModel._joint(left_leg, Vector3(0, -0.42, 0))
-	var right_calf := HumanoidModel._joint(right_leg, Vector3(0, -0.42, 0))
+	var upper := HumanoidModel._joint(root, Vector3(0, Proportions.SPINE_Y, 0))
+	var left_leg := HumanoidModel._joint(root, Vector3(-0.11, Proportions.HIP_Y, 0))
+	var right_leg := HumanoidModel._joint(root, Vector3(0.11, Proportions.HIP_Y, 0))
+	var left_arm := HumanoidModel._joint(upper, Vector3(-Proportions.SHOULDER_HALF_WIDTH, Proportions.SHOULDER_Y - Proportions.SPINE_Y, 0))
+	var right_arm := HumanoidModel._joint(upper, Vector3(Proportions.SHOULDER_HALF_WIDTH, Proportions.SHOULDER_Y - Proportions.SPINE_Y, 0))
+	var left_forearm := HumanoidModel._joint(left_arm, Vector3(0, -Proportions.UPPER_ARM, 0))
+	var right_forearm := HumanoidModel._joint(right_arm, Vector3(0, -Proportions.UPPER_ARM, 0))
+	var left_calf := HumanoidModel._joint(left_leg, Vector3(0, -Proportions.THIGH_LENGTH, 0))
+	var right_calf := HumanoidModel._joint(right_leg, Vector3(0, -Proportions.THIGH_LENGTH, 0))
 	# Shaped shoulders, chest, natural waist and overlapping peplum; no cylinder.
 	loft(upper, "TailoredGamis", [Vector4(-0.13, 0.229, 0.143, 0), Vector4(-0.07, 0.222, 0.137, 0), Vector4(0.05, 0.183, 0.119, 0), Vector4(0.19, 0.190, 0.132, 0.008), Vector4(0.35, 0.218, 0.149, 0.003), Vector4(0.47, 0.216, 0.119, -0.003), Vector4(0.54, 0.143, 0.093, 0), Vector4(0.57, 0.08, 0.070, 0)], wool)
 	# Quiet waistcoat panel rather than a corset; seams follow the shaped bodice.
@@ -245,8 +247,9 @@ static func build(cfg: Dictionary) -> Node3D:
 	face(upper, skin, ink)
 	for i in range(head_start, upper.get_child_count()):
 		var head_part := upper.get_child(i) as Node3D
-		head_part.scale = Vector3.ONE * 0.82
-		head_part.position.y = 0.785 * (1.0 - 0.82)
+		head_part.scale = Proportions.HEAD_SCALE
+		head_part.position.y = Proportions.HEAD_CENTER - Proportions.SPINE_Y - 0.785 * Proportions.HEAD_SCALE.y
+		head_part.set_meta("anatomical_head", true)
 	loft(upper, "KhimarUnderlayer", [Vector4(0.20, 0.22, 0.165, 0), Vector4(0.32, 0.25, 0.170, 0), Vector4(0.45, 0.24, 0.145, 0), Vector4(0.58, 0.115, 0.095, 0), Vector4(0.65, 0.10, 0.080, 0)], scarf)
 	var veil := SkirtCloth.new()
 	veil.name = "HijabDrape"
@@ -268,20 +271,20 @@ static func build(cfg: Dictionary) -> Node3D:
 	skirt.trim_color = Color("aca89c")
 	root.add_child(skirt)
 	for arm in [left_arm, right_arm]:
-		loft(arm, "GatheredShoulder", [Vector4(0.0, 0.092, 0.08372, 0), Vector4(0.025, 0.080, 0.072, 0), Vector4(0.045, 0.060, 0.054, 0), Vector4(0.065, 0.001, 0.001, 0)], wool, 12)
+		loft(arm, "GatheredShoulder", [Vector4(0.0, 0.078, 0.071, 0), Vector4(0.025, 0.069, 0.063, 0), Vector4(0.045, 0.050, 0.045, 0), Vector4(0.065, 0.001, 0.001, 0)], wool, 12)
 		var sleeve := SkirtCloth.new()
 		sleeve.name = "GamisSleeve"
-		sleeve.setup(0.092, 0.060, 0.49, 12, 6, wool)
-		sleeve.profile = PackedFloat32Array([0.092, 0.107, 0.101, 0.084, 0.076, 0.065, 0.060])
+		sleeve.setup(0.078, 0.048, Proportions.UPPER_ARM + Proportions.FOREARM, 12, 6, wool)
+		sleeve.profile = PackedFloat32Array([0.078, 0.087, 0.081, 0.071, 0.060, 0.053, 0.048])
 		sleeve.oval = Vector2(1, 0.91)
 		sleeve.gather = 0.006
 		sleeve.bending = 0.20
 		sleeve.pin_hem = true
 		sleeve.hem_bone = "l_forearm" if arm == left_arm else "r_forearm"
-		sleeve.hem_offset = Vector3(0, -0.22, 0)
+		sleeve.hem_offset = Vector3(0, -Proportions.FOREARM, 0)
 		sleeve.position = Vector3.ZERO
 		arm.add_child(sleeve)
-		loft(arm, "ButtonedCuff", [Vector4(-0.515, 0.057, 0.052, 0), Vector4(-0.49, 0.060, 0.0546, 0)], vest, 12)
+		loft(arm, "ButtonedCuff", [Vector4(-0.515, 0.057, 0.052, 0), Vector4(-0.49, 0.050, 0.0456, 0)], vest, 12)
 		inset(arm, "CuffButton", Vector3(0, -0.49, 0.059), Vector2(0.004, 0.004), brass)
 		loft(arm, "Hand", [Vector4(-0.605, 0.025, 0.019, 0.008), Vector4(-0.59, 0.030, 0.022, 0.005), Vector4(-0.57, 0.037, 0.024, 0), Vector4(-0.535, 0.031, 0.023, 0), Vector4(-0.51, 0.025, 0.021, 0)], leather, 20)
 		var thumb := loft(arm, "Thumb", [Vector4(-0.601, 0.005, 0.008, 0.006), Vector4(-0.58, 0.012, 0.013, 0), Vector4(-0.55, 0.015, 0.016, -0.002)], leather, 12)
@@ -295,7 +298,12 @@ static func build(cfg: Dictionary) -> Node3D:
 		for part in arm.get_children():
 			if part is MeshInstance3D and String(part.name).begins_with("GamisSleeve") == false and String(part.name) != "GatheredShoulder":
 				arm.remove_child(part)
-				part.position.y += 0.27
+				# Old mesh wrist=-.51 and fingertips=-.648; fit locally before reparenting.
+				var hand_scale := Proportions.HAND / 0.138
+				part.scale.y = hand_scale
+				part.position.y = -Proportions.FOREARM + 0.51 * hand_scale
+				part.scale.x = 0.88
+				part.scale.z = 0.90
 				forearm.add_child(part)
 	for leg in [left_leg, right_leg]:
 		var calf: Node3D = left_calf if leg == left_leg else right_calf
@@ -305,10 +313,10 @@ static func build(cfg: Dictionary) -> Node3D:
 		joint.lower_bone = "l_calf" if leg == left_leg else "r_calf"
 		joint.material_override = vest
 		calf.add_child(joint)
-		loft(leg, "RoomyTrouserThigh", [Vector4(-0.43, 0.087, 0.090, 0), Vector4(-0.34, 0.105, 0.112, 0), Vector4(-0.12, 0.115, 0.118, 0), Vector4(0, 0.102, 0.107, 0)], vest, 24)
+		loft(leg, "RoomyTrouserThigh", [Vector4(-0.42, 0.087, 0.090, 0), Vector4(-0.34, 0.105, 0.112, 0), Vector4(-0.12, 0.115, 0.118, 0), Vector4(0, 0.102, 0.107, 0)], vest, 24)
 		loft(calf, "RoomyTrouserCalf", [Vector4(-0.35, 0.062, 0.066, 0), Vector4(-0.25, 0.090, 0.098, 0), Vector4(-0.10, 0.103, 0.108, 0), Vector4(0.015, 0.088, 0.091, 0)], vest, 24)
-		loft(calf, "LeatherBoot", [Vector4(-0.42, 0.065, 0.116, 0.040), Vector4(-0.39, 0.068, 0.120, 0.040), Vector4(-0.35, 0.062, 0.105, 0.030), Vector4(-0.30, 0.051, 0.064, 0.008), Vector4(-0.17, 0.057, 0.058, 0)], leather, 24)
-		loft(calf, "BootSole", [Vector4(-0.438, 0.068, 0.123, 0.04), Vector4(-0.413, 0.068, 0.123, 0.04)], ink, 24)
+		loft(calf, "LeatherBoot", [Vector4(-0.47, 0.065, 0.116, 0.040), Vector4(-0.44, 0.068, 0.120, 0.040), Vector4(-0.39, 0.062, 0.105, 0.030), Vector4(-0.30, 0.051, 0.064, 0.008), Vector4(-0.17, 0.057, 0.058, 0)], leather, 24)
+		loft(calf, "BootSole", [Vector4(-0.49, 0.068, 0.123, 0.04), Vector4(-0.465, 0.068, 0.123, 0.04)], ink, 24)
 		for i in 3:
 			ribbon(calf, "BootLace", [Vector3(-0.033, -0.24 - i * 0.028, 0.061), Vector3(0.033, -0.256 - i * 0.028, 0.068)], 0.003, binding)
 	# Working backpack with shoulder straps; no decorative gear clutter.
@@ -321,7 +329,7 @@ static func build(cfg: Dictionary) -> Node3D:
 		ribbon(upper, "PackStrap", [Vector3(side * 0.14, 0.02, 0.12), Vector3(side * 0.16, 0.28, 0.13), Vector3(side * 0.15, 0.49, 0.06), Vector3(side * 0.13, 0.53, -0.12), Vector3(side * 0.12, 0.38, -0.31)], 0.028, leather)
 	var red := material("913b3c")
 	red.albedo_texture = wool.albedo_texture
-	loft(upper, "RedNeckVeil", [Vector4(0.585, 0.121, 0.105, -0.012), Vector4(0.622, 0.124, 0.106, -0.012), Vector4(0.658, 0.118, 0.102, -0.014)], red)
+	loft(upper, "RedNeckVeil", [Vector4(0.585, 0.155, 0.145, -0.012), Vector4(0.622, 0.158, 0.146, -0.012), Vector4(0.658, 0.152, 0.142, -0.014)], red)
 	var tail := SkirtCloth.new()
 	tail.name = "RedVeilTail"
 	tail.setup(0.07, 0.09, 0.51, 7, 8, red)
@@ -332,6 +340,11 @@ static func build(cfg: Dictionary) -> Node3D:
 	tail.position = Vector3(0.055, 0.48, -0.365)
 	upper.add_child(tail)
 
+	# Authored torso coordinates were for the old elongated torso. Bake the fit
+	# into static vertices and cloth rest dimensions; attachment transforms stay unit scale.
+	for part in upper.get_children():
+		if part is MeshInstance3D and not part.get_meta("anatomical_head", false):
+			_fit_torso_part(part)
 	HumanoidModel._store_limbs(root, upper, left_arm, right_arm, left_leg, right_leg)
 	var limbs: Dictionary = root.get_meta("anim_limbs")
 	limbs["l_forearm"] = left_forearm
@@ -339,3 +352,30 @@ static func build(cfg: Dictionary) -> Node3D:
 	limbs["l_calf"] = left_calf
 	limbs["r_calf"] = right_calf
 	return root
+
+
+static func _fit_torso_part(part: MeshInstance3D) -> void:
+	var fit := Vector3(0.88, 0.80, 0.92)
+	var lift := 0.0
+	if String(part.name) in ["LeatherBelt", "BeltBuckle", "WorkPouch", "PouchClasp", "WatchChain"]:
+		lift = 0.10 # natural waist at 1.05m, distinct from hip articulation at .90m
+	if String(part.name) in ["RedNeckVeil", "RedScarfOverShoulder", "RedVeilTail"]:
+		lift = -0.04
+	part.position = part.position * fit + Vector3.UP * lift
+	if part is SkirtCloth:
+		part.length *= fit.y
+		part.radius_top *= fit.x
+		part.radius_hem *= fit.x
+		part.oval.y *= fit.z / fit.x
+		return
+	var arrays := part.mesh.surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	for i in vertices.size():
+		vertices[i] *= fit
+		normals[i] = (normals[i] / fit).normalized()
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	var fitted := ArrayMesh.new()
+	fitted.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	part.mesh = fitted

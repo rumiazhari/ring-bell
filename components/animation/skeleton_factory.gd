@@ -1,7 +1,8 @@
 class_name SkeletonFactory
 extends RefCounted
+const Proportions = preload("res://actors/player_proportions.gd")
 ## Default ten-bone rig; optional fourteen-bone player adds knees and elbows.
-## Hip at y 0.86, spine_upper at 0.95 matching HumanoidModel pivots, scaled 1.2 via model attachment.
+## Legacy NPC offsets retained; player uses metre-based Proportions.
 ## Primitive meshes from HumanoidModel are attached via BoneAttachment3D per limb.
 
 static func capsule_heights() -> Dictionary:
@@ -38,19 +39,22 @@ static func build_survivor_skeleton(articulated := false) -> Skeleton3D:
 		skel.set_bone_rest(idx, rest)
 	if articulated:
 		skel.set_meta("articulated", true)
+		skel.set_bone_rest(skel.find_bone("hips"), Transform3D(Basis.IDENTITY, Vector3(0, Proportions.HIP_Y, 0)))
+		skel.set_bone_rest(skel.find_bone("spine_upper"), Transform3D(Basis.IDENTITY, Vector3(0, Proportions.SPINE_Y - Proportions.HIP_Y, 0)))
+		skel.set_bone_rest(skel.find_bone("head"), Transform3D(Basis.IDENTITY, Vector3(0, Proportions.HEAD_CENTER - Proportions.SPINE_Y, 0.005)))
 		for side in ["l", "r"]:
 			var knee := skel.add_bone(side + "_calf")
 			skel.set_bone_parent(knee, skel.find_bone(side + "_thigh"))
-			skel.set_bone_rest(knee, Transform3D(Basis.IDENTITY, Vector3(0, -0.42, 0)))
+			skel.set_bone_rest(knee, Transform3D(Basis.IDENTITY, Vector3(0, -Proportions.THIGH_LENGTH, 0)))
 			var ankle := skel.find_bone(side + "_shin")
 			skel.set_bone_parent(ankle, knee)
-			skel.set_bone_rest(ankle, Transform3D(Basis.IDENTITY, Vector3(0, -0.42, 0)))
+			skel.set_bone_rest(ankle, Transform3D(Basis.IDENTITY, Vector3(0, -Proportions.CALF_LENGTH, 0)))
 			var elbow := skel.add_bone(side + "_forearm")
 			var shoulder := skel.find_bone(side + "_upper_arm")
 			skel.set_bone_parent(elbow, shoulder)
-			skel.set_bone_rest(elbow, Transform3D(Basis.IDENTITY, Vector3(0, -0.27, 0)))
+			skel.set_bone_rest(elbow, Transform3D(Basis.IDENTITY, Vector3(0, -Proportions.UPPER_ARM, 0)))
 			var shoulder_rest := skel.get_bone_rest(shoulder)
-			shoulder_rest.origin.x = -0.215 if side == "l" else 0.215
+			shoulder_rest.origin = Vector3((-1.0 if side == "l" else 1.0) * Proportions.SHOULDER_HALF_WIDTH, Proportions.SHOULDER_Y - Proportions.SPINE_Y, 0)
 			skel.set_bone_rest(shoulder, shoulder_rest)
 	# Live pose must start AT the rest: set_bone_rest() leaves pose at
 	# identity, which renders every bone collapsed at the skeleton origin

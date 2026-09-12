@@ -1,5 +1,6 @@
 class_name SkirtCloth
 extends MeshInstance3D
+const Proportions = preload("res://actors/player_proportions.gd")
 ## Position-based garment cloth. Pinned attachment, world-space inertia,
 ## structural/shear constraints and animated body/world contact.
 var radius_top := 0.19
@@ -245,7 +246,7 @@ func _cache_capsules() -> void:
 	# physics step, for every cloth, which is pure GC churn on a hot path.
 	if _specs_plain.is_empty():
 		_specs_plain = [["l_thigh", Vector3(0, -0.78, 0), 0.18], ["r_thigh", Vector3(0, -0.78, 0), 0.18], ["spine_upper", Vector3(0, 0.52, 0), 0.24], ["l_upper_arm", Vector3(0, -0.50, 0), 0.065], ["r_upper_arm", Vector3(0, -0.50, 0), 0.065]]
-		_specs_artic = [["l_thigh", Vector3(0, -0.42, 0), 0.13], ["r_thigh", Vector3(0, -0.42, 0), 0.13], ["l_calf", Vector3(0, -0.37, 0), 0.10], ["r_calf", Vector3(0, -0.37, 0), 0.10], ["spine_upper", Vector3(0, 0.32, 0), 0.19], ["l_upper_arm", Vector3(0, -0.27, 0), 0.063], ["r_upper_arm", Vector3(0, -0.27, 0), 0.063], ["l_forearm", Vector3(0, -0.25, 0), 0.052], ["r_forearm", Vector3(0, -0.25, 0), 0.052], ["spine_upper", Vector3(0, 0.48, 0), 0.115, Vector3(0, 0.35, 0)], ["spine_upper", Vector3(0, 0.36, -0.245), 0.13, Vector3(0, 0.04, -0.245)]]
+		_specs_artic = [["l_thigh", Vector3(0, -Proportions.THIGH_LENGTH, 0), 0.12], ["r_thigh", Vector3(0, -Proportions.THIGH_LENGTH, 0), 0.12], ["l_calf", Vector3(0, -0.36, 0), 0.10], ["r_calf", Vector3(0, -0.36, 0), 0.10], ["spine_upper", Vector3(0, 0.25, 0), 0.165], ["l_upper_arm", Vector3(0, -Proportions.UPPER_ARM, 0), 0.058], ["r_upper_arm", Vector3(0, -Proportions.UPPER_ARM, 0), 0.058], ["l_forearm", Vector3(0, -Proportions.FOREARM, 0), 0.043], ["r_forearm", Vector3(0, -Proportions.FOREARM, 0), 0.043], ["spine_upper", Vector3(0, 0.384, 0), 0.10, Vector3(0, 0.28, 0)], ["spine_upper", Vector3(0, 0.288, -0.2254), 0.12, Vector3(0, 0.032, -0.2254)]]
 	var articulated: bool = _skeleton.get_meta("articulated", false)
 	var specs: Array = _specs_artic if articulated else _specs_plain
 	for spec in specs:

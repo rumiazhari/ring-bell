@@ -38,7 +38,7 @@ func _physics_process(_delta: float) -> void:
 		for c in 20:
 			var a := TAU * c / 20.0
 			var p := Vector3(cos(a) * radius, y, sin(a) * radius)
-			vertices.append((relative * (p + Vector3(0, -0.42, 0))).lerp(p, weight))
+			vertices.append((relative * (p + _sk.get_bone_rest(_sk.find_bone(lower_bone)).origin)).lerp(p, weight))
 			uv.append(Vector2(c / 20.0, t))
 	normals.resize(vertices.size())
 	for i in range(0, _triangles.size(), 3):
