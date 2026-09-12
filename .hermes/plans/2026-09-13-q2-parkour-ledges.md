@@ -175,15 +175,43 @@ worst lip gap `0.114 m`, `hang_ticks 388`, recorded hold `kind=cornice`, `anchor
   muted (`_ledge_cooldown`) while the fixture question is asked, so the counted grab comes only
   from the jump.
 
-### 6.5 Still open in Q2 (honest)
-1. **Stage 2 — tags in the generator** (§2.3): `mesh_batcher` already stamps the whitelist
-   (`cornice, awning, balcony, scaffold, ...`), but `building_builder.gd` does not yet emit
-   `parapet`/`band`/`bulkhead` owner tags, so real generated roofs/bands classify by geometry
-   (`structure`/`prop`) rather than by kind. Tags only classify — geometry still decides.
-2. **§2.4 section 2 — real buildings**: the lattice census over `BuildingBuilder.build` output
-   (≥ 8 buildings, ≥ 3 seeds) with per-kind accept counts and non-uniform route diversity is
-   not written yet; today's evidence is fixture-based.
-3. **§2.4 section 3 — real climb**: the full street→roof drive on a *generated* building.
-4. **§2.4 section 4 — determinism**: the matrix re-run to an identical record.
-5. Docs (`docs/`, `DEVELOPMENT.md` note) for the feature-tag contract.
-6. Windowed confirmation of the cornice→parapet chain (3-iteration visual limit; PNG to user).
+### 6.5 Q2 verification pass (2026-09-13) — 5 of 6 closed, 1 gate OPEN
+Harness of record: `debug/parkour_ledge_test.gd` via `python tools/run_suite.py --parkourledgetest`
+=> **36 checks / 5 failures**, and every failure is the one open gate (3).
+1. **Stage 2 — tags in the generator: DONE.** `building_builder.gd` stamps `band` in `_emit_band`
+   (sill/lintel) and `parapet` on the roof ring; the bulkhead rim already carried `bhexit`.
+   `mesh_batcher` stamps exactly the `CLIMBABLE_TAGS` whitelist, and the controller resolves kind
+   from the shape's `vox_tag`. The census asserts `kind == tag` for every accepted tagged hold.
+2. **§2.4 section 2 — real buildings: DONE.** A lattice of stances (every `VER_STEP 0.6 m` of foot
+   height, per storey, along every facade, plus the modelled jump arc `JUMP_STEPS`) over
+   `BuildingBuilder.build` output: 3 seeds, 9 materialized buildings, 12 476 probes, **1 899 verified
+   holds (15.2 %)** — bands 481, cornices 812, parapets 380, balcony rails 226; classes bar 1 621 /
+   slab 278, and every slab in the city is a roof parapet 13.3-19.5 m up. Rejects: `no_face` 2 397,
+   `no_depth` 2 836, `rise_high` 5 287, `no_width` 50, `no_clearance` 4, `rise_low` 3. Each accepted
+   hold passes its measured profile and is anchored (hang or landing); hold counts differ per
+   building, so routes are non-uniform.
+3. **§2.4 section 3 — real climb: DRIVEN, GATE OPEN (cause located).** A real `Survivor` +
+   `ParkourController` is driven at four generated fronts (36 real jumps: walk-in, jump, hang,
+   climb-up; worst per-frame step 0.154 m, so no teleport). It chains holds *inside* a storey
+   (logged 1.74 → 2.38 → 2.78 → 3.74 → 4.20 m of feet) and never stands above the entrance stoop:
+   `stood` 1.08 m against an 18.60 m roof, on every front.
+   Reach arithmetic the design has to live with: a hang chain gains `JUMP_SPEED*0.9` apex 0.92 +
+   `LEDGE_REACH_ABOVE` 2.1 = **3.02 m per leap** (less than a 3.10 m storey, so bars cannot cross a
+   storey) while a standing jump gains 1.14 + 2.1 = **3.24 m** (so a standable hold per storey would
+   close the ladder).
+   **Cause located:** the driven climb's own grab records show `stand_clear` true holds at a 3.95 m
+   lip — holds the body could climb onto — yet the hop is logged as a leap and the body never ends
+   standing on one. `--parkourtest` never drives a mantle (its hold report reads `climbs 0`), so the
+   hang → climb-up transition is unverified by the contract test and does not complete in the driven
+   climb. Two candidate fixes aimed at the *grab* (mountable-hold preference in the reach window; a
+   second down-cast below the highest lip) were implemented, measured and made no difference; both
+   were reverted. Next item: a contract-test case for the hang → climb-up transition plus a fix for
+   the climb follow — not a change to the city or the reach numbers.
+4. **§2.4 section 4 — determinism: DONE.** The rule matrix and the whole census re-run to identical
+   records (`first == second`), on the same building.
+5. **Docs: DONE.** `docs/world/PARKOUR-LEDGE-CONTRACT.md` (one query, rules A-H, tag contract,
+   anchored movement, proofs, limits) + `DEVELOPMENT.md` item 16.
+6. **Windowed confirmation: DONE.** `--parkourledgetest --rendered --visual` writes 86 PNGs to
+   `captures/q2-parkour/` (street, every hop, the top of each climb) and they were sent to the user.
+   The capture pass builds one seed only (`--visual` narrows `CENSUS_SEEDS`), which is enough for
+   pictures; the headless census covers all three.

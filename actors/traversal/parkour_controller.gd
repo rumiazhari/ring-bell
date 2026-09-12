@@ -101,7 +101,7 @@ const AWNING_DRIVE_SPEED := 2.6        # canvas deck: firm but forgiving assist
 # alone must never turn a 0.06 m moulding into a handhold.
 const CLIMBABLE_TAGS := [
 	&"cornice", &"parapet", &"balcony", &"scaffold", &"awning", &"tower",
-	&"pilaster", &"bhplant", &"bhexit", &"bhladder",
+	&"pilaster", &"bhplant", &"bhexit", &"bhladder", &"band",
 ]
 const HOLD_CLASS_SLAB := &"slab"       # top surface deep enough to stand on
 const HOLD_CLASS_BAR := &"bar"         # slender lip: hang + shimmy only
@@ -156,6 +156,8 @@ var _climb_speed := 0.0
 var _hang_hold: Dictionary = {}        # verified record of the hold in hand
 var hold_accepts := 0                  # lifetime: holds that passed verification
 var hold_rejects := 0                  # lifetime: candidates killed by geometry
+var last_reject_reason := &""          # Q2 census: why the last candidate died
+var reject_reasons: Dictionary = {}    # Q2 census: rule -> count (bounded set)
 var last_hold_kind := &""              # tag/prop/structure of the latest grab
 var last_hold_width := 0.0             # measured usable width (m)
 var last_hold_depth := 0.0             # measured usable depth (m)
@@ -480,7 +482,7 @@ func _probe_ledge(dir: Vector3) -> Dictionary:
 		wall_hit = hit
 		break
 	if wall_hit.is_empty():
-		return {}
+		return _reject(&"no_face")
 	var face_plane := (wall_hit.position as Vector3).dot(d)
 	# 2. The shape the chest rays hit is the first candidate (shared table
 	#    edges, crates, low cornices).
@@ -518,14 +520,14 @@ func _probe_ledge(dir: Vector3) -> Dictionary:
 func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
 		d: Vector3, side: Vector3, feet: Vector3, face_plane: float) -> Dictionary:
 	if node == null or not is_instance_valid(node):
-		return {}
+		return _reject(&"no_shape")
 	var shape := node.shape
 	if not (shape is BoxShape3D):
-		return {}
+		return _reject(&"not_box")
 	var box := shape as BoxShape3D
 	var xf := node.global_transform
 	if absf(xf.basis.y.normalized().dot(Vector3.UP)) < 0.99:
-		return {}                                   # tilted: no honest top face
+		return _reject(&"tilted")                   # tilted: no honest top face
 	var ex := xf.basis.x.normalized() * box.size.x * 0.5
 	var ez := xf.basis.z.normalized() * box.size.z * 0.5
 	var half_d: float = absf(ex.dot(d)) + absf(ez.dot(d))
@@ -534,12 +536,11 @@ func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
 	var top := c.y + box.size.y * 0.5
 	var rise := top - feet.y
 	if rise < LEDGE_TOP_MIN or rise > LEDGE_REACH_ABOVE:
-		return {}
+		return _reject(&"rise_low" if rise < LEDGE_TOP_MIN else &"rise_high")
 	var edge := c - d * half_d                       # top edge facing the player
 	edge.y = top
 	if edge.dot(d) > face_plane + HOLD_SCAN_MAX_PLANE:
-		hold_rejects += 1
-		return {}                                    # buried inside the wall
+		return _reject(&"buried")                    # buried inside the wall
 	var tag := StringName(node.get_meta("vox_tag", &""))
 	var material := StringName(node.get_meta("vox_material", &""))
 	var tagged := CLIMBABLE_TAGS.has(tag)
@@ -556,15 +557,13 @@ func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
 		usable += HOLD_STEP
 	var min_depth := HOLD_DEPTH_MIN_BAR if tagged else HOLD_DEPTH_MIN_SLAB
 	if usable < min_depth:
-		hold_rejects += 1
-		return {}
+		return _reject(&"no_depth")
 	# A lip has to offer a hand something: either a vertical face tall enough to
 	# hook (cornice/parapet/sill) or a top face wide enough to lay a hand over
 	# (scaffold plank, deck). A 0.08 x 0.10 m string course offers neither, so
 	# decorative trim stays scenery no matter what it is tagged.
 	if box.size.y < HOLD_HEIGHT_MIN and usable < HOLD_DEPTH_WIDE:
-		hold_rejects += 1
-		return {}
+		return _reject(&"thin_member")
 	# Usable width along the facade, measured both ways from the probe column:
 	# this single honest number decides shimmy travel and mantle room.
 	var half_free := 0.0
@@ -578,8 +577,7 @@ func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
 			break
 		half_free = off
 	if half_free * 2.0 < HOLD_WIDTH_MIN:
-		hold_rejects += 1
-		return {}
+		return _reject(&"no_width")
 	var kind := tag
 	if kind == &"":
 		kind = &"structure" if material != &"" else &"prop"
@@ -611,8 +609,7 @@ func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
 	# A hold with nowhere to put the body is not a hold: the hang capsule is
 	# blocked AND the lip has no standing spot, so a grab would only clip.
 	if not bool(rec["hang_clear"]) and not bool(rec["stand_clear"]):
-		hold_rejects += 1
-		return {}
+		return _reject(&"no_clearance")
 	# A slab is a top surface the body can stand on, so it needs both the usable
 	# depth and a real standing spot (a 0.24 m cornice against a wall measures
 	# deep enough but is a handhold: hang + shimmy only).
@@ -1088,11 +1085,24 @@ func _try_hang_climb() -> void:
 	_hang_hold = {}
 
 
+## Q2 census: name the rule that killed a candidate, so a headless sweep of
+## generated geometry can report WHY a facade cell is not climbable instead of
+## only counting rejects. Bounded rule set, no unbounded log growth, and the
+## reject paths stay single-exit so no reason can drift from its counter.
+func _reject(reason: StringName) -> Dictionary:
+	hold_rejects += 1
+	last_reject_reason = reason
+	reject_reasons[reason] = int(reject_reasons.get(reason, 0)) + 1
+	return {}
+
+
 ## Q2 hold report for tests, HUD and debug overlays.
 func get_hold_report() -> Dictionary:
 	return {
 		"accepts": hold_accepts,
 		"rejects": hold_rejects,
+		"last_reject": String(last_reject_reason),
+		"reject_reasons": reject_reasons.duplicate(),
 		"kind": String(last_hold_kind),
 		"width": last_hold_width,
 		"depth": last_hold_depth,

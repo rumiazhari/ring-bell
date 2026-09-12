@@ -121,6 +121,12 @@ python tools/run_suite.py --pausemenutest 420
 
 # 15) ESC menu windowed proof (needs a real window/GPU, not headless)
 & $G --path $P -- --pausemenucapture
+
+# 16) Parkour ledge contract: rules A-H on fixtures, then the real city - a census
+#     of generated holds and a real Survivor driven up a generated facade.
+#     Contract: docs/world/PARKOUR-LEDGE-CONTRACT.md. --visual adds windowed PNGs.
+python tools/run_suite.py --parkourtest 400
+python tools/run_suite.py --parkourledgetest 2400
 ```
 
 The project wrappers `tools/run_suite.py` invoke `godot --headless --path <proj> -- --<flag>` and judge by the `finished with 0 failure(s)` marker printed by each harness (Windows `3221225477` with marker is a pass). Long Godot runs can hang past the shell timeout and lose partial output — `run_suite.py` redirects to a file so timeouts still yield diagnostics. Do not launch a second Godot instance while one may still be alive (`tasklist /FI IMAGENAME eq Godot*`).

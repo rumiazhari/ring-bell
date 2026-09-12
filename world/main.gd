@@ -313,6 +313,18 @@ func _ready() -> void:
 		parkour_test.name = "ParkourContractTest"
 		add_child(parkour_test)
 		return
+	if args.has("--parkourledgetest"):
+		# Q2 stage 3: the ledge ledger swept over real generated buildings.
+		# Same load guard as the contract test: a parse error fails, never hangs.
+		var ledge_script: Variant = load("res://debug/parkour_ledge_test.gd")
+		if ledge_script == null or not (ledge_script is GDScript) or not (ledge_script as GDScript).can_instantiate():
+			push_error("[ParkourLedgeTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		var ledge_test: Node = (ledge_script as GDScript).new()
+		ledge_test.name = "ParkourLedgeTest"
+		add_child(ledge_test)
+		return
 	if args.has("--worldrealizationtest"):
 		var realization_tester: Node = load("res://debug/world_realization_test.gd").new()
 		realization_tester.name = "WorldRealizationTest"
@@ -541,7 +553,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
 			"--animationtest", "--animcapture", "--animmeasure", "--streamingregressiontest",
-			"--parkourtest",
+			"--parkourtest", "--parkourledgetest",
 			"--import", "--shot", "--doortest", "--g10p1-capture",
 			"--g10p2b-capture",
 			"--meleeprobe", "--meleetest", "--meleecapture", "--meleedirprobe",

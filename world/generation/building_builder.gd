@@ -2055,8 +2055,12 @@ static func _emit_band(b: MeshBatcher, off: Vector3, side: int,
 	var p := _side_point(side, w, d, oc)
 	var size := Vector3(bw, bh, WALL_T) if horizontal \
 			else Vector3(WALL_T, bh, bw)
+	# Q2: a sill/lintel band is real masonry between the storey floor and the
+	# window head, so its top face is a genuine sill. Tag it (vox_tag "band")
+	# or traversal can only call it anonymous structure; the shape's own box
+	# still verifies the hold, so a thin lintel stays unclimbable.
 	b.add_destructible_box(off + Vector3(p.x, y_base + bh * 0.5, p.y),
-			size, col, &"concrete")
+			size, col, &"concrete", true, "band")
 
 
 static func _opening_cmp(a: Dictionary, b2: Dictionary) -> bool:
@@ -2794,8 +2798,11 @@ static func _roof(b: MeshBatcher, off: Vector3, fp: Rect2, style: Dictionary,
 				Vector3(0.28, PARAPET_H, d + 0.3)],
 	]
 	for r: Array in ring:
+		# Tagged "parapet": a 0.9 m x 0.28 m solid ring is a real hold (the
+		# roof-edge lip of the facade climb), and the parkour controller
+		# classifies holds by tag + VERIFIED box geometry, never by tag alone.
 		b.add_destructible_box(off + r[0], r[1], wall_c.darkened(0.25),
-				&"concrete")
+				&"concrete", true, "parapet")
 
 	# Bulkhead around the stair shaft exit (roof access hut).
 	if has_stairs:
