@@ -99,6 +99,12 @@ func _ready() -> void:
 	up_direction = Vector3.UP
 	floor_max_angle = deg_to_rad(46.0)
 	floor_snap_length = 0.3
+	# ANTI-STUCK: the default 4 slides can be exhausted when the capsule brushes
+	# several stair nosings / wall corners in one frame - the body quits sliding
+	# mid-step and reads as wedged. A slightly fatter safe margin also keeps the
+	# capsule from catching the razor edge of a tread or the lip of a slab.
+	max_slides = 8
+	safe_margin = 0.005
 
 	collision_layer = LAYER_SURVIVORS
 	# NOTE: survivors do not collide with each other on purpose - it prevents
@@ -292,6 +298,86 @@ func stop_moving() -> void:
 ##     the next landing),
 ##   - locomotion parkour locks and capsule (a vault/hang/slide state or a
 ##     crouched capsule would fight the new position or stand up in geometry).
+
+# --- ANTI-STUCK: bounded step-up assist ------------------------------------
+# Lips between a few cm and the low vault probe (PROBE_KNEE_HEIGHT 0.5) had no
+# remedy at all: vault starts at the knee, so a stair nosing, a 0.22 m slab edge
+# or a kerb stopped the player dead mid-walk ("stuck on the stairs edge"). Walk
+# over any lip that is truly low, with full capsule clearance checked at the
+# landing spot so we can never step into geometry.
+const STEP_UP_MAX := 0.40
+const STEP_UP_LOOK := 0.60
+const STEP_UP_FEELER_DROP := 0.60
+var step_up_count: int = 0
+
+
+func _try_step_up() -> void:
+	if not is_on_floor() or velocity.y > 0.75:
+		return
+	if _move_dir.length_squared() < 0.01:
+		return
+	if _locomotion != null and is_instance_valid(_locomotion):
+		var ls: int = int(_locomotion.state)
+		if ls != CharacterLocomotion.State.IDLE and ls != CharacterLocomotion.State.WALK and ls != CharacterLocomotion.State.RUN and ls != CharacterLocomotion.State.SPRINT and ls != CharacterLocomotion.State.CROUCH_WALK and ls != CharacterLocomotion.State.TURN_L90 and ls != CharacterLocomotion.State.TURN_R90 and ls != CharacterLocomotion.State.TURN_180:
+			return
+	var fwd := _move_dir
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.01:
+		return
+	fwd = fwd.normalized()
+	if Vector2(velocity.x, velocity.z).length() < 0.15:
+		return
+	var space := get_world_3d().direct_space_state
+	# 1) something must really be blocking us at knee height
+	var knee_org := global_position + Vector3(0.0, 0.30, 0.0) + fwd * 0.42
+	var q_knee := PhysicsRayQueryParameters3D.create(knee_org, knee_org + fwd * 0.30)
+	q_knee.exclude = [self]
+	q_knee.collide_with_areas = false
+	if space.intersect_ray(q_knee).is_empty():
+		return
+	# 2) the lip must be low: the same ray at step height must be clear
+	var high_org := global_position + Vector3(0.0, STEP_UP_MAX + 0.05, 0.0)
+	var q_high := PhysicsRayQueryParameters3D.create(high_org, high_org + fwd * STEP_UP_LOOK)
+	q_high.exclude = [self]
+	q_high.collide_with_areas = false
+	if not space.intersect_ray(q_high).is_empty():
+		return
+	# 3) find the surface ahead and how far up it sits
+	var feeler := global_position + fwd * STEP_UP_LOOK
+	var q_down := PhysicsRayQueryParameters3D.create(
+		feeler + Vector3(0.0, STEP_UP_MAX + 0.05, 0.0),
+		feeler + Vector3(0.0, -STEP_UP_FEELER_DROP, 0.0))
+	q_down.exclude = [self]
+	q_down.collide_with_areas = false
+	var down := space.intersect_ray(q_down)
+	if down.is_empty():
+		return
+	var rise: float = float(down["position"].y) - global_position.y
+	if rise <= 0.04 or rise > STEP_UP_MAX:
+		return
+	# 4) the whole capsule must fit at the landing spot (walls + ceiling)
+	var target := Vector3(feeler.x, float(down["position"].y) + 0.03, feeler.z)
+	if _capsule_shape == null or _capsule_shape.shape == null:
+		return
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = _capsule_shape.shape
+	params.collision_mask = collision_mask
+	params.exclude = [self]
+	params.collide_with_areas = false
+	params.collide_with_bodies = true
+	var cap_h: float = 1.7
+	if _capsule != null:
+		cap_h = _capsule.height
+	params.transform = Transform3D(Basis(), target + Vector3(0.0, cap_h * 0.5, 0.0))
+	if not space.intersect_shape(params, 1).is_empty():
+		return
+	# 5) commit: lift onto the lip, keep momentum, settle on the new floor
+	global_position = target + fwd * 0.04
+	velocity.y = 0.0
+	apply_floor_snap()
+	step_up_count += 1
+
+
 func reset_motion_after_recovery(feet_y: float) -> void:
 	velocity = Vector3.ZERO
 	_knockback = Vector3.ZERO
@@ -435,6 +521,7 @@ func _physics_process(delta: float) -> void:
 	parkour.process_traversal(_move_dir, delta)
 
 	move_and_slide()
+	_try_step_up()
 
 	if _locomotion != null and _skeleton != null and is_instance_valid(_locomotion) and is_instance_valid(_skeleton):
 		var xz_speed: float = Vector2(velocity.x, velocity.z).length()

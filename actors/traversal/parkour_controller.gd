@@ -50,6 +50,10 @@ const LEDGE_CLIMB_BOOST_MIN := 4.5
 const LEDGE_CLIMB_BOOST_MAX := 9.5
 const LEDGE_FORWARD_MULT := 1.35
 const LEDGE_COOLDOWN := 0.9
+# ANTI-STUCK: a grab may only arm after a *genuine* airborne moment. Stepping
+# off a stair lip or the head of a flight leaves the floor for a few frames and
+# used to latch the player onto the stair edge (HUD "Grabs"), which was a trap.
+const LEDGE_MIN_AIR_TIME := 0.30
 # Phase F slice 2: pull-up effort scales with lip height (cheap low lips,
 # demanding full-reach lips) - an exhausted survivor can still catch a low
 # cornice but cannot chain maximum-reach mantles for free.
@@ -108,6 +112,8 @@ var _ledge_probe: Dictionary = {}
 var _wall_probe: Dictionary = {}
 var _shimmy_probe: Dictionary = {}
 var _ledge_cooldown := 0.0
+var _air_time := 0.0
+var _last_loco_state := -1             # ANTI-STUCK: previous locomotion state
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
 var _climb_dir := Vector3.ZERO
 var _climb_speed := 0.0
@@ -140,8 +146,26 @@ func process_traversal(move_dir: Vector3, delta: float) -> void:
 		return
 	_ledge_cooldown = maxf(0.0, _ledge_cooldown - delta)
 	_tick_climb_follow(delta)
+	# ANTI-STUCK: when a HANG/SHIMMY/DROP2HANG ends (auto-release, let-go input or
+	# landing), hold off re-grabbing for a full cooldown. Without this the body
+	# re-catches the very lip it just released and loops forever - still stuck.
+	if _survivor.has_method("get_locomotion"):
+		var loco_r = _survivor.get_locomotion()
+		if loco_r != null and is_instance_valid(loco_r):
+			var st_r := int(loco_r.state)
+			var was_hang := _last_loco_state == CharacterLocomotion.State.HANG \
+					or _last_loco_state == CharacterLocomotion.State.SHIMMY \
+					or _last_loco_state == CharacterLocomotion.State.DROP2HANG
+			if was_hang and _last_loco_state != st_r:
+				_ledge_cooldown = maxf(_ledge_cooldown, LEDGE_COOLDOWN)
+			_last_loco_state = st_r
+	if _survivor.is_on_floor():
+		_air_time = 0.0
+	else:
+		_air_time += delta
 	if not _survivor.is_on_floor():
-		_try_ledge_grab(move_dir)
+		if _air_time >= LEDGE_MIN_AIR_TIME:
+			_try_ledge_grab(move_dir)
 		return
 	if move_dir.length_squared() < 0.01:
 		return

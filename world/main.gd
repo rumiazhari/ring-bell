@@ -101,6 +101,14 @@ func _ready() -> void:
 	if args.has("--buildingrepairtest"):
 		add_child(load("res://debug/city_building_repair_test.gd").new())
 		return
+	if args.has("--stairstucktest"):
+		var stuck_script: Variant = load("res://debug/stair_stuck_probe.gd")
+		if stuck_script == null or not (stuck_script is GDScript) or not (stuck_script as GDScript).can_instantiate():
+			push_error("[StairStuckTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		add_child((stuck_script as GDScript).new())
+		return
 	if args.has("--q3revealcapture"):
 		add_child(load("res://debug/q3_reveal_capture.gd").new())
 		return
@@ -112,6 +120,9 @@ func _ready() -> void:
 		return
 	if args.has("--q3doorwalleaudit"):
 		add_child(load("res://debug/q3_door_wall_audit.gd").new())
+		return
+	if args.has("--q3frontdoorcap"):
+		add_child(load("res://debug/q3_front_door_capture.gd").new())
 		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())

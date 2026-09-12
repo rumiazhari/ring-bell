@@ -46,6 +46,11 @@ const CLIMB_COST := 10.0
 const VAULT_LEN := 0.55
 const MANTLE_LEN := 0.85
 const HANG_LOOP := 1.2
+# ANTI-STUCK: HANG/SHIMMY must always be escapable (a grab that cannot be
+# climbed -- e.g. a false grab on a stair edge with no stamina -- otherwise
+# freezes the player forever, because HANG has no release input of its own).
+const HANG_MAX_HOLD := 6.0           # hard ceiling on any single hang
+const HANG_NO_CLIMB_RELEASE := 1.2   # fast drop when climbing is impossible
 const CLIMB_LEN := 0.70
 const HAND_SNAP_MAX := 0.04
 const VAULT_HEIGHT_MIN := 0.6
@@ -604,6 +609,31 @@ func _handle_timers(delta: float, p: Dictionary) -> void:
 		_hang_timer += delta
 		# HANG indefinite, but keep hand_snap updated
 
+## ANTI-STUCK: decide whether the current HANG/SHIMMY must let go.
+## Releases on an explicit let-go input (crouch), when the body pulls away from
+## the wall, when climbing is impossible at all (no stamina / shambling), and
+## after HANG_MAX_HOLD as a hard safety ceiling.
+func _hang_release_requested(is_airborne: bool, p: Dictionary) -> bool:
+	# NOTE: do NOT release on "is_airborne == false" alone - harnesses and the
+	# grab fallback drive HANG with that flag false and it instantly cancelled
+	# every hang (broke the SHIMMY chain). Landing is covered by the ceilings.
+	if bool(p.get("crouch_pressed", p.get("crouch_held", false))):
+		return true
+	# Pulling AWAY from the wall (move aligned with the outward ledge normal) is
+	# an explicit let-go; move INTO the wall is a climber pushing in, no release.
+	var md: Vector3 = p.get("move_dir", Vector3.ZERO) as Vector3
+	if md.length() > 0.1 and ledge_normal.length() > 0.1:
+		if md.normalized().dot(ledge_normal.normalized()) > 0.5:
+			return true
+	var stamina_now: float = float(p.get("stamina", stamina))
+	var can_climb: bool = not _shamble and stamina_now >= CLIMB_COST
+	if not can_climb and _hang_timer >= HANG_NO_CLIMB_RELEASE:
+		return true
+	if _hang_timer >= HANG_MAX_HOLD:
+		return true
+	return false
+
+
 func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: float, p: Dictionary) -> void:
 	# If in locked parkour/slide/stand states, timers handle exit; don't allow new triggers
 	if state == State.VAULT and _vault_timer > 0.0:
@@ -617,6 +647,11 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 	if state == State.STAND_UP and _standup_timer > 0.0:
 		return
 	if state == State.HANG:
+		if _hang_release_requested(is_airborne, p):
+			state = State.IDLE
+			_hang_timer = 0.0
+			hand_snap = 0.0
+			return
 		# Shimmy trigger: strafe non-zero + shimmy_probe len>=2.0
 		var shimmy_probe_h: Dictionary = p.get("shimmy_probe", {}) as Dictionary
 		var strafe_h: float = float(p.get("strafe", 0.0))
@@ -689,6 +724,11 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 	if state == State.DROP2HANG and _drop_timer > 0.0:
 		return
 	if state == State.SHIMMY:
+		if _hang_release_requested(is_airborne, p):
+			state = State.IDLE
+			_hang_timer = 0.0
+			hand_snap = 0.0
+			return
 		# check stamina and shimmy probe validity; allow drop to HANG if probe lost
 		var shimmy_probe: Dictionary = p.get("shimmy_probe", {}) as Dictionary
 		var ledge_for_shim: Dictionary = p.get("ledge_probe", {}) as Dictionary
@@ -721,6 +761,7 @@ func _handle_state(speed: float, yaw_delta: float, is_airborne: bool, delta: flo
 				return
 		# stay shimmy, update hand_snap analytic
 		_apply_shimmy_hand_snap()
+		_hang_timer = 0.0
 		return
 	# Wall-run trigger check (needs sprint, speed, wall probe)
 	if not _shamble:
