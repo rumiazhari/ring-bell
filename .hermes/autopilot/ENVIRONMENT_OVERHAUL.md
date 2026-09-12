@@ -313,6 +313,25 @@ city generation excluded from the sample window; medium quality, 170 157 world n
 6. `EnvironmentManager` is expected to be created by `world/main.gd`; other scenes
    that build their own world must create it explicitly (or load `--envtest`'s
    standalone pattern).
+7. **`--envperf` deltas are single-sample.** One 30 s sample per state on the real
+   streamed city, so the per-state millisecond deltas are only reliable to roughly
+   +-10 ms and should not be quoted as precise costs. In `envperf5.txt` (the current,
+   post-retune run) clear measured 25.98 ms avg / 86.90 ms p99 while cloudy measured
+   35.45 ms avg / 77.53 ms p99 -- i.e. the partially-cloudy sky both averaged worse
+   *and* spiked less than clear, which is sampling noise plus realtime-sky shader
+   work varying with cloud coverage, not a weather cost ordering. The results that
+   *are* structural and trustworthy are the invariants printed alongside the timings:
+   node count flat (170157 -> 170157 across all four states), one world environment,
+   one sun / one moon / one manager / one rain node, and no duplicate environment
+   nodes after three transitions.
+8. **Live rain amounts differ by context, by design.** The emitter count is
+   `round(rain_amount(quality) * precipitation^0.75)` quantised down to
+   `rain_amount(quality) / 12`, so it scales with both quality and intensity: at
+   medium quality a ramped storm shows 1750 live streaks in `--envperf` while the
+   capture fixture, which forces states on its own quality, reports its own larger
+   figures (light 1330 / heavy 2394 / storm 3192). Both are the same code path at
+   different quality/intensity inputs; neither is a world-wide particle count, since
+   the emitter follows the camera in an 11 m box.
 
 ## 16. Future hooks
 
