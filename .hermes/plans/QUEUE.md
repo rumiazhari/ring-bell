@@ -6,7 +6,7 @@ an upper entry is unfinished.**
 
 ---
 
-## Q1 (ACTIVE) — Performance: make the game "flawless and lagless"
+## Q1 (DONE -- committed 101c85c: 5.0 -> 79.0 FPS, frame 200ms -> 12.7ms, all render settings ON) -- Performance: make the game "flawless and lagless"
 
 User (verbatim): "please optimize the game performance without sacrificing front end what
 player perceive. current FPS is like 4-5 in my RTX 5060 16gb ram SSD drive AMD Ryzen 7 350.
@@ -104,7 +104,12 @@ limitations."
 
 ---
 
-# Q3 — PROCEDURAL BUILDING INTERIORS overhaul (user, queued after Q1 + Q2)
+# Q3 (ACTIVE -- user instruction places this before Q2; Q2 parkour stays queued)
+# Q3 -- PROCEDURAL BUILDING INTERIORS overhaul (user, queued after Q1 + Q2)
+
+Continuation plan + MEASURED baseline: `.hermes/plans/2026-09-12-q3-interior-overhaul.md`
+Baseline: `--interiorlogictest` = 12 failures (4 checks x 3 seeds): blind rooms 97/95/134,
+chained_private 2891 (~29% of substantial rooms), mazhaus_all 0.853-0.872 against a 0.90 bar.
 
 Continue from the then-current `copilot/worldgen-fix` HEAD. FIRST inspect current code and
 write a detailed continuation plan in `.hermes/plans/` so another model can resume. Then
