@@ -31,6 +31,183 @@ const WALL_T_INTERIOR: float = 0.18 # == WorldConstants.CITY_INTERIOR_WALL_T
 const OPEN_W: float = WorldConstants.CITY_INTERIOR_OPEN_W # one authority for interior leaf/aperture
 const OPEN_H: float = WorldConstants.CITY_INTERIOR_OPEN_H
 
+# ---------------------------------------------------------------------------
+# Archetype floor plans (design doc: .hermes/autopilot/INTERIOR_LAYOUT_OVERHAUL.md)
+# Rooms drive geometry: FloorPlanPlanner chooses a building-type / floor-role
+# archetype, places the circulation core and room programme with explicit
+# adjacency rules, fits it to the footprint and validates it. Only then are
+# partitions, openings, doors and solid walls derived from the room graph. The
+# legacy subdivision paths below stay reachable as fallbacks for footprints no
+# archetype can serve, and for historic compounds.
+# ---------------------------------------------------------------------------
+
+## "building_id|floor_i" -> "archetype" | "legacy". BuildingBuilder reads this
+## so the legacy "clear a route through the floor and clip whatever blocks it"
+## pass cannot edit a floor plan that already planned its own circulation.
+static var _plan_kind: Dictionary = {}
+
+static func uses_archetype_plan(spec: Dictionary, floor_i: int) -> bool:
+	var key := "%s|%d" % [str(spec.get("id", "b")), floor_i]
+	if _plan_kind.has(key):
+		return str(_plan_kind[key]) == "archetype"
+	return _archetype_eligible(spec, floor_i)
+
+static func _record_plan_kind(bid: String, fi: int, kind: String) -> void:
+	if _plan_kind.size() > 4096:
+		_plan_kind.clear()
+	_plan_kind["%s|%d" % [bid, fi]] = kind
+
+## Facade availability per BUILDING face for the planner, which wants one bool
+## per plan edge. Historic wings publish real adjacency in `open_faces` (either
+## four bools or a list of open face indices, raw edge order N, E, S, W).
+## Ordinary buildings in a dense block get the setting default instead: the
+## street face the door sits on and the opposite courtyard face are open, the
+## two party-wall sides are not. Without this the planner was told that nothing
+## anywhere had a facade, so facade-aware placement and its scoring never ran.
+static func _open_by_plan_edge(spec: Dictionary) -> Array:
+	var raw: Variant = spec.get("open_faces", null)
+	var out: Array = [false, false, false, false]
+	if raw is Array and (raw as Array).size() == 4 and (raw as Array)[0] is bool:
+		return raw
+	if raw is Array and not (raw as Array).is_empty():
+		for f: Variant in (raw as Array):
+			var i := int(f)
+			if i >= 0 and i < 4:
+				out[i] = true
+		return out
+	var de := int(spec.get("door_edge", 0)) % 4
+	out[de] = true
+	out[(de + 2) % 4] = true
+	return out
+
+## Conservative mirror of the eligibility test used by build_for_building().
+static func _archetype_eligible(spec: Dictionary, floor_i: int) -> bool:
+	if spec.has("compound_id"):
+		return false
+	if floor_i < 0 or floor_i >= int(spec.get("floors", 1)):
+		return false
+	var rect: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
+	var inner := Rect2(rect.position + Vector2(WALL_T + 0.02, WALL_T + 0.02),
+			rect.size - Vector2(WALL_T * 2.0 + 0.04, WALL_T * 2.0 + 0.04))
+	return inner.size.x >= FloorPlanPlanner.MIN_INNER and inner.size.y >= FloorPlanPlanner.MIN_INNER
+
+## The stair shaft this floor's risers are actually cut into. Resolved through
+## load() because BuildingBuilder already refers to InteriorPlan by class name;
+## a parse-time dependency in the other direction would be cyclic.
+static var _bb_script: Variant = null
+
+static func _stair_zone_plan(spec: Dictionary, fh: float) -> Rect2:
+	if _bb_script == null:
+		_bb_script = load("res://world/generation/building_builder.gd")
+	if _bb_script == null:
+		return Rect2()
+	var fp: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
+	if not bool(_bb_script.has_stairs_for(fp.size, fh, int(spec.get("floors", 1)))):
+		return Rect2()
+	return _bb_script.stair_zone_world(spec)
+
+static func _archetype_floor(bid: String, fi: int, use_val: String, spec: Dictionary, fh: float) -> Dictionary:
+	var fp: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
+	var plan := FloorPlanPlanner.plan_best({
+		"building_id": bid,
+		"rect": fp,
+		"door_edge": int(spec.get("door_edge", 0)),
+		"yaw": float(spec.get("yaw", 0.0)),
+		"use": use_val,
+		"floor_i": fi,
+		"floors": int(spec.get("floors", 1)),
+		"floor_h": fh,
+		"seed_used": int(spec.get("seed_used", 0)),
+		"open_by_plan_edge": _open_by_plan_edge(spec),
+		"core": _stair_zone_plan(spec, fh),
+	})
+	if plan.is_empty():
+		return {}
+	var rooms: Array = plan["rooms"]
+	if not _ensure_program_rooms(rooms):
+		return {}
+	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", 0)), "interior", [str(bid).hash(), fi])
+	var parts: Array = []
+	var doors: Array = []
+	var solids: Array = []
+	for i in (plan["boundaries"] as Array).size():
+		var b: Dictionary = plan["boundaries"][i]
+		var wall: Rect2 = b["wall"]
+		if not bool(b["door"]):
+			# Sealed room-to-room edges are plain walls, not partitions: the
+			# manifest contract is "every partition carries a real opening".
+			solids.append(wall)
+			continue
+		var opening: Rect2 = b["opening"]
+		var a_id := str(b["a"])
+		var b_id := str(b["b"])
+		parts.append({"id": "%s_f%d_p%d" % [bid, fi, parts.size()], "a": a_id, "b": b_id,
+				"rect": wall, "opening": opening, "planned_clearance": true})
+		var dm: Dictionary = _door_for_partition(bid, fi, doors.size(), opening, wall, a_id, b_id, fh, rng)
+		dm["width"] = opening.size.y if wall.size.x <= wall.size.y else opening.size.x
+		doors.append(dm)
+	return {
+		"floor_i": fi,
+		"rooms": rooms,
+		"partitions": parts,
+		"doors": doors,
+		"solid_walls": solids,
+		"topology": "lobby" if fi == 0 else "archetype",
+		"archetype": plan["archetype"],
+		"circulation": plan["circulation"],
+		"core_rect": plan["core_rect"],
+		"mirrored": plan["mirrored"],
+		"plan_metrics": plan["metrics"],
+	}
+
+## validate() requires a service room and a toilet on every floor. The planner
+## already programmes both; this only repairs a plan that lost one to a size
+## downgrade, and refuses the plan (caller falls back) when nothing can host.
+static func _ensure_program_rooms(rooms: Array) -> bool:
+	var has_toilet := false
+	var has_service := false
+	for r: Dictionary in rooms:
+		if r["kind"] == &"toilet":
+			has_toilet = true
+		if FloorProgram.is_service(r["kind"]):
+			has_service = true
+	if not has_toilet:
+		var wc := _smallest_host(rooms, 1.15)
+		if not wc.is_empty():
+			wc["kind"] = &"toilet"
+			wc["service"] = true
+			wc["tier"] = 2
+			has_toilet = true
+	if not has_service:
+		var st := _smallest_host(rooms, 1.15)
+		if not st.is_empty():
+			st["kind"] = &"storage"
+			st["service"] = true
+			st["tier"] = 3
+			has_service = true
+	return has_toilet and has_service
+
+## Smallest room that can host a service function; internal (windowless) rooms
+## are preferred, which is where a toilet or store belongs.
+static func _smallest_host(rooms: Array, min_side: float) -> Dictionary:
+	var pick: Dictionary = {}
+	var pick_area := 1.0e9
+	var pick_internal := false
+	for r: Dictionary in rooms:
+		if bool(r["circulation"]) or r["kind"] == &"toilet":
+			continue
+		var rect: Rect2 = r["rect"]
+		if minf(rect.size.x, rect.size.y) < min_side:
+			continue
+		var area := rect.size.x * rect.size.y
+		var internal := (r["facade_edges"] as Array).is_empty()
+		if pick.is_empty() or (internal and not pick_internal) \
+				or (internal == pick_internal and area < pick_area):
+			pick = r
+			pick_area = area
+			pick_internal = internal
+	return pick
+
 static func build_for_building(spec: Dictionary) -> Dictionary:
 	var bid: String = str(spec.get("id", "b"))
 	var floors: int = int(spec.get("floors", 1))
@@ -51,13 +228,27 @@ static func build_for_building(spec: Dictionary) -> Dictionary:
 		"floors": [],
 	}
 	for fi in floors:
-		var floor_dict: Dictionary
-		if spec.has("compound_id"):
-			floor_dict = HistoricInterior.floor_plan(spec, fi)
-		elif rect.size.x >= 9.0 and rect.size.y >= 12.0:
-			floor_dict = _corridor_floor(bid, fi, use_val, inner, spec, fh)
+		var floor_dict: Dictionary = {}
+		# The archetype planner is the primary path for every building this
+		# system can plan, compounds included: a historic wing is still a
+		# rectangle with a street front and a stair core. The old planners stay
+		# as fallbacks for the footprints the archetypes cannot serve.
+		floor_dict = _archetype_floor(bid, fi, use_val, spec, fh)
+		if not floor_dict.is_empty():
+			_record_plan_kind(bid, fi, "archetype")
 		else:
-			floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
+			if spec.has("compound_id"):
+				floor_dict = HistoricInterior.floor_plan(spec, fi)
+			elif rect.size.x >= 9.0 and rect.size.y >= 12.0:
+				floor_dict = _corridor_floor(bid, fi, use_val, inner, spec, fh)
+			else:
+				floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
+			if floor_dict.is_empty():
+				# A partially-described building must never leave the manifest
+				# with an empty floor: that empty dict is what crashed the
+				# furniture pass and reported "floor -1, no rooms" in the probe.
+				floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
+			_record_plan_kind(bid, fi, "legacy")
 		floor_dict["furniture"] = _room_furniture(floor_dict, spec)
 		floor_dict["stations"] = []
 		for item: Dictionary in floor_dict["furniture"]:
@@ -591,6 +782,7 @@ static func validate(manifest: Dictionary) -> Array[String]:
 					inner_bounds = rc
 				else:
 					inner_bounds = inner_bounds.merge(rc)
+		var open_parts := 0
 		for p in parts:
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
@@ -598,14 +790,20 @@ static func validate(manifest: Dictionary) -> Array[String]:
 				errs.append("partition %s degenerate" % str(p.get("id")))
 			if not _rects_adjacent_for_validation(p, rooms):
 				errs.append("partition %s not adjacent to both rooms" % str(p.get("id")))
+			# A sealed partition is a plain wall between two rooms: no doorway, so
+			# the opening geometry does not apply to it (both planners emit it with
+			# opening = Rect2() and sealed = true).
+			if bool(p.get("sealed", false)):
+				continue
+			open_parts += 1
 			if op.size.x < 0.5 or op.size.y < 0.5:
 				errs.append("partition %s opening too small" % str(p.get("id")))
 			# opening must be inside partition expanded bounds
 			if not pr.grow(0.6).intersects(op):
 				errs.append("partition %s opening outside wall" % str(p.get("id")))
-		# door-partition correspondence
-		if parts.size() != doors.size():
-			errs.append("floor %d partition/door count mismatch %d vs %d" % [int(fl.get("floor_i",-1)), parts.size(), doors.size()])
+		# door-partition correspondence (sealed walls carry no door leaf)
+		if open_parts != doors.size():
+			errs.append("floor %d partition/door count mismatch %d vs %d" % [int(fl.get("floor_i",-1)), open_parts, doors.size()])
 		var door_ids := {}
 		for d in doors:
 			var did := str(d.get("id"))
@@ -626,6 +824,10 @@ static func validate(manifest: Dictionary) -> Array[String]:
 			for r in rooms:
 				graph[str(r["id"])] = []
 			for p in parts:
+				# Connection graph counts doorways and open boundaries only: a sealed
+				# partition is solid wall, so it must not make two rooms "connected".
+				if bool(p.get("sealed", false)):
+					continue
 				var a := str(p.get("a")); var b2 := str(p.get("b"))
 				if graph.has(a) and graph.has(b2):
 					graph[a].append(b2); graph[b2].append(a)
