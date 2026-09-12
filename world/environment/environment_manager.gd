@@ -676,7 +676,7 @@ func state() -> Dictionary:
 		"fog": snappedf(weather.fog_amount(), 0.001),
 		"storm": snappedf(weather.storm_intensity(), 0.001),
 		"wind_speed": snappedf(weather.wind_speed_gusted(), 0.01),
-		"wind_dir_deg": snappedf(rad_to_deg(weather.wind_direction()), 0.1),
+		"wind_dir_deg": snappedf(fposmod(rad_to_deg(weather.wind_direction()), 360.0), 0.1),
 		"wetness": snappedf(weather.wetness, 0.001),
 		"indoors": exposure.is_sheltered(),
 		"exposure": snappedf(exposure.exposure, 0.001),

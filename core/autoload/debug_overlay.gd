@@ -104,6 +104,8 @@ func _build_stats_text() -> String:
 	])
 	lines.append(_player_line())
 	lines.append(_locomotion_line())
+	for line in _environment_lines():
+		lines.append(line)
 	for line in _chunk_lines():
 		lines.append(line)
 	for quest_id: StringName in QuestManager.QUEST_DEFS:
@@ -121,6 +123,18 @@ func _chunk_lines() -> PackedStringArray:
 		if spawner.has_method("debug_lines"):
 			for line in spawner.call("debug_lines"):
 				out.append("world | " + str(line))
+	return out
+
+
+## Environment subsystem state (time, weather, transition progress, rain, fog,
+## wind, wetness, shelter) while the world is running.  Pulled from the group so
+## the environment subsystem never has to know this overlay exists.
+func _environment_lines() -> PackedStringArray:
+	var out := PackedStringArray()
+	for node in get_tree().get_nodes_in_group(&"environment_manager"):
+		if node.has_method("status_lines"):
+			for line in node.call("status_lines"):
+				out.append("env | " + str(line))
 	return out
 
 

@@ -53,9 +53,9 @@ func _build() -> void:
 	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-	# Y-axis billboard: the streak always faces the camera but keeps its
-	# vertical axis, which is what makes a stretched quad read as falling water.
-	_material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	# Velocity-aligned billboard: facing the camera, but tilted along the particle's
+	# own velocity, so wind-driven rain reads as slanted, not as vertical bars.
+	_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
 	_material.billboard_keep_scale = true
 	_material.disable_receive_shadows = true
 	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -85,6 +85,9 @@ func _build() -> void:
 	_rain.initial_velocity_min = 0.0
 	_rain.initial_velocity_max = 0.0
 	_rain.gravity = Vector3(0.0, -EnvironmentConfig.RAIN_FALL_SPEED, 0.0)
+	# Align each streak with its own velocity: a slanted fall drawn as a vertical
+	# bar still reads as vertical, which is what "rain ignores the wind" looks like.
+	_rain.particle_flag_align_y = true
 	_rain.scale_amount_min = 1.0
 	_rain.scale_amount_max = 1.0
 	_rain.color = Color.WHITE

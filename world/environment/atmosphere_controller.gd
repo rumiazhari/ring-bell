@@ -139,7 +139,7 @@ func _build_environment() -> void:
 	# Phase V (kept): faint volumetric ground fog that catches lamp spill.
 	_env.volumetric_fog_enabled = _quality != EnvironmentConfig.Quality.LOW
 	_env.volumetric_fog_density = EnvironmentConfig.VOL_FOG_DENSITY_DAY
-	_env.volumetric_fog_albedo = EnvironmentConfig.VOL_FOG_ALBEDO
+	_env.volumetric_fog_albedo = EnvironmentConfig.VOL_FOG_ALBEDO_DAY
 	_env.volumetric_fog_emission = EnvironmentConfig.VOL_FOG_EMISSION
 	_env.volumetric_fog_emission_energy = EnvironmentConfig.VOL_FOG_EMISSION_DAY
 	_env.volumetric_fog_gi_inject = 0.45
@@ -334,6 +334,12 @@ func apply(frame: Dictionary) -> void:
 		_env.volumetric_fog_emission_energy = lerpf(
 			EnvironmentConfig.VOL_FOG_EMISSION_NIGHT,
 			EnvironmentConfig.VOL_FOG_EMISSION_DAY, daylight) * (1.0 + fog_amount * 0.4)
+		# The haze must be *lit*, not self-luminous: a fixed bright albedo is what
+		# turned midnight into grey overcast.  Both facets follow the sun.
+		_env.volumetric_fog_albedo = EnvironmentConfig.VOL_FOG_ALBEDO_NIGHT.lerp(
+			EnvironmentConfig.VOL_FOG_ALBEDO_DAY, daylight)
+		_env.volumetric_fog_emission = EnvironmentConfig.VOL_FOG_EMISSION_TINT_NIGHT.lerp(
+			EnvironmentConfig.VOL_FOG_EMISSION, daylight)
 		_env.volumetric_fog_length = 96.0 if fog_amount > 0.5 else 64.0
 		# Keep the buffer thin: haze is atmosphere, not a fog wall.
 		_env.volumetric_fog_density = minf(_env.volumetric_fog_density,

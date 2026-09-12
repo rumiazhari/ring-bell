@@ -17,7 +17,7 @@ const SETTLE_SECONDS := 25.0
 const SETTLE_MAX_SECONDS := 150.0
 const WARMUP_SECONDS := 2.0
 const SAMPLE_SECONDS := 6.0
-const PERF_STATES: Array[String] = ["clear", "heavy_rain", "storm"]
+const PERF_STATES: Array[String] = ["clear", "cloudy", "heavy_rain", "storm"]
 const PERF_HOUR := 12.0
 
 var _env: EnvironmentManager = null
@@ -212,6 +212,10 @@ func _particle_budget() -> int:
 	## Sum of `amount` over ACTIVE particle emitters: the number that actually
 	## costs fill rate, as opposed to allocated-but-parked emitters.
 	var total := 0
+	for n: Node in get_tree().root.find_children("*", "CPUParticles3D", true, false):
+		var p := n as CPUParticles3D
+		if p != null and p.emitting and p.visible:
+			total += p.amount
 	for n: Node in get_tree().root.find_children("*", "GPUParticles3D", true, false):
 		var p := n as GPUParticles3D
 		if p != null and p.emitting and p.visible:
@@ -219,16 +223,19 @@ func _particle_budget() -> int:
 	return total
 
 
+## Counts the nodes the environment subsystem owns.  Type-based, not name-based:
+## the check exists to prove chunk streaming never grows the count, so it must
+## count exactly what the subsystem creates (one manager, one sun, one moon, one
+## precipitation emitter).
 func _env_node_counts() -> Dictionary:
 	var counts := {"suns": 0, "moons": 0, "managers": 0, "rain": 0}
 	for n: Node in get_tree().root.find_children("*", "Node", true, false):
-		var nm := String(n.name).to_lower()
-		if nm.begins_with("sun"):
-			counts["suns"] += 1
-		elif nm.begins_with("moon"):
-			counts["moons"] += 1
-		elif nm == "environmentmanager":
+		if n is EnvironmentManager:
 			counts["managers"] += 1
-		elif "rain" in nm and n is GPUParticles3D:
+		elif n is EnvironmentPrecipitation:
 			counts["rain"] += 1
+		elif n is DirectionalLight3D and n.name == AtmosphereController.SUN_NODE_NAME:
+			counts["suns"] += 1
+		elif n is DirectionalLight3D and n.name == AtmosphereController.MOON_NODE_NAME:
+			counts["moons"] += 1
 	return counts

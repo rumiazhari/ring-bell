@@ -65,8 +65,10 @@ const FOG_START_HOUR_MAX := 8
 
 # ---------------------------------------------------------- quality scaling
 const QUALITY_RAIN_AMOUNT := {
-	Quality.LOW: 700, Quality.MEDIUM: 1500, Quality.HIGH: 2600,
-}
+	# Streak counts are *per rain box*, and the box follows the camera, so these
+	# are local densities rather than world totals.  The first pass under-read
+	# badly against dark facades: a small box carries more streaks per frame.
+	Quality.LOW: 1800, Quality.MEDIUM: 4200, Quality.HIGH: 6800,}
 const QUALITY_RAIN_FPS := {
 	Quality.LOW: 24, Quality.MEDIUM: 30, Quality.HIGH: 30,
 }
@@ -122,11 +124,16 @@ const NIGHT_FOG_ENERGY := 0.12
 const DAY_FOG_ENERGY := 0.18
 const FOG_DENSITY_SCALE := 7.0
 const PRECIP_FOG_DENSITY := 0.004
-const VOL_FOG_DENSITY_NIGHT := 0.022
+const VOL_FOG_DENSITY_NIGHT := 0.016
 const VOL_FOG_DENSITY_DAY := 0.005
-const VOL_FOG_EMISSION_NIGHT := 0.52
-const VOL_FOG_EMISSION_DAY := 0.08
-const VOL_FOG_ALBEDO := Color(0.60, 0.63, 0.70)
+const VOL_FOG_EMISSION_NIGHT := 0.04
+const VOL_FOG_EMISSION_DAY := 0.10
+const VOL_FOG_ALBEDO_DAY := Color(0.60, 0.63, 0.70)
+## Night haze is lit by nothing but the moon and the lamps, so it must not keep
+## its daytime albedo - a constant bright albedo is what makes midnight read as
+## grey overcast instead of night.
+const VOL_FOG_ALBEDO_NIGHT := Color(0.14, 0.17, 0.26)
+const VOL_FOG_EMISSION_TINT_NIGHT := Color(0.42, 0.52, 0.78)
 const VOL_FOG_EMISSION := Color(0.86, 0.68, 0.42)
 
 # ---------------------------------------------------------------------- glow
@@ -140,16 +147,16 @@ const GLOW_HDR_SCALE := 1.6
 # ---------------------------------------------------------------------- rain
 const RAIN_MIN_PRECIPITATION := 0.02
 const RAIN_FALL_SPEED := 19.0        # m/s
-const RAIN_STREAK_LENGTH := 0.62     # m
-const RAIN_STREAK_WIDTH := 0.028
-const RAIN_BOX_METERS := 44.0        # horizontal extent of the local rain box
-const RAIN_BOX_HEIGHT := 30.0
-const RAIN_BOX_LIFT := 9.0           # above the camera
+const RAIN_STREAK_LENGTH := 0.95     # m
+const RAIN_STREAK_WIDTH := 0.065
+const RAIN_BOX_METERS := 11.0        # horizontal extent of the camera-local box
+const RAIN_BOX_HEIGHT := 12.0
+const RAIN_BOX_LIFT := 5.5           # above the camera
 const RAIN_LIFETIME := 1.55
-const RAIN_COLOR := Color(0.72, 0.79, 0.90, 0.30)
-const RAIN_COLOR_STORM := Color(0.62, 0.70, 0.86, 0.40)
+const RAIN_COLOR := Color(0.74, 0.80, 0.92, 0.50)
+const RAIN_COLOR_STORM := Color(0.66, 0.73, 0.88, 0.62)
 ## How much of the wind vector bends the fall (0 == straight down).
-const RAIN_WIND_FACTOR := 0.55
+const RAIN_WIND_FACTOR := 3.0
 
 # ------------------------------------------------------------------- shelter
 const SHELTER_PROBE_INTERVAL := 0.25   # real seconds between roof raycasts
