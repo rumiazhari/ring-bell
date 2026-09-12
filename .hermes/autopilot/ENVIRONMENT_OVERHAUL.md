@@ -241,6 +241,7 @@ All run from the project root; Godot 4.7.2 stable, Forward+/Vulkan.
 | `Godot --headless --path . -- --envtest` | **103 checks, 0 failures** |
 | `Godot --path . -- --envcapture` | **13 frames, 0 metric failures** + PNGs |
 | `Godot --path . -- --envperf` | see §14 |
+| `Godot --headless --path . -- --cityruntime` | in §14: streamed city, 0 failures |
 | `Godot --headless --path . -- --cityruntime` | **streamed city: 0 failures** (chunk ring build, unload/reload, collision, stairs, door-id determinism, camera sectors) — the environment system sits in this boot path, so this is the regression gate for criterion 13 |
 | `Godot --headless --path . --check-only --script <env script>` | clean |
 
@@ -295,6 +296,17 @@ city generation excluded from the sample window; medium quality, 170 157 world n
   sky shader, one camera-local particle box, global uniforms instead of per-material
   loops, throttled shelter raycasts, event-driven lightning, interpolated parameters,
   no per-frame allocations in steady state.
+
+### 14.1 Reading the logs (pitfall)
+
+Background runs are launched as `... > "$OUT" 2>&1; echo "exit=$?" >> "$OUT"`, so the shell
+wrapper itself always exits 0 -- a run that dies during city generation still reports "completed
+normally". **The real status is the `exit=` line inside the log, and the only proof a suite ran
+is its own summary line.** `envperf4.txt` is the cautionary example: six lines, zero `EnvPerf`
+rows, `exit=127` (the process died during streamed-city generation, before the settlement wait
+that precedes measurement). It is a dead run, not a baseline -- `envperf5.txt` is the run that
+carries data. Timing runs by file mtime rather than by completion notification is what makes
+this distinguishable.
 
 ## 15. Known limitations
 
