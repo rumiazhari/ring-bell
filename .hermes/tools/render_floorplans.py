@@ -143,15 +143,36 @@ def render_floor(plan, fl, path, title_extra=""):
     for i, r in enumerate(rooms):
         x0, y0, x1, y1 = rect_of(r)
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-        label = "%d %s" % (i, r["kind"])
+        if r.get("entry"):
+            # Draw the marker on the edge of this room that lies on the building
+            # outline (the street side), pointing inward. Drawn at the room's own
+            # top edge it lands inside whatever room is above -- on a bottom
+            # hall that reads as "you enter through the toilet".
+            if abs(y0 - bb[1]) < 0.05:
+                side = "N"
+            elif abs(y1 - bb[3]) < 0.05:
+                side = "S"
+            elif abs(x0 - bb[0]) < 0.05:
+                side = "W"
+            else:
+                side = "E"
+            if side in ("N", "S"):
+                ex = P(cx, y0 if side == "N" else y1)
+                sgn = -1 if side == "N" else 1
+                d.polygon([(ex[0], ex[1] + 16 * sgn), (ex[0] - 9, ex[1] + 32 * sgn),
+                           (ex[0] + 9, ex[1] + 32 * sgn)], fill=ENTRY)
+                d.text((ex[0] - 22, ex[1] + 44 * sgn), "ENTRY", font=f_s, fill=ENTRY)
+            else:
+                ey = P(x0 if side == "W" else x1, cy)
+                sgn = -1 if side == "W" else 1
+                d.polygon([(ey[0] + 16 * sgn, ey[1]), (ey[0] + 32 * sgn, ey[1] - 9),
+                           (ey[0] + 32 * sgn, ey[1] + 9)], fill=ENTRY)
+                d.text((ey[0] - 22 + 44 * sgn, ey[1] - 20), "ENTRY", font=f_s, fill=ENTRY)
         if float(r["w"]) < 2.0 or float(r["h"]) < 1.6:
             continue
+        label = "%d %s" % (i, r["kind"])
         d.text((P(cx, cy)[0] - len(label) * 3.1, P(cx, cy)[1] - 7), label, font=f_lab,
                fill=(60, 20, 20) if r.get("entry") else (20, 20, 20))
-        if r.get("entry"):
-            ex = P(cx, y0)
-            d.polygon([(ex[0], ex[1] - 16), (ex[0] - 9, ex[1] - 32), (ex[0] + 9, ex[1] - 32)], fill=ENTRY)
-            d.text((ex[0] - 22, ex[1] - 46), "ENTRY", font=f_s, fill=ENTRY)
 
     d.rectangle([P(ox, oy), P(bb[2], bb[3])], outline=(0, 0, 0), width=2)
     title = "%s  seed %s  floor %d  %s%s" % (plan["footprint"], plan["seed"], fl["floor_i"],

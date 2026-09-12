@@ -138,9 +138,21 @@ as the record of what was wrong and how it was closed.**
 programme, so `_plan_applies()` declines it and the single-room path is the
 correct answer. The boundary is intentional and now reports its own reason.
 
-**Still unshipped, stated plainly:** the PNG visualiser does not outline the
-entry cell (the entry is present in the plan data, it simply is not drawn) --
-the one §14 checklist item outstanding. And the 12 below-minimum floors route
-through the pre-overhaul path rather than a dedicated minimal-plate archetype;
-adding one is the obvious next quality step, not a defect.
+**Corrected (run 22 follow-up):** an earlier version of this note claimed the
+visualiser does not draw the entry. That was wrong -- it does, along with the
+stair shaft, facade edges and door openings -- but the marker was drawn at the
+entry room's own top edge, which on a bottom-strip hall lands *inside the room
+above* it, and the ENTRY block also sat *after* the sliver guard, so on the
+plans that most need it (a 1.15 m corridor) it was skipped entirely. On
+`wide_shallow seed 0 floor 0` that made the flat read as "you enter through the
+toilet" when the plan actually puts the entry on the hall's street facade
+(`facade [0]`). The marker now draws on whichever edge of the entry room lies on
+the building outline, pointing inward. Verified visually. §14 is satisfied: the
+sheets show footprint, room fills and kinds, doors, stair shaft, entrance,
+facade edges and circulation.
+
+**Still unshipped:** the 12 below-minimum floors route through the pre-overhaul
+path rather than a dedicated minimal-plate archetype; adding one is the obvious
+next quality step, not a defect.
+
 
