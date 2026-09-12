@@ -124,6 +124,9 @@ func _ready() -> void:
 	if args.has("--q3frontdoorcap"):
 		add_child(load("res://debug/q3_front_door_capture.gd").new())
 		return
+	if args.has("--q3camcollcap"):
+		add_child(load("res://debug/q3_camera_collision_capture.gd").new())
+		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())
 	if args.has("--treecapture"):
