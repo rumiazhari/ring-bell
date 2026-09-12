@@ -241,7 +241,6 @@ All run from the project root; Godot 4.7.2 stable, Forward+/Vulkan.
 | `Godot --headless --path . -- --envtest` | **103 checks, 0 failures** |
 | `Godot --path . -- --envcapture` | **13 frames, 0 metric failures** + PNGs |
 | `Godot --path . -- --envperf` | see §14 |
-| `Godot --headless --path . -- --cityruntime` | in §14: streamed city, 0 failures |
 | `Godot --headless --path . -- --cityruntime` | **streamed city: 0 failures** (chunk ring build, unload/reload, collision, stairs, door-id determinism, camera sectors) — the environment system sits in this boot path, so this is the regression gate for criterion 13 |
 | `Godot --headless --path . --check-only --script <env script>` | clean |
 
