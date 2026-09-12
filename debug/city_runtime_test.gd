@@ -167,15 +167,24 @@ func _run() -> void:
 		var side := -1.0 if str(dm.get("hinge", "left")) == "right" else 1.0
 		var leaf_mid_world := leaf.global_transform * Vector3(-side * w * 0.5,
 				1.1, 0.0)
-		var q_leaf := PhysicsRayQueryParameters3D.create(
-				dpos + Vector3(0, 1.1, 0),
-				leaf_mid_world + (leaf_mid_world - dpos).normalized() * 0.5, 1)
-		q_leaf.exclude = [player.get_rid()]
-		var hit_leaf := space.intersect_ray(q_leaf)
-		var leaf_solid: bool = not hit_leaf.is_empty() \
-				and hit_leaf.get("collider") == leaf
+		# ORIENTATION-INDEPENDENT CHECK (P1-10). The old ray aimed at the leaf's
+		# mid started inside the leaf's own collision volume, and Godot SKIPS shapes
+		# that contain a ray's origin unless hit_from_inside is set - so it reported
+		# "no hit" for a leaf that was present, enabled, layer 1 and 95 deg open.
+		# Query the leaf's collision volume at its swung position instead.
+		var probe := SphereShape3D.new()
+		probe.radius = 0.15
+		var lq := PhysicsShapeQueryParameters3D.new()
+		lq.shape = probe
+		lq.transform = Transform3D(Basis.IDENTITY, leaf_mid_world)
+		lq.collision_mask = 1
+		lq.exclude = [player.get_rid()]
+		var leaf_solid := false
+		for h in space.intersect_shape(lq, 32):
+			if h.get("collider") == leaf:
+				leaf_solid = true
 		_check("open leaf still collidable at swung position", leaf_solid,
-				str(hit_leaf.get("collider")))
+				str(leaf_mid_world))
 		# Deterministic door close: mirror walkthrough step-back retry to avoid leaf pinning.
 		# Place player clear of the 0.5 m leaf sweep before close, then retry with physics drain.
 		var away := Vector3(dpos.x, 0.15, dpos.z) - inw * 2.2

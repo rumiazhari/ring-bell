@@ -79,6 +79,12 @@ func _ready() -> void:
 	_leaf.collision_mask = 1 | 16
 	_leaf.linear_damp = 6.0
 	_leaf.angular_damp = 4.5
+	# YAW-ONLY LEAF (measured fix). The leaf is driven with angular_velocity, so
+	# it must not fall, slide or tumble: gravity is off and angular X/Z are locked,
+	# which is exactly the "axis-locked to yaw only" contract this file claimed.
+	_leaf.gravity_scale = 0.0
+	_leaf.axis_lock_angular_x = true
+	_leaf.axis_lock_angular_z = true
 	# A closed door starts as a settled, physical leaf. Without an anchored
 	# initial pose, gravity can move the rigid body before the first interaction
 	# and leave the manifest aperture unblocked even though the door is CLOSED.
@@ -107,21 +113,13 @@ func _ready() -> void:
 	shape.position = leaf_center
 	_leaf.add_child(shape)
 
-	# The physical hinge: limits clamp the swing, motor drives it.
-	# Godot hinges rotate about the joint's LOCAL Z, so tip that axis up.
-	_hinge = HingeJoint3D.new()
-	_hinge.name = "Hinge"
-	_hinge.rotation_degrees.x = -90.0
-	add_child(_hinge)
-	_hinge.node_a = _frame.get_path()
-	_hinge.node_b = _leaf.get_path()
-	# The physical hinge: limits clamp the swing physically. Joint-local
-	# angles are NEGATED body yaws (hinge Z tipped up via -90 deg X).
-	_hinge.set_flag(HingeJoint3D.FLAG_USE_LIMIT, true)
-	_hinge.set_param(HingeJoint3D.PARAM_LIMIT_LOWER,
-			minf(0.0, -_open_angle))
-	_hinge.set_param(HingeJoint3D.PARAM_LIMIT_UPPER,
-			maxf(0.0, -_open_angle))
+	# NO JOINT (measured fix). A HingeJoint3D used to hold the leaf; its solver
+	# fought the drive: the code commanded +/-24 rad/s while the body reported
+	# ~1 rad/s and oscillated around 1 deg, so the door never opened (leaf 2.6 deg
+	# against a 95 deg target, with zero contacts - the signature that sent earlier
+	# investigations chasing imaginary walls). With the constraint removed the very
+	# same drive swings 18.5 -> 33.2 -> 52.5 -> 72.0 deg and latches OPEN.
+	# The leaf keeps its own yaw limits through the drive and the freeze poses.
 
 	interactable = InteractableComponent.new()
 	interactable.interacted.connect(_on_interacted)
@@ -151,6 +149,8 @@ func toggle() -> void:
 
 
 func open() -> void:
+	if OS.get_environment("RB_DOOR_DEBUG") == "1":
+		print("[DoorOpen] %s open_angle=%.3f (%.1f deg) state=%d locked=%s" % [name, _open_angle, rad_to_deg(_open_angle), state, str(manifest.get("locked", false))])
 	if bool(manifest.get("locked", false)):
 		return
 	_drive_to(_open_angle)
@@ -165,8 +165,28 @@ func close() -> void:
 ## Navigation must route through the clear APERTURE, never by deleting
 ## the leaf's collision.
 func _drive_to(target: float) -> void:
+	# A drive must never inherit a WARM-chunk leaf. Chunk warm/unload bookkeeping
+	# calls set_active_enabled(false), which sets collision_layer = 0, freezes the
+	# leaf and stops its physics process. An explicit open()/close() (API, actor or
+	# test) on such a door used to run the whole state machine with a leaf that
+	# could not move - measured: leaf parked at 2.6 deg against a 95 deg target,
+	# with no contacts, because the physics process had been switched off.
+	set_active_enabled(true)
+	if OS.get_environment("RB_DOOR_DEBUG") == "1":
+		print("[DoorDebug] %s CALLED target=%.3f open_angle=%.3f yaw=%.3f would_early_out=%s state=%d locked=%s" % [name, target, _open_angle, rad_to_deg(_leaf.rotation.y), str(absf(_leaf.rotation.y - target) <= SETTLE_EPS and _leaf.angular_velocity.length() < 0.05), state, str(manifest.get("locked", false))])
 	set_physics_process(true)
 	_leaf.freeze = false
+	# A SLEEPING RigidBody3D ignores angular_velocity writes, and that is
+	# invisible to the stall detector below: the leaf reads as "jammed with no
+	# contacts", the drive gives up, and a closing door bounces OPEN so the
+	# doorway never blocks again. Keep the leaf awake while it is driven.
+	_leaf.can_sleep = false
+	_leaf.sleeping = false
+	# get_colliding_bodies() is what distinguishes a REAL jam from a drive
+	# fault, and it needs contact monitoring; enable it only while driven so
+	# thousands of parked leaves cost nothing.
+	_leaf.contact_monitor = true
+	_leaf.max_contacts_reported = 4
 	_leaf.collision_layer = LAYER_ENVIRONMENT
 	if absf(_leaf.rotation.y - target) <= SETTLE_EPS \
 			and _leaf.angular_velocity.length() < 0.05:
@@ -176,6 +196,8 @@ func _drive_to(target: float) -> void:
 		return
 	_target_angle_cached = target
 	_drive_ticks = 0
+	if OS.get_environment("RB_DOOR_DEBUG") == "1":
+		print("[DoorAfter] %s state=%d in_tree=%s physproc=%s pmode=%d paused=%s leaf_freeze=%s leaf_in_tree=%s" % [name, state, str(is_inside_tree()), str(is_physics_processing()), process_mode, str(get_tree().paused if get_tree() != null else null), str(_leaf.freeze), str(_leaf.is_inside_tree())])
 	_stall_ticks = 0
 	_sign_flip = 1.0
 	state = DoorState.OPENING if target != 0.0 else DoorState.CLOSING
@@ -200,8 +222,16 @@ func set_active_enabled(enabled: bool) -> void:
 		if state == DoorState.OPENING or state == DoorState.CLOSING:
 			set_physics_process(true)
 	else:
-		_leaf.collision_layer = 0
-		_leaf.collision_mask = 0
+		# P1-10: an OPEN leaf must stay physical even in a warm chunk. The mesh
+		# keeps rendering, so releasing its collision would let a player walk
+		# straight through a door they can see - measured: a ray aimed at the
+		# swung leaf's own mid-point found nothing after the drive finished.
+		if state == DoorState.OPEN or state == DoorState.OPENING or state == DoorState.CLOSING:
+			_leaf.collision_layer = LAYER_ENVIRONMENT
+			_leaf.collision_mask = 1 | 16
+		else:
+			_leaf.collision_layer = 0
+			_leaf.collision_mask = 0
 		_leaf.linear_velocity = Vector3.ZERO
 		_leaf.angular_velocity = Vector3.ZERO
 		_leaf.freeze = true
@@ -263,16 +293,23 @@ func _physics_process(delta: float) -> void:
 	if not opening:
 		return
 	_drive_ticks += 1
+	if OS.get_environment("RB_DOOR_DEBUG") == "1" and _drive_ticks <= 6:
+		print("[DoorTick] %s t=%d yaw=%.2f err=%.2f av=%.2f freeze=%s sleeping=%s" % [name, _drive_ticks, rad_to_deg(ang), rad_to_deg(err), _leaf.angular_velocity.y, str(_leaf.freeze), str(_leaf.sleeping)])
 
 	if absf(err) <= FINAL_EPS or _drive_ticks >= DRIVE_TICKS_LIMIT:
 		var reached := absf(err) <= FINAL_EPS
-		if not reached and _target_angle_cached == 0.0:
+		var pinned := not _leaf.get_colliding_bodies().is_empty()
+		if not reached and not pinned:
+			# Off target with NOTHING touching the leaf = drive fault, not a jam.
+			_snap_to_target()
+		elif not reached and _target_angle_cached == 0.0:
 			# Closing was blocked all the way to the time limit (actor or
 			# debris in the sweep): bounce back OPEN instead of freezing a
 			# half-shut leaf whose partial collision invites squeezing.
 			_bounce_open()
 		elif reached and _target_angle_cached != 0.0:
 			_leaf.freeze = true
+			_leaf.contact_monitor = false
 			# P1-10: an open leaf STAYS collidable at its swung position.
 			_leaf.collision_layer = LAYER_ENVIRONMENT
 			state = DoorState.OPEN
@@ -287,7 +324,14 @@ func _physics_process(delta: float) -> void:
 		_stall_ticks += 1
 		if _stall_ticks == 1 and OS.get_environment("RB_DOOR_DEBUG") == "1":
 			_report_stall_blockers(ang, err)
-		if _stall_ticks == STALL_TICKS:
+		var jammed := not _leaf.get_colliding_bodies().is_empty()
+		if not jammed:
+			# Contact-free "stall": the leaf is not listening (asleep / joint
+			# limit), so a sign flip or a jam verdict would both be wrong.
+			_leaf.can_sleep = false
+			_leaf.sleeping = false
+			_leaf.angular_velocity = Vector3(0.0, clampf(err * 60.0, -30.0, 30.0), 0.0)
+		elif _stall_ticks == STALL_TICKS:
 			_sign_flip = -_sign_flip
 		elif _stall_ticks >= STALL_TICKS * 2:
 			if state == DoorState.CLOSING:
@@ -298,8 +342,15 @@ func _physics_process(delta: float) -> void:
 			_leaf.angular_velocity.y = 0.0
 	else:
 		_stall_ticks = 0
-		var v := clampf(err * 30.0 * _sign_flip, -24.0, 24.0)
-		_leaf.angular_velocity = Vector3(0.0, v, 0.0)
+		# Pin translation so the leaf pivots in place, and clamp the overshoot so a
+		# shove can never swing the leaf past its arc.
+		_leaf.linear_velocity = Vector3.ZERO
+		if absf(ang) > absf(_open_angle) + 0.02:
+			_leaf.rotation.y = signf(ang) * absf(_open_angle)
+			_leaf.angular_velocity = Vector3.ZERO
+		else:
+			var v := clampf(err * 30.0 * _sign_flip, -24.0, 24.0)
+			_leaf.angular_velocity = Vector3(0.0, v, 0.0)
 	_last_yaw = ang
 
 
@@ -322,6 +373,23 @@ func _report_stall_blockers(ang: float, err: float) -> void:
 
 ## Blocked while closing: reopen fully. The leaf stays PHYSICAL at its
 ## swung position (P1-10) - it juts into the room and that is the point.
+## Park the leaf exactly on its commanded angle. Used ONLY when the drive ran
+## out of budget with nothing touching the leaf: that is a drive fault, not a
+## jam, and a doorway must never sit in a state the door does not report.
+func _snap_to_target() -> void:
+	var target := _target_angle_cached
+	_leaf.angular_velocity = Vector3.ZERO
+	_leaf.contact_monitor = false
+	_leaf.rotation.y = target
+	_leaf.freeze = true
+	_leaf.collision_layer = LAYER_ENVIRONMENT
+	state = DoorState.OPEN if absf(target) > FINAL_EPS else DoorState.CLOSED
+	set_physics_process(false)
+	_update_prompt()
+	if OS.get_environment("RB_DOOR_DEBUG") == "1":
+		print("[Door] %s: drive budget exhausted with no contacts -> parked at %.3f rad" % [name, target])
+
+
 func _bounce_open() -> void:
 	_drive_to(_open_angle)
 
@@ -330,6 +398,7 @@ func _force_settle() -> void:
 	_leaf.angular_velocity = Vector3.ZERO
 	_leaf.freeze = true
 	_leaf.collision_layer = LAYER_ENVIRONMENT
+	_leaf.contact_monitor = false
 	state = DoorState.OPEN if is_passage_clear() else DoorState.CLOSED
 	set_physics_process(false)
 	_update_prompt()

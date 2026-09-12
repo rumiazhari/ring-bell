@@ -252,6 +252,17 @@ const DOOR_COLOR := Color("4a3623")
 const RAIL_COLOR := Color("3c3833")
 const DECK_COLOR := Color("7d7268")
 
+## Q1 DIAGNOSTIC SWITCHES (env-gated; completely inert when RB_SKIP_RULES
+## is unset). A probe run can bisect which generation RULE emitted a
+## blocking member without editing code:
+##   RB_SKIP_RULES=rails,plan_interior,furniture,dressing
+static func _rule_skipped(rule: String) -> bool:
+	var raw := OS.get_environment("RB_SKIP_RULES")
+	if raw.is_empty():
+		return false
+	return raw.split(",", false).has(rule)
+
+
 ## Stair zone length for a given floor height (CityPlan mirrors this).
 static func stair_zone_len(fh: float) -> float:
 	return fh / tan(deg_to_rad(PITCH_DEG)) + 2.0 * LAND
@@ -2378,8 +2389,8 @@ static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 		elif lvl % 2 == 0 and lvl >= 2:
 			south_void_west = true       # south landing isolated
 			south_void_east = true
-		if north_void_west or north_void_east \
-				or south_void_west or south_void_east:
+		if not _rule_skipped("rails") and (north_void_west or north_void_east \
+				or south_void_west or south_void_east):
 			b.push_layer(rail_tag)
 			if north_void_west:
 				b.add_destructible_box(
@@ -2406,6 +2417,8 @@ static func _staircase(b: MeshBatcher, off: Vector3, zone: Rect2,
 	# the bulkhead walls already enclose the shaft up there, and a rail at
 	# that height intersects them (wedging actors in the seam).
 	for lvl in n:
+		if _rule_skipped("rails"):
+			continue
 		b.push_layer(tag + ":f%d" % lvl)
 		var ry2 := lvl * fh + 0.55
 		var guard_x := zx + LANE_W * 2.0 + 0.06 if guard_on_east \
@@ -3484,9 +3497,12 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 	var aisles: Array[Rect2] = []
 	if has_stairs:
 		aisles = _entry_aisles(w, d, zone, int(spec.get("door_edge", 0)))
+	if _rule_skipped("plan_interior"):
+		return
 	for fl in manifest.get("floors", []):
 		var fi: int = int(fl.get("floor_i", 0))
 		var parts: Array = fl.get("partitions", [])
+		var keepouts: Array[Rect2] = circulation_keepouts(spec, fi)
 		# Victorian dressing: lobby ground floors (per InteriorPlan topology)
 		# get wainscot + ochre plaster; other interior walls stay plain.
 		# Building-level LOD: the heavy architectural trim (parquet, panelling,
@@ -3519,6 +3535,8 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				2: corridor = Rect2(mid.x - 1.1, mid.y - 3.0, 2.2, 3.0)
 				_: corridor = Rect2(mid.x, mid.y - 1.1, 3.0, 2.2)
 		for p in parts:
+			if _rule_skipped("partitions"):
+				continue
 			var pr: Rect2 = p.get("rect", Rect2())
 			var op: Rect2 = p.get("opening", Rect2())
 			# InteriorPlan stores unrotated world-plan coordinates; geometry
@@ -3582,14 +3600,25 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				if dress_ok:
 					_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
 		for wall: Rect2 in fl.get("solid_walls", []):
-			var center := wall.get_center() - footprint.position
-			_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(center.x, fi * fh + fh * 0.5, center.y), Vector3(wall.size.x, fh, wall.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
+			if _rule_skipped("solid_walls"):
+				continue
+			# CIRCULATION CLIP (Q1): plan solid walls used to be emitted with NO
+			# keep-out check at all, so a structural wall could bisect the walkable
+			# door -> stair corridor and wedge the player inside the entrance. The
+			# wall is CLIPPED around the keep-outs instead of dropped, so the plan's
+			# layout survives and a real opening appears where people walk.
+			var wr := Rect2(wall.position - footprint.position, wall.size)
+			for seg: Rect2 in _clip_rect(wr, keepouts):
+				var sc := seg.get_center()
+				_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(sc.x, fi * fh + fh * 0.5, sc.y), Vector3(seg.size.x, fh, seg.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
 		for item: Dictionary in fl.get("furniture", []):
+			if _rule_skipped("furniture"):
+				continue
 			var pos: Vector3 = item["position"]
 			pos.x -= footprint.position.x
 			pos.z -= footprint.position.y
 			_emit_room_furniture(b, off + pos, item, tag, fi)
-		if dressed:
+		if dressed and not _rule_skipped("dressing"):
 			# Victorian-Prague dressed lobby (visual only, no collider changes):
 			# 0.9 m parquet boards alternate walnut/oak with a plank-gap gap
 			# tone difference; copper steam riser in the toilet corner with a
@@ -3693,34 +3722,86 @@ static func _pitched_shell(b: MeshBatcher, off: Vector3, w: float, d: float,
 			Vector3(0.65, 1.5, 0.65), PLINTH_COLOR.darkened(0.2))
 
 
+## Keep-out rects (footprint-relative) that no interior board may occupy on this
+## floor: the stair zone, the entrance -> stair aisles, and the ground-floor
+## entrance box. Circulation is FUNCTIONAL, so these always win over layout
+## intent - including the plan's `planned_clearance` flag.
+static func circulation_keepouts(spec: Dictionary, floor_i: int) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var fp: Rect2 = spec["rect"]
+	var fh := float(spec.get("floor_h", 3.0))
+	var edge := int(spec.get("door_edge", 0))
+	if has_stairs_for(fp.size, fh, int(spec.get("floors", 1))):
+		var zone := _zone_rect(fp.size, fh, edge)
+		out.append(zone)
+		out.append_array(_entry_aisles(fp.size.x, fp.size.y, zone, edge))
+	if floor_i == 0:
+		out.append(_entrance_box(fp.size, edge))
+	return out
+
+
+## Ground-floor entrance box (footprint-relative) reserved for the doorway.
+static func _entrance_box(fp_size: Vector2, edge: int) -> Rect2:
+	var mid := fp_size * 0.5
+	match edge:
+		1:
+			return Rect2(fp_size.x - 3.2, mid.y - 1.2, 3.2, 2.4)
+		2:
+			return Rect2(mid.x - 1.2, fp_size.y - 3.2, 2.4, 3.2)
+		3:
+			return Rect2(0, mid.y - 1.2, 3.2, 2.4)
+		_:
+			return Rect2(mid.x - 1.2, 0, 2.4, 3.2)
+
+
+## A minus B as up to four axis-aligned rects (disjoint => [a]).
+static func _rect_subtract(a: Rect2, b: Rect2) -> Array[Rect2]:
+	if not a.intersects(b):
+		return [a]
+	var out: Array[Rect2] = []
+	var x0 := maxf(a.position.x, b.position.x)
+	var x1 := minf(a.end.x, b.end.x)
+	var y0 := maxf(a.position.y, b.position.y)
+	var y1 := minf(a.end.y, b.end.y)
+	if x0 > a.position.x + 0.001:
+		out.append(Rect2(a.position, Vector2(x0 - a.position.x, a.size.y)))
+	if x1 < a.end.x - 0.001:
+		out.append(Rect2(Vector2(x1, a.position.y), Vector2(a.end.x - x1, a.size.y)))
+	if y0 > a.position.y + 0.001:
+		out.append(Rect2(Vector2(x0, a.position.y), Vector2(x1 - x0, y0 - a.position.y)))
+	if y1 < a.end.y - 0.001:
+		out.append(Rect2(Vector2(x0, y1), Vector2(x1 - x0, a.end.y - y1)))
+	return out
+
+
+## Subtract every keep-out from `r`; deterministic and order-independent.
+static func _clip_rect(r: Rect2, keepouts: Array[Rect2]) -> Array[Rect2]:
+	var parts: Array[Rect2] = [r]
+	for k in keepouts:
+		var next: Array[Rect2] = []
+		for p in parts:
+			next.append_array(_rect_subtract(p, k))
+		parts = next
+	var out: Array[Rect2] = []
+	for p in parts:
+		if p.size.x > 0.05 and p.size.y > 0.05:
+			out.append(p)
+	return out
+
+
+## INTERIOR BOARD VISIBILITY (Q1). Circulation is not optional: the plan's
+## `planned_clearance` flag used to return `true` BEFORE any geometric check, so
+## a "pre-cleared" wall could - and did - cut the door -> stair corridor and
+## wedge the player inside the entrance. The keep-outs below are measured, never
+## assumed, and they always win.
 static func interior_partition_visible(part: Dictionary, spec: Dictionary, floor_i: int) -> bool:
-	if bool(part.get("planned_clearance", false)):
-		return true
 	var fp: Rect2 = spec["rect"]
 	var rect: Rect2 = part["rect"]
 	rect.position -= fp.position
-	var fh := float(spec.get("floor_h", 3.0))
-	var zone := _zone_rect(fp.size, fh, int(spec.get("door_edge", 0)))
-	if has_stairs_for(fp.size, fh, int(spec.get("floors", 1))):
-		if rect.intersects(zone):
-			return false
-		for aisle in _entry_aisles(fp.size.x, fp.size.y, zone, int(spec.get("door_edge", 0))):
-			if rect.intersects(aisle):
-				return false
-	if floor_i == 0:
-		var edge := int(spec.get("door_edge", 0))
-		var mid := fp.size * 0.5
-		var entry := Rect2()
-		match edge:
-			0: entry = Rect2(mid.x - 1.2, 0, 2.4, 3.2)
-			1: entry = Rect2(fp.size.x - 3.2, mid.y - 1.2, 3.2, 2.4)
-			2: entry = Rect2(mid.x - 1.2, fp.size.y - 3.2, 2.4, 3.2)
-			3: entry = Rect2(0, mid.y - 1.2, 3.2, 2.4)
-		if rect.intersects(entry):
+	for k in circulation_keepouts(spec, floor_i):
+		if rect.intersects(k):
 			return false
 	return true
-
-
 static func _rbox(b: MeshBatcher, basis: Basis, pos: Vector3, off: Vector3,
 		size: Vector3, col: Color) -> void:
 	b.add_box_rotated(pos + basis * off, size, basis, col)

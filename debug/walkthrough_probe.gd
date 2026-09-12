@@ -394,6 +394,7 @@ func _stair_path(zone: Rect2, fh: float, n: int) -> Array[Vector3]:
 ## guessing: a ray fan at chest height resolved to each shape's owner, plus the
 ## stair-zone-relative offset so the blocker can be mapped to an emitter.
 func _dump_stair_blockers(player: Node3D, zone: Rect2, fh: float) -> void:
+	_dump_floor_census(player)
 	var space := player.get_world_3d().direct_space_state
 	var base := player.global_position + Vector3(0.0, 0.9, 0.0)
 	var exclude: Array[RID] = []
@@ -421,6 +422,69 @@ func _dump_stair_blockers(player: Node3D, zone: Rect2, fh: float) -> void:
 		rad_to_deg(_route_yaw), lz.x, lz.y, lz.z, floorf(lz.y / maxf(fh, 0.01)) * fh,
 		zone.position.x, zone.end.x, zone.position.y, zone.end.y, fh,
 		str((player as CharacterBody3D).is_on_floor()) if player is CharacterBody3D else "?"])
+
+
+## Census every LOW, LONG collider within `radius` of the player, tagging each
+## with the generation layer that emitted it. Pair with RB_SKIP_RULES on the
+## generation side: run twice and diff this list to name the rule that put a
+## blocker on the circulation path (the ray fan alone only proves a hit).
+func _dump_floor_census(player: Node3D, radius := 16.0) -> void:
+	var space := player.get_world_3d().direct_space_state
+	var params := PhysicsShapeQueryParameters3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(radius * 2.0, 3.0, radius * 2.0)
+	params.shape = box
+	params.transform = Transform3D(Basis.IDENTITY, player.global_position + Vector3(0.0, 1.0, 0.0))
+	params.collision_mask = 1
+	var exclude: Array[RID] = []
+	if player is CollisionObject3D:
+		exclude.append((player as CollisionObject3D).get_rid())
+	params.exclude = exclude
+	var bodies := {}
+	for h in space.intersect_shape(params, 8192):
+		var c: Object = h.get("collider")
+		if c != null and c is CollisionObject3D:
+			bodies[c.get_instance_id()] = c
+	var rows: Array = []
+	var n_shapes := 0
+	for id in bodies:
+		var body := bodies[id] as Node
+		if body == null:
+			continue
+		var chain := str(body.name)
+		var up := body.get_parent()
+		var hops := 0
+		while up != null and hops < 3:
+			chain = "%s<%s" % [chain, str(up.name)]
+			up = up.get_parent()
+			hops += 1
+		for ch in body.get_children():
+			if not (ch is CollisionShape3D):
+				continue
+			var cs := ch as CollisionShape3D
+			var sh: Shape3D = cs.shape
+			if sh == null or not (sh is BoxShape3D):
+				continue
+			var sz := (sh as BoxShape3D).size
+			n_shapes += 1
+			# LOW and LONG: blocks a walking capsule while a chest-height ray
+			# still clears it - the exact signature of the route blocker.
+			if sz.y > 0.3 and sz.y < 2.5 and maxf(sz.x, sz.z) > 0.8:
+				var wp := cs.global_position
+				var lp := _route_from_world(wp)
+				rows.append({"d": player.global_position.distance_to(wp),
+					"s": "[FloorNear] %s size=(%.3f,%.3f,%.3f) local=(%.3f,%.3f,%.3f) dist=%.2f layer=%s" % [
+						chain, sz.x, sz.y, sz.z, lp.x, lp.y, lp.z,
+						player.global_position.distance_to(wp),
+						str(cs.get_meta("src_layer", "-"))]})
+	rows.sort_custom(func(a, b): return float(a["d"]) < float(b["d"]))
+	print("[FloorCensus] bodies=%d box_shapes=%d low_long=%d" % [bodies.size(), n_shapes, rows.size()])
+	var shown := 0
+	for r in rows:
+		if shown >= 25:
+			break
+		print(str(r["s"]))
+		shown += 1
 
 
 ## Push toward a point for `seconds` at most.

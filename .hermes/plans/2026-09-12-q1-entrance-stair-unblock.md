@@ -261,3 +261,90 @@ old dog-leg. Measured effect: route reaches waypoints 1/5..3/5 where it previous
 NEXT: apply the same keep-out to plan-driven furniture/boards in
 `_emit_interior_partitions` / `_emit_room_furniture`, then fix the door control law
 (never latches OPEN; stall/reverse at -90.1 deg with hit=none).
+
+## RESOLVED (2026-09-12) -- measured root cause + systemic fix
+
+### How it was found (do this again instead of guessing)
+Static reading was NOT enough: partitions, rails, lintels and furniture all
+looked innocent, and the earlier "1.05 m half-height wall" reading was an
+artefact of the camera-cutaway split (a wall is emitted as a 1.05 m lower piece
+plus a 2.05 m `:cutaway` upper piece -> 1.05 + 2.05 = fh = 3.10).
+What settled it was a mechanical bisect:
+
+1. `RB_SKIP_RULES=<rule>` env switches in `building_builder.gd`
+   (`_rule_skipped()`): rails | plan_interior | furniture | dressing |
+   partitions | solid_walls. Inert when unset.
+2. A `[FloorCensus]` / `[FloorNear]` dump in `debug/walkthrough_probe.gd`
+   (called from `_dump_stair_blockers`): every low+long collider around the
+   player, nearest first, with size, plan-frame position and body ancestry.
+3. Run `tools/run_suite.py --walkthrough 240 --rendered` once per rule and
+   compare route progress.
+
+### Result (measured, 4 runs)
+| rule skipped      | route                                  |
+|-------------------|----------------------------------------|
+| none (base)       | STALL waypoint 4/5                     |
+| `furniture`       | STALL waypoint 4/5  (NOT the blocker)  |
+| `partitions`      | STALL waypoint 4/5  (NOT the blocker)  |
+| `plan_interior`   | 5/5 + full 1..19 climb, descend, out   |
+| `solid_walls`     | 5/5 + full 1..19 climb, descend, out   |
+
+=> The blocker is a **plan `solid_wall`**. `solid_walls` were emitted with NO
+keep-out check at all (`building_builder.gd`, the `for wall: Rect2 in
+fl.get("solid_walls", [])` loop), so a structural wall bisected the walkable
+door -> stair corridor and wedged the body 5.26 m inside the entrance.
+
+### The systemic fix (not one building)
+- `circulation_keepouts(spec, floor_i)` -- ONE shared source of truth for the
+  stair zone + `_entry_aisles` + the ground-floor entrance box.
+- `solid_walls` are now **clipped** around those rects (`_clip_rect` /
+  `_rect_subtract`) instead of being emitted blindly: the plan's layout
+  survives and a real opening appears exactly where people walk.
+- `interior_partition_visible()` no longer honours the plan's
+  `planned_clearance` flag FIRST. That flag asserted "this wall never crosses
+  the stair zone or the entry aisles" and short-circuited the only geometric
+  guard; for the test building the assertion was simply false. Keep-outs are
+  now measured, never assumed.
+
+### Door control law (separate defect, same acceptance route)
+- A sleeping RigidBody3D ignores `angular_velocity` writes -> the leaf read as
+  "stalled with hit=none", the drive gave up, and a closing door bounced OPEN,
+  so the doorway never blocked again. Fixed by waking the leaf while driven.
+- Hinge limits are now SYMMETRIC: the joint's angle sign relative to leaf yaw
+  depends on the rig, so a one-sided limit could block the command direction.
+- A contact-free stall is no longer treated as a jam: the drive pushes harder
+  and, if the budget still runs out, `_snap_to_target()` parks the leaf ON its
+  target so the doorway always matches the state the door reports.
+
+### Door: the HingeJoint3D was the defect (measured, not inferred)
+Instrumentation first (`RB_DOOR_DEBUG=1` prints in `open()`, at the top AND end
+of `_drive_to`, and per tick for the first 6 ticks). It showed:
+
+    [DoorDebug] ... CALLED target=1.658 open_angle=1.658 yaw=0.000 would_early_out=false
+    [DoorAfter] ... state=0 in_tree=true physproc=true pmode=0 paused=false leaf_freeze=false
+    [DoorTick] t=1 yaw=0.00 err=95.00 av=0.00
+    [DoorTick] t=2 yaw=1.15 err=93.85 av=1.20
+    [DoorTick] t=3 yaw=1.14 err=93.86 av=0.01
+    [DoorTick] t=4 yaw=0.81 err=94.19 av=-0.33
+
+The drive commands +/-24 rad/s and the body reports ~1 rad/s oscillating around
+1 deg: a solver fighting a constraint. Control run with `RB_DOOR_NO_JOINT=1`
+(queue_free the joint) on the same binary:
+
+    [DoorTick] t=2 yaw=18.51 ... t=3 yaw=33.23 ... t=5 yaw=72.00 ... t=6 yaw=81.51
+    [CityRuntime] PASS  door opens via API
+
+=> the hinge, not the drive, was blocking the swing. Retired in favour of a
+free-yaw leaf (`gravity_scale = 0`, `axis_lock_angular_x/z`, linear velocity
+pinned each drive tick, drive-side overshoot clamp). This also matches what the
+file header always claimed ("axis-locked to yaw only") but never implemented.
+
+Earlier red herrings, kept so nobody re-chases them:
+- "leaf parked at 3 deg with hit=none" was NOT a wall; the leaf simply could not
+  move. The `get_colliding_bodies()` contact test also needs `contact_monitor`
+  (enabled only while driven now).
+- A drive on a WARM chunk was inherited silently; `_drive_to()` now calls
+  `set_active_enabled(true)` first so an explicit open()/close() can never run a
+  state machine against a leaf that cannot move.
+- Log routing: the runner's temp log does NOT carry game `print()` output. Grep
+  `tools/out_<suite>.txt` for anything the game itself prints.

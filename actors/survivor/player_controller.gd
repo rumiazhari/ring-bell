@@ -153,7 +153,10 @@ func _update_hover(delta: float) -> void:
 		# unload hands back a previously-freed instance, and assigning that to a typed
 		# Node3D variable raises an error. Validate first, then cast.
 		var candidate: Variant = pair[0]
-		if not (candidate is Node3D) or not is_instance_valid(candidate):
+		# is_instance_valid() MUST come first: `x is Node3D` on a cached node the
+		# streaming layer already freed raises "Left operand of 'is' is a
+		# previously freed instance" every physics frame.
+		if not is_instance_valid(candidate) or not (candidate is Node3D):
 			continue
 		var comp: Variant = pair[1]
 		if not is_instance_valid(comp) or not (comp as InteractableComponent).enabled:
