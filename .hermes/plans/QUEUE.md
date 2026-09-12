@@ -104,6 +104,20 @@ limitations."
 
 ---
 
+### STATUS (2026-09-13, commit 0423be0 on `copilot/worldgen-fix`) -- Q2 IN PROGRESS, verified core
+Continuation plan + evidence: `.hermes/plans/2026-09-13-q2-parkour-ledges.md` (section 6).
+Harness of record: `debug/parkour_contract_test.gd` via `python tools/run_suite.py --parkourtest`
+=> **43 checks / 0 failures**: blank facade, storey seam, 0.08 m trim, buried box, out-of-reach,
+covered band and no-usable-width rejected with reasons; cornice/awning classified and measured;
+route chain street->awning deck->balcony->roof (3 hops, 5.7 m, each inside one arm reach);
+driven hang (no teleport: worst step 0.125 m, worst lip gap 0.114 m, no sink) and driven shimmy
+(travel 1.200 m == measured half-width 1.200 m, ledge-end event fires).
+Regression gates: `--smoke` awning/chain phases PASS, `--animclimb` 0 failures,
+`--animationtest` 0 failures.
+Still open (honest): generator feature tags (parapet/band/bulkhead), real-building lattice
+census over `BuildingBuilder.build`, a real street->roof climb on a generated building,
+determinism re-run, docs. See plan section 6.5.
+
 # Q3 (ACTIVE -- user instruction places this before Q2; Q2 parkour stays queued)
 # Q3 -- PROCEDURAL BUILDING INTERIORS overhaul (user, queued after Q1 + Q2)
 
