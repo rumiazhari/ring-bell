@@ -28,14 +28,39 @@ const FRAME_CAP := 900
 ## Aim that should select each clip, matching debug/melee_capture.gd. The actor
 ## faces -Z, so a world aim of -Z is straight ahead of it.
 const SWINGS: Array = [
+	# Legacy directional reference clips.
 	{"clip": &"SlashR", "weapon": &"cane_sabre", "aim": Vector3(0.866, 0, -0.5), "heavy": false},
 	{"clip": &"SlashL", "weapon": &"cane_sabre", "aim": Vector3(-0.866, 0, -0.5), "heavy": false},
 	{"clip": &"DiagR", "weapon": &"cane_sabre", "aim": Vector3(0.469, 0, -0.883), "heavy": false},
 	{"clip": &"DiagL", "weapon": &"cane_sabre", "aim": Vector3(-0.469, 0, -0.883), "heavy": false},
-	{"clip": &"Sweep", "weapon": &"cane_sabre", "aim": Vector3(0, 0, 1), "heavy": false},
+	{"clip": &"Sweep", "weapon": &"cane_sabre", "aim": Vector3(0, 0, 1), "heavy": true},
 	{"clip": &"Chop", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": false},
 	{"clip": &"Smash", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": true},
 	{"clip": &"Thrust", "weapon": &"boiler_lance", "aim": Vector3(0, 0, -1), "heavy": false},
+	# Cane-sabre chain, heavy, and special.
+	{"clip": &"SabreSlashR", "weapon": &"cane_sabre", "aim": Vector3(0.866, 0, -0.5), "heavy": false},
+	{"clip": &"SabreSlashL", "weapon": &"cane_sabre", "aim": Vector3(-0.866, 0, -0.5), "heavy": false},
+	{"clip": &"SabreDiagR", "weapon": &"cane_sabre", "aim": Vector3(0.469, 0, -0.883), "heavy": false},
+	{"clip": &"SabreThrust", "weapon": &"cane_sabre", "aim": Vector3(0, 0, -1), "heavy": true},
+	{"clip": &"SabreWhirl", "weapon": &"cane_sabre", "aim": Vector3(0, 0, 1), "heavy": true},
+	# Wrench chain, heavy, and special.
+	{"clip": &"WrenchOverhead", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": false},
+	{"clip": &"WrenchBackhand", "weapon": &"pipe_wrench", "aim": Vector3(-0.866, 0, -0.5), "heavy": false},
+	{"clip": &"WrenchCrush", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": false},
+	{"clip": &"WrenchSlam", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": true},
+	{"clip": &"WrenchHookPull", "weapon": &"pipe_wrench", "aim": Vector3(0.469, 0, -0.883), "heavy": true},
+	# Boarding axe chain, heavy, and special.
+	{"clip": &"AxeChopR", "weapon": &"boarding_axe", "aim": Vector3(0.469, 0, -0.883), "heavy": false},
+	{"clip": &"AxeChopL", "weapon": &"boarding_axe", "aim": Vector3(-0.469, 0, -0.883), "heavy": false},
+	{"clip": &"AxeCleave", "weapon": &"boarding_axe", "aim": Vector3(0, 0, 1), "heavy": false},
+	{"clip": &"AxeHookDrag", "weapon": &"boarding_axe", "aim": Vector3(0.469, 0, -0.883), "heavy": true},
+	{"clip": &"AxeRend", "weapon": &"boarding_axe", "aim": Vector3(0, 0, 1), "heavy": true},
+	# Boiler-lance chain, heavy, and special.
+	{"clip": &"LanceThrustHigh", "weapon": &"boiler_lance", "aim": Vector3(0, 0, -1), "heavy": false},
+	{"clip": &"LanceThrustLow", "weapon": &"boiler_lance", "aim": Vector3(0, 0, -1), "heavy": false},
+	{"clip": &"LanceWideSweep", "weapon": &"boiler_lance", "aim": Vector3(0, 0, 1), "heavy": false},
+	{"clip": &"LanceCharge", "weapon": &"boiler_lance", "aim": Vector3(0, 0, -1), "heavy": true},
+	{"clip": &"LanceSpiralSweep", "weapon": &"boiler_lance", "aim": Vector3(0, 0, 1), "heavy": true},
 ]
 
 var _stage: Node3D
@@ -202,6 +227,7 @@ func _probe_swing(entry: Dictionary) -> void:
 
 	var aim: Vector3 = entry["aim"]
 	var aim_n := aim.normalized()
+	_force_probe_clip(clip, bool(entry["heavy"]))
 	var started: bool = _survivor.melee_attack(aim, bool(entry["heavy"]))
 	if not started:
 		print("[MeleeDirProbe] %s REFUSED" % clip)
@@ -298,6 +324,20 @@ func _probe_swing(entry: Dictionary) -> void:
 		guard += 1
 		await get_tree().physics_frame
 	await _settle(4)
+
+
+## The combo system intentionally selects by step, not by aim. This diagnostic
+## temporarily narrows the runtime definition to one authored clip so every
+## new pose can be measured without adding a gameplay input for debug-only moves.
+func _force_probe_clip(clip: StringName, heavy: bool) -> void:
+	var def: Dictionary = _survivor.melee.weapon_def()
+	var one: Array = [clip]
+	def["combo_chain"] = one
+	def["swing_pool"] = one
+	var combo: Dictionary = def.get("combo", {}) as Dictionary
+	combo["chain"] = one
+	if heavy:
+		def["heavy_clip"] = clip
 
 
 # --- Measurement -------------------------------------------------------------

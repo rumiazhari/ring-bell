@@ -99,6 +99,7 @@ func _run_all() -> void:
 	_test_swing_clips()
 	_test_models()
 	await _test_live_rig()
+	await _test_combo_and_guard()
 	await _test_arc_and_damage()
 	await _test_cleave_and_reach()
 	await _test_structures()
@@ -300,10 +301,12 @@ func _test_direction_table() -> void:
 func _test_swing_clips() -> void:
 	print("%s subtest swing_clips" % MARK)
 	var lib := MeleeSwingLibrary.build_library(true)
-	_check("eight authored swings", lib.get_animation_list().size() == 8,
-			str(lib.get_animation_list()))
+	_check("authored melee clips cover every combo move",
+			lib.get_animation_list().size() == MeleeSwingLibrary.CLIPS.size(),
+			str(lib.get_animation_list().size()))
 	var rotation_only := true
 	var loops_none := true
+	var guard_loops := true
 	var bones_min := true
 	var timing_ok := true
 	var detail := ""
@@ -313,7 +316,11 @@ func _test_swing_clips() -> void:
 			detail = "missing %s" % clip
 			break
 		var anim: Animation = lib.get_animation(String(clip))
-		if anim.loop_mode != Animation.LOOP_NONE:
+		var is_guard_clip := bool(MeleeSwingLibrary.DEFS[clip].get("guard", false))
+		if is_guard_clip and anim.loop_mode != Animation.LOOP_LINEAR:
+			guard_loops = false
+			detail = "%s does not hold" % clip
+		if not is_guard_clip and anim.loop_mode != Animation.LOOP_NONE:
 			loops_none = false
 			detail = "%s loops" % clip
 		var bone_tracks := 0
@@ -326,11 +333,12 @@ func _test_swing_clips() -> void:
 		if bone_tracks < 3:
 			bones_min = false
 			detail = "%s drives only %d bones" % [clip, bone_tracks]
-		if anim.length <= 0.2 or anim.length > 1.2:
+		if anim.length <= 0.2 or anim.length > 1.3:
 			timing_ok = false
 			detail = "%s length %.2f" % [clip, anim.length]
 	_check("swings are rotation-only (position-track contract)", rotation_only, detail)
-	_check("swings do not loop", loops_none, detail)
+	_check("attack clips do not loop", loops_none, detail)
+	_check("guard clips hold their pose", guard_loops, detail)
 	_check("every swing drives at least three bones", bones_min, detail)
 	_check("swing lengths are human-scaled", timing_ok, detail)
 	var entries := {}
@@ -348,7 +356,7 @@ func _test_swing_clips() -> void:
 	for clip in MeleeSwingLibrary.CLIPS:
 		if MeleeSwingLibrary.is_heavy(clip):
 			heavy.append(clip)
-	_check("two-handed heavies exist", heavy.size() == 2, str(heavy))
+	_check("two-handed heavies exist", heavy.size() >= 4, str(heavy))
 	_check("swing labels are human readable",
 			MeleeSwingLibrary.direction_label(&"Chop") == "Overhead chop",
 			MeleeSwingLibrary.direction_label(&"Chop"))
@@ -488,7 +496,7 @@ func _test_live_rig() -> void:
 		for clip in MeleeSwingLibrary.CLIPS:
 			if ap.has_animation("%s/%s" % [MeleeSwingLibrary.LIB_NAME, clip]):
 				found += 1
-		_check("all eight swings are playable on the rig", found == 8, str(found))
+		_check("all authored melee clips are playable on the rig", found == MeleeSwingLibrary.CLIPS.size(), str(found))
 	_check("swing library is live on the deferred rig",
 			_survivor.melee.has_animation())
 	var skeleton: Skeleton3D = _survivor.get("_skeleton")
@@ -527,6 +535,129 @@ func _test_live_rig() -> void:
 
 # --- Combat ------------------------------------------------------------------
 
+func _test_combo_and_guard() -> void:
+	print("%s subtest combo_and_guard" % MARK)
+	_check("LMB below 0.20 s is light", not MeleeCombat.classify_press(0.199))
+	_check("LMB at 0.20 s is heavy", MeleeCombat.classify_press(0.20))
+	_check("LMB long hold is heavy", MeleeCombat.classify_press(0.75))
+
+	var sequences := {}
+	var guard_clips := {}
+	var unique_clips := {}
+	var data_ok := true
+	var detail := ""
+	var roster: Array = ItemDB.MELEE_ARSENAL.duplicate()
+	roster.append(&"fists")
+	for id in roster:
+		var def := ItemDB.get_melee_def(id)
+		var chain: Array = def.get("combo_chain", []) as Array
+		var names := PackedStringArray()
+		for clip in chain:
+			names.append(String(clip))
+			if not MeleeSwingLibrary.CLIPS.has(clip):
+				data_ok = false
+				detail = "%s has unknown %s" % [id, clip]
+			break
+		var key := "->".join(names)
+		if sequences.has(key):
+			data_ok = false
+			detail = "%s shares its chain with %s" % [id, sequences[key]]
+		sequences[key] = id
+		var guard := StringName(def.get("guard_clip", &""))
+		var unique := StringName(def.get("unique_clip", &""))
+		guard_clips[guard] = true
+		unique_clips[unique] = true
+		if guard == &"" or not MeleeSwingLibrary.CLIPS.has(guard):
+			data_ok = false
+			detail = "%s guard missing" % id
+		if unique == &"" or not MeleeSwingLibrary.CLIPS.has(unique):
+			data_ok = false
+			detail = "%s unique missing" % id
+	_check("each roster weapon has a distinct light chain", data_ok,
+			"%s / %s" % [sequences.keys(), detail])
+	_check("each roster weapon has a distinct guard clip", guard_clips.size() == 5,
+			str(guard_clips.keys()))
+	_check("each roster weapon has a distinct finisher clip", unique_clips.size() == 5,
+			str(unique_clips.keys()))
+	_check("sabre has the largest perfect-parry window",
+			float(ItemDB.get_melee_def(&"cane_sabre").get("parry_window", 0.0)) == 0.26)
+	_check("wrench has no perfect-parry window",
+			float(ItemDB.get_melee_def(&"pipe_wrench").get("parry_window", 1.0)) == 0.0)
+	_check("lance reaches 3.5 m and sweeps 180 degrees",
+			_close(float(ItemDB.get_melee_def(&"boiler_lance").get("reach", 0.0)), 3.5, 0.001)
+			and _close(float(ItemDB.get_melee_def(&"boiler_lance").get("arc_deg", 0.0)), 180.0, 0.001))
+	_check("axe reaches 2.4 m",
+			_close(float(ItemDB.get_melee_def(&"boarding_axe").get("reach", 0.0)), 2.4, 0.001))
+
+	_survivor.equip_weapon(&"cane_sabre")
+	await get_tree().physics_frame
+	_survivor.stamina = 100.0
+	_expire_combo()
+	_check("sabre chain step one resolves to SabreSlashR", _swing(Vector3(0, 0, -1))
+			and _survivor.melee.current_clip() == &"SabreSlashR",
+			String(_survivor.melee.current_clip()))
+	await _settle()
+	_pin_combo_window()
+	_check("sabre chain step two resolves to SabreSlashL", _swing(Vector3(0, 0, -1))
+			and _survivor.melee.current_clip() == &"SabreSlashL",
+			String(_survivor.melee.current_clip()))
+	await _settle()
+
+	var melee := _survivor.melee
+	_survivor.health.current_health = _survivor.health.max_health
+	_survivor.stamina = 100.0
+	_check("RMB enters GUARD", melee.set_guarding(true)
+			and melee.state() == MeleeCombat.State.GUARD)
+	var hp_before := _survivor.health.current_health
+	var parry: Dictionary = melee.receive_impact(40.0, Vector3(0, 0, 1))
+	_check("sabre guard perfect-parries the first impact",
+			bool(parry.get("parried", false)) and float(parry.get("damage", 1.0)) == 0.0
+			and _survivor.health.current_health == hp_before,
+			str(parry))
+	_check("parry arms a riposte", melee.riposte_armed())
+	_check("parry signal counter increments", int(melee.guard_event_counts().get("parried", 0)) >= 1,
+			str(melee.guard_event_counts()))
+	_check("releasing RMB lowers GUARD", melee.set_guarding(false)
+			and melee.state() == MeleeCombat.State.IDLE)
+	_check("the next light tap resolves to SabreRiposte",
+			melee.try_attack(Vector3(0, 0, -1))
+			and melee.current_clip() == &"SabreRiposte",
+			String(melee.current_clip()))
+	await _settle()
+
+	_survivor.equip_weapon(&"pipe_wrench")
+	await get_tree().physics_frame
+	_survivor.stamina = 100.0
+	_survivor.health.current_health = _survivor.health.max_health
+	melee.set_guarding(true)
+	var brace: Dictionary = melee.receive_impact(40.0, Vector3(0, 0, 1))
+	_check("wrench guard does not parry", not bool(brace.get("parried", true)))
+	_check("wrench guard absorbs its configured fraction",
+			_close(float(brace.get("damage", 0.0)), 40.0 * 0.22, 0.01), str(brace))
+	_check("guard impact spends block cost",
+			_close(_survivor.stamina, 100.0 - melee.block_cost(), 0.01),
+			str(_survivor.stamina))
+	melee.set_guarding(false)
+	_survivor.stamina = melee.block_cost()
+	melee.set_guarding(true)
+	var broken: Dictionary = melee.receive_impact(20.0, Vector3(0, 0, 1))
+	_check("stamina exhaustion triggers guard break",
+			bool(broken.get("guard_broken", false))
+			and melee.state() == MeleeCombat.State.GUARD_BREAK,
+			str(broken))
+	_check("guard break emits a counted transition",
+			int(melee.guard_event_counts().get("broken", 0)) >= 1,
+			str(melee.guard_event_counts()))
+	_check("attacks are refused during guard break",
+			not melee.try_attack(Vector3(0, 0, -1)), str(melee.phase()))
+	await _step_physics(80)
+	_check("guard lock recovers to idle", melee.state() == MeleeCombat.State.IDLE,
+			melee.phase())
+	_survivor.stamina = 100.0
+	_survivor.equip_weapon(&"cane_sabre")
+	await get_tree().physics_frame
+
+
 func _swing(aim: Vector3, heavy := false) -> bool:
 	_survivor.facing = Vector3(0, 0, -1)
 	return _survivor.melee_attack(aim, heavy)
@@ -535,10 +666,11 @@ func _swing(aim: Vector3, heavy := false) -> bool:
 func _test_arc_and_damage() -> void:
 	print("%s subtest arc_and_damage" % MARK)
 	var target := _spawn(Target.new(), BASE + Vector3(0, 0, -1.4)) as Target
+	var noise_before := _noise
 	var aim := Vector3(0, 0, -1)
 	_check("swing starts on input", _swing(aim))
-	_check("neutral aim plays the sabre thrust",
-			_survivor.melee.current_clip() == &"Thrust",
+	_check("neutral aim opens the sabre light chain",
+			_survivor.melee.current_clip() == &"SabreSlashR",
 			String(_survivor.melee.current_clip()))
 	_check("swing begins in windup", _survivor.melee.phase() == "WINDUP",
 			_survivor.melee.phase())
@@ -581,7 +713,8 @@ func _test_arc_and_damage() -> void:
 			_survivor.melee.current_clip() == &"" and (tree == null or tree.active))
 	_check("combo counter tracks a single swing", _survivor.melee.combo_index() == 1,
 			str(_survivor.melee.combo_index()))
-	_check("a swing is noise that actors can hear", _noise == 1, str(_noise))
+	_check("a swing is noise that actors can hear", _noise == noise_before + 1,
+			"%d -> %d" % [noise_before, _noise])
 	# The same swing misses a body standing behind the actor.
 	target.position = BASE + Vector3(0, 0, 1.4)
 	await get_tree().physics_frame
@@ -615,8 +748,8 @@ func _test_cleave_and_reach() -> void:
 	await get_tree().physics_frame
 	_swing(Vector3(0, 0, -1))
 	# `_close_swing()` clears the clip when the swing ends, so read it now.
-	_check("a wrench swings a chop, not a thrust",
-			_survivor.melee.current_clip() == &"Chop",
+	_check("a wrench opens with its overhead chain move",
+			_survivor.melee.current_clip() == &"WrenchOverhead",
 			String(_survivor.melee.current_clip()))
 	await _step_physics(50)
 	_check("a blunt weapon cleaves two bodies",
@@ -639,9 +772,9 @@ func _test_cleave_and_reach() -> void:
 	await get_tree().physics_frame
 	_swing(Vector3(0, 0, -1))
 	await _step_physics(30)
-	_check("a 2.9 m lance reaches a body at 2.4 m", far.hits == 1, str(far.hits))
-	_check("polearm thrust is a narrow arc",
-			float(_survivor.melee.weapon_def().get("arc_deg", 0.0)) < 90.0,
+	_check("a 3.5 m lance reaches a body at 2.4 m", far.hits == 1, str(far.hits))
+	_check("polearm owns the widest reach arc",
+			float(_survivor.melee.weapon_def().get("arc_deg", 0.0)) >= 180.0,
 			str(_survivor.melee.weapon_def().get("arc_deg", 0.0)))
 	await _settle()
 	await _clear_fixtures()
@@ -689,8 +822,8 @@ func _test_heavy_and_stamina() -> void:
 	_check("heavy request plays a two-handed clip",
 			MeleeSwingLibrary.is_heavy(_survivor.melee.current_clip()),
 			String(_survivor.melee.current_clip()))
-	_check("heavy swing is the two-handed smash",
-			_survivor.melee.current_clip() == &"Smash",
+	_check("heavy swing is the wrench slam",
+			_survivor.melee.current_clip() == &"WrenchSlam",
 			String(_survivor.melee.current_clip()))
 	_check("heavy swing costs 1.5x stamina",
 			_close(_survivor.stamina, 100.0 - 17.0 * 1.5, 0.01),
@@ -738,8 +871,8 @@ func _test_fists() -> void:
 	_check("bare hands hide the held model", _held_visible() == false)
 	_survivor.stamina = 100.0
 	_swing(Vector3(0, 0, -1))
-	_check("bare-handed swing uses the fist pool",
-			MeleeTypes.swing_pool(MeleeTypes.FIST).has(
+	_check("bare-handed swing uses the fist chain",
+			MeleeCombos.chain_for(&"fists", MeleeTypes.FIST).has(
 				_survivor.melee.current_clip()),
 			String(_survivor.melee.current_clip()))
 	await _step_physics(30)
@@ -783,8 +916,8 @@ func _test_cooldown_and_combo() -> void:
 	var damage_2 := target.last_damage
 	# 1.2 m inside a 2.0 m reach: falloff lerp(1, 0.65, 0.6) = 0.79.
 	var base := 20.0 * lerpf(1.0, 0.65, 1.2 / 2.0)
-	_check("combo 2 hits 8% harder than combo 1",
-			_close(damage_2, base * 1.08, 0.5), str(damage_2))
+	_check("combo 2 uses its authored step scale",
+			_close(damage_2, base * 1.08 * 1.08, 0.5), str(damage_2))
 	# Third hit in a row is the finisher: combo 1.16 * finisher 1.2.
 	await _step_physics(12)
 	_pin_combo_window()
@@ -796,8 +929,8 @@ func _test_cooldown_and_combo() -> void:
 	_check("the finisher hits harder than the second swing",
 			target.last_damage > damage_2 * 1.15,
 			"%.2f vs %.2f" % [target.last_damage, damage_2])
-	_check("finisher damage matches the authored multiplier",
-			_close(target.last_damage, base * 1.16 * 1.2, 0.6),
+	_check("finisher damage matches authored multipliers",
+			_close(target.last_damage, base * 1.16 * 1.2 * 1.18, 0.6),
 			str(target.last_damage))
 	# Lapse the chain and the counter starts over.
 	_expire_combo()

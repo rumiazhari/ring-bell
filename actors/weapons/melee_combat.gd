@@ -27,8 +27,16 @@ signal swing_started(clip: StringName, heavy: bool)
 signal swing_landed(clip: StringName, hits: int, damage: float)
 signal swing_refused(reason: String)
 signal weapon_changed(weapon_id: StringName, type_label: String)
+signal guard_started()
+signal guard_broken()
+signal parried()
+signal riposte_started()
+signal guard_ended()
+signal charge_started()
+signal charge_updated(held_seconds: float, heavy: bool)
+signal charge_released(held_seconds: float, heavy: bool)
 
-enum State { IDLE, SWING }
+enum State { IDLE, SWING, GUARD, GUARD_BREAK }
 
 const HIT_MASK := 1 | 2 | 4          # environment | survivors | zombies
 const CHEST_HEIGHT := 1.15
@@ -42,6 +50,11 @@ const GRIP_PAST_HAND := 0.08
 const CANCEL_FROM := 0.72
 ## Grace period after the clip ends during which the next swing keeps a combo.
 const COMBO_WINDOW := 0.28
+const HOLD_THRESHOLD := 0.20
+const RIPOSTE_WINDOW := 0.60
+const GUARD_SPEED_SCALE := 0.45
+const GUARD_BREAK_TIME := 0.90
+const GUARD_LOCK_TIME := 1.20
 const HEAVY_STAMINA_SCALE := 1.5
 const HEAVY_DAMAGE_SCALE := 1.25
 const HEAVY_SPEED_SCALE := 0.85
@@ -80,11 +93,27 @@ var _strike_at := 0.0
 var _struck := false
 var _heavy := false
 var _committed := false
+var _riposte := false
 var _cooldown_left := 0.0
 var _combo := 0
 var _combo_deadline := 0.0
 var _swing_dir := Vector3(0, 0, -1)
 var _library_ready := false
+
+# Input is deliberately owned by this component so the player controller only
+# needs to report the LMB press. AI/tests still call try_attack() directly and
+# bypass the input latch.
+var _attack_pressed := false
+var _attack_aim := Vector3(0, 0, -1)
+var _attack_held := 0.0
+var _guard_started_at := 0.0
+var _guard_lock_left := 0.0
+var _riposte_armed_until := 0.0
+var _last_guard_result: Dictionary = {}
+var _processing_external_damage := false
+var _guard_events := 0
+var _parry_events := 0
+var _guard_break_events := 0
 
 
 func setup(p_actor: Survivor, skeleton: Skeleton3D,
@@ -93,6 +122,8 @@ func setup(p_actor: Survivor, skeleton: Skeleton3D,
 	_skeleton = skeleton
 	_locomotion = locomotion
 	_animator = animator
+	if actor.health != null and not actor.health.damaged.is_connected(_on_actor_damaged):
+		actor.health.damaged.connect(_on_actor_damaged)
 	_ensure_library()
 	_attach_hand()
 	equip(p_actor.equipped_weapon_id)
@@ -119,15 +150,99 @@ func type_label() -> String:
 
 
 func swing_pool() -> Array:
-	return (_def.get("swing_pool", []) as Array).duplicate()
+	return (_def.get("combo_chain", _def.get("swing_pool", [])) as Array).duplicate()
+
+
+func combo_definition() -> Dictionary:
+	return (_def.get("combo", {}) as Dictionary).duplicate(true)
+
+
+func light_chain() -> Array:
+	return swing_pool()
+
+
+func heavy_clip() -> StringName:
+	return StringName(_def.get("heavy_clip", &""))
+
+
+func unique_clip() -> StringName:
+	return StringName(_def.get("unique_clip", &""))
+
+
+func guard_clip() -> StringName:
+	return StringName(_def.get("guard_clip", &""))
+
+
+func counter_clip() -> StringName:
+	return StringName(_def.get("counter_clip", &""))
+
+
+## Pure LMB classifier: a tap is light, a hold released at the threshold is
+## heavy. Keeping this free of Input and time makes the boundary testable.
+static func classify_press(held_s: float) -> bool:
+	return held_s >= HOLD_THRESHOLD
+
+
+func charge_elapsed() -> float:
+	return _attack_held if _attack_pressed else 0.0
+
+
+func charge_ratio() -> float:
+	return clampf(charge_elapsed() / HOLD_THRESHOLD, 0.0, 1.0)
+
+
+func is_charging() -> bool:
+	return _attack_pressed
 
 
 func state() -> int:
 	return _state
 
 
+func is_guarding() -> bool:
+	return _state == State.GUARD
+
+
+func is_guard_broken() -> bool:
+	return _state == State.GUARD_BREAK
+
+
+func guard_stamina() -> float:
+	if actor == null or not is_instance_valid(actor):
+		return 0.0
+	return actor.stamina
+
+
+func guard_absorb() -> float:
+	return float(_def.get("guard_absorb", 0.25))
+
+
+func parry_window() -> float:
+	return float(_def.get("parry_window", 0.0))
+
+
+func block_cost() -> float:
+	return float(_def.get("block_cost", 5.0))
+
+
+func riposte_armed() -> bool:
+	return Time.get_ticks_msec() < _riposte_armed_until
+
+
+func guard_event_counts() -> Dictionary:
+	return {"started": _guard_events, "parried": _parry_events,
+		"broken": _guard_break_events}
+
+
+
 ## IDLE / WINDUP / STRIKE / RECOVER -- readable phase for HUD and tests.
 func phase() -> String:
+	if _state == State.GUARD:
+		return "GUARD"
+	if _state == State.GUARD_BREAK:
+		return "GUARD_BREAK"
+	if _attack_pressed:
+		return "CHARGE"
 	if _state == State.IDLE:
 		return "IDLE"
 	if not _struck:
@@ -158,13 +273,29 @@ func set_weapon_visible(visible_now: bool) -> void:
 		_mesh.visible = visible_now
 
 
-## One swing attempt. `aim_dir` is a world-space direction; its projection on
-## the ground plane decides the swing direction. Returns true if a swing began.
+## Called by PlayerController on LMB press, or directly by AI/tests. A real
+## player press is latched until release so the same LMB produces a tap light or
+## a charged heavy without exposing a second mouse action.
 func try_attack(aim_dir := Vector3.ZERO, want_heavy := false) -> bool:
+	if actor != null and actor.is_player() and not want_heavy:
+		if InputMap.has_action(&"attack") and Input.is_action_just_pressed(&"attack"):
+			return _begin_attack_press(aim_dir)
+		if _attack_pressed:
+			return false
+	return _begin_attack(aim_dir, want_heavy)
+
+
+func _begin_attack(aim_dir := Vector3.ZERO, want_heavy := false) -> bool:
 	if actor == null or not is_instance_valid(actor):
 		return false
 	if actor.health.is_dead or actor.needs.sleeping:
 		_refuse("dead_or_asleep")
+		return false
+	if _state == State.GUARD:
+		_refuse("guarding")
+		return false
+	if _state == State.GUARD_BREAK:
+		_refuse("guard_break")
 		return false
 	if _cooldown_left > 0.0:
 		_refuse("cooldown")
@@ -175,20 +306,28 @@ func try_attack(aim_dir := Vector3.ZERO, want_heavy := false) -> bool:
 			return false
 
 	last_downgraded = false
+	_committed = false
+	_riposte = false
+	var combo: Dictionary = _def.get("combo", {}) as Dictionary
+	var chain: Array = combo.get("chain", []) as Array
+	var next_step := _next_combo_step(chain.size())
+	var step: Dictionary = MeleeCombos.step_for(combo, next_step)
 	var heavy := want_heavy
-	var cost := float(_def.get("stamina_cost", 5.0))
+	var cost := float(step.get("stamina", _def.get("stamina_cost", 5.0)))
+	var heavy_name := heavy_clip()
 	if heavy:
-		if not MeleeTypes.has_heavy(StringName(_def.get("melee_type", &"fist"))):
+		if heavy_name == &"":
 			heavy = false
 			_committed = true
-		elif actor.stamina < cost * HEAVY_STAMINA_SCALE:
-			# Not enough wind for the big swing: fall back to the light one
-			# rather than eating the input.
+		elif actor.stamina < float(_def.get("stamina_cost", cost)) * HEAVY_STAMINA_SCALE:
+			# Not enough stamina for the charged move: preserve the input as a
+			# light step rather than eating the press.
 			heavy = false
 			last_downgraded = true
-	if not heavy:
-		_committed = want_heavy and not MeleeTypes.has_heavy(
-				StringName(_def.get("melee_type", &"fist")))
+	if heavy:
+		cost = float(_def.get("stamina_cost", cost)) * HEAVY_STAMINA_SCALE
+	elif want_heavy and heavy_name == &"":
+		_committed = true
 	if actor.stamina < cost:
 		if _combo > 0:
 			_combo = 0
@@ -202,30 +341,49 @@ func try_attack(aim_dir := Vector3.ZERO, want_heavy := false) -> bool:
 	_swing_dir = _swing_dir.normalized() if _swing_dir.length_squared() > 0.0001 \
 			else _forward()
 
-	_clip = MeleeSwingLibrary.direction_for(swing_local,
-			_def.get("swing_pool", []), heavy)
+	var now := Time.get_ticks_msec()
+	if not heavy and counter_clip() != &"" and now < _riposte_armed_until:
+		_clip = counter_clip()
+		_riposte = true
+		_riposte_armed_until = 0
+	elif heavy:
+		_clip = heavy_name
+	else:
+		_clip = chain[(next_step - 1) % chain.size()] as StringName if not chain.is_empty() else \
+			MeleeSwingLibrary.direction_for(swing_local, _def.get("swing_pool", []), false)
 	_heavy = heavy
+
 
 	if _state == State.SWING:
 		_close_swing()   # interrupt: same bookkeeping as a natural finish
 
 	var speed := float(_def.get("clip_speed", 1.0))
+	if not heavy:
+		speed *= float(step.get("speed_scale", 1.0))
 	speed *= HEAVY_SPEED_SCALE if heavy else 1.0
 	speed *= COMMITTED_SPEED_SCALE if _committed else 1.0
+	if _riposte:
+		speed *= 1.10
 	_clip_time = MeleeSwingLibrary.clip_length(_clip) / maxf(0.1, speed)
 	_strike_at = MeleeSwingLibrary.hit_time(_clip) / maxf(0.1, speed)
 	_t = 0.0
 	_struck = false
 	_cooldown_left = float(_def.get("cooldown", 0.7))
 
-	actor.stamina = maxf(0.0, actor.stamina - cost * (
-			HEAVY_STAMINA_SCALE if heavy else 1.0))
-	_combo = _combo + 1 if Time.get_ticks_msec() < _combo_deadline else 1
+	actor.stamina = maxf(0.0, actor.stamina - cost)
+	if heavy:
+		_combo = 0
+	elif _riposte:
+		_combo = 1
+	else:
+		_combo = next_step
 	_combo_deadline = Time.get_ticks_msec() + int((_clip_time + COMBO_WINDOW) * 1000.0)
 
 	last_swing = _clip
 	_state = State.SWING
 	_play_clip()
+	if _riposte:
+		riposte_started.emit()
 	swing_started.emit(_clip, heavy or _committed)
 	return true
 
@@ -233,6 +391,32 @@ func try_attack(aim_dir := Vector3.ZERO, want_heavy := false) -> bool:
 func _physics_process(delta: float) -> void:
 	_ensure_rig()
 	_cooldown_left = maxf(0.0, _cooldown_left - delta)
+	_guard_lock_left = maxf(0.0, _guard_lock_left - delta)
+
+	if actor != null and is_instance_valid(actor) and actor.is_player():
+		if InputMap.has_action(&"attack") and Input.is_action_just_pressed(&"attack"):
+			if not _attack_pressed:
+				_begin_attack_press(actor.facing)
+		if _attack_pressed:
+			_attack_held += delta
+			charge_updated.emit(_attack_held, classify_press(_attack_held))
+			if Input.is_action_just_released(&"attack"):
+				_release_attack()
+		var block_held := InputMap.has_action(&"block") and Input.is_action_pressed(&"block")
+		if block_held:
+			set_guarding(true)
+		elif _state == State.GUARD:
+			set_guarding(false)
+
+	if _state == State.GUARD_BREAK:
+		if _guard_lock_left <= 0.0:
+			_state = State.IDLE
+			_clip = &""
+			_resume_pose()
+		return
+	if _state == State.GUARD:
+		_apply_guard_movement_cap()
+		return
 	if _state != State.SWING:
 		return
 	_t += delta
@@ -240,6 +424,180 @@ func _physics_process(delta: float) -> void:
 		_strike()
 	if _t >= _clip_time:
 		_close_swing()
+
+
+func _begin_attack_press(aim_dir: Vector3) -> bool:
+	if _state != State.IDLE or _cooldown_left > 0.0:
+		_refuse("guarding" if _state == State.GUARD else "cooldown" if _cooldown_left > 0.0 else "mid_swing")
+		return false
+	_attack_pressed = true
+	_attack_aim = aim_dir
+	_attack_held = 0.0
+	charge_started.emit()
+	return true
+
+
+func _release_attack() -> void:
+	if not _attack_pressed:
+		return
+	var held := _attack_held
+	var heavy := classify_press(held)
+	_attack_pressed = false
+	_attack_held = 0.0
+	charge_released.emit(held, heavy)
+	_begin_attack(_attack_aim, heavy)
+
+
+func _next_combo_step(chain_size: int) -> int:
+	if chain_size <= 0 or Time.get_ticks_msec() >= _combo_deadline:
+		return 1
+	var next := _combo + 1
+	return 1 if next > chain_size else next
+
+
+## Explicit guard control is used by the input loop and by headless combat
+## tests. Holding guard never consumes stamina by itself; impacts do.
+func set_guarding(want_guard: bool) -> bool:
+	if want_guard:
+		if _state == State.GUARD:
+			return true
+		if _state != State.IDLE or _guard_lock_left > 0.0:
+			return false
+		if actor == null or not is_instance_valid(actor):
+			return false
+		_state = State.GUARD
+		_guard_started_at = float(Time.get_ticks_msec()) / 1000.0
+		_clip = guard_clip()
+		_guard_events += 1
+		_play_clip()
+		guard_started.emit()
+		return true
+	if _state != State.GUARD:
+		return false
+	_state = State.IDLE
+	_clip = &""
+	_resume_pose()
+	guard_ended.emit()
+	return true
+
+
+func _apply_guard_movement_cap() -> void:
+	if actor == null or not is_instance_valid(actor):
+		return
+	# Survivor applies its requested move before this child ticks. Clamp the
+	# request for the next frame while preserving direction, then cap current
+	# velocity so guard never gives one unscaled frame of movement.
+	var move: Variant = actor.get("_move_dir")
+	if move is Vector3 and (move as Vector3).length_squared() > 0.0001:
+		actor.set("_move_dir", (move as Vector3).normalized() * GUARD_SPEED_SCALE)
+	var velocity := actor.velocity
+	velocity.x *= GUARD_SPEED_SCALE
+	velocity.z *= GUARD_SPEED_SCALE
+	actor.velocity = velocity
+
+
+## Resolve an incoming blow against the guard. Attackers may pass themselves so
+## a perfect parry can stagger them; null is valid for environmental tests.
+func receive_impact(amount: float, attack_dir := Vector3.ZERO,
+		attacker: Node = null) -> Dictionary:
+	var result := {"blocked": false, "parried": false, "guard_broken": false,
+		"damage": maxf(0.0, amount), "stamina_cost": 0.0}
+	if actor == null or not is_instance_valid(actor) or not is_guarding():
+		return result
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var guard_age := now_s - _guard_started_at
+	var parry := parry_window()
+	var impact_dir := attack_dir
+	impact_dir.y = 0.0
+	if impact_dir.length_squared() < 0.0001:
+		impact_dir = -_forward()
+	else:
+		impact_dir = impact_dir.normalized()
+	if parry > 0.0 and guard_age <= parry:
+		_riposte_armed_until = Time.get_ticks_msec() + int(RIPOSTE_WINDOW * 1000.0)
+		_parry_events += 1
+		result["blocked"] = true
+		result["parried"] = true
+		result["damage"] = 0.0
+		result["riposte_until"] = _riposte_armed_until
+		if attacker != null and is_instance_valid(attacker):
+			if attacker.has_method(&"apply_knockback"):
+				attacker.call(&"apply_knockback", -impact_dir * 2.5)
+			if attacker.has_method(&"apply_stagger"):
+				attacker.call(&"apply_stagger", GUARD_BREAK_TIME)
+		parried.emit()
+		_last_guard_result = result.duplicate()
+		return result
+
+	var cost := block_cost()
+	actor.stamina = maxf(0.0, actor.stamina - cost)
+	result["blocked"] = true
+	result["stamina_cost"] = cost
+	if actor.stamina <= 0.0001:
+		_trigger_guard_break()
+		result["guard_broken"] = true
+		_apply_guard_damage_once(amount, impact_dir)
+		result["damage"] = amount
+	else:
+		var mitigated := amount * (1.0 - guard_absorb())
+		_apply_guard_damage_once(mitigated, impact_dir)
+		result["damage"] = mitigated
+	_last_guard_result = result.duplicate()
+	return result
+
+
+## Survivors and zombies use HealthComponent directly for legacy damage paths.
+## Reconcile those hits here so RMB guarding also protects against bites and
+## other non-melee callers without making every attacker know MeleeCombat.
+func _on_actor_damaged(amount: float, source_id: StringName) -> void:
+	if _processing_external_damage or not is_guarding() or amount <= 0.0:
+		return
+	var attacker: Node = null
+	if source_id != &"":
+		var found: Node3D = ActorRegistry.get_actor(source_id)
+		if found != null and is_instance_valid(found):
+			attacker = found
+	_processing_external_damage = true
+	var result := receive_impact(amount, -_forward(), attacker)
+	_processing_external_damage = false
+	var restored := amount - float(result.get("damage", amount))
+	if restored > 0.0 and actor.health != null and not actor.health.is_dead:
+		actor.health.heal(restored)
+
+
+func _apply_guard_damage_once(amount: float, impact_dir: Vector3) -> void:
+	if _processing_external_damage:
+		return
+	_processing_external_damage = true
+	_apply_guard_damage(amount, impact_dir)
+	_processing_external_damage = false
+
+
+func _apply_guard_damage(amount: float, impact_dir: Vector3) -> void:
+	if amount > 0.0 and actor.health != null:
+		actor.health.damage(amount, &"guarded_attack")
+	if actor.has_method(&"apply_knockback"):
+		actor.call(&"apply_knockback", impact_dir * 0.35)
+
+
+func _trigger_guard_break() -> void:
+	if _state == State.GUARD_BREAK:
+		return
+	_state = State.GUARD_BREAK
+	_guard_lock_left = GUARD_LOCK_TIME
+	_clip = &""
+	_guard_break_events += 1
+	_resume_pose()
+	guard_broken.emit()
+
+
+## Stop the held guard pose and let locomotion own the skeleton again.
+func _resume_pose() -> void:
+	if _locomotion != null and _locomotion.anim_player != null:
+		_locomotion.anim_player.stop()
+		_locomotion.anim_player.speed_scale = 1.0
+		if _locomotion.anim_tree != null:
+			_locomotion.suspend_pose_authority(false)
 
 
 ## Skeleton and locomotion are wired deferred by the Survivor, so the grip and
@@ -300,6 +658,7 @@ func _on_clip_finished(anim_name: StringName) -> void:
 func _close_swing() -> void:
 	_state = State.IDLE
 	_struck = false
+	_riposte = false
 	_clip = &""
 	if _locomotion != null and _locomotion.anim_player != null:
 		var ap := _locomotion.anim_player
@@ -320,6 +679,12 @@ func _strike() -> void:
 	var structural := float(_def.get("structural_scale", 1.0))
 
 	damage *= _combo_multiplier()
+	if not _heavy and not _riposte:
+		var combo: Dictionary = _def.get("combo", {}) as Dictionary
+		var step: Dictionary = MeleeCombos.step_for(combo, maxi(1, _combo))
+		damage *= float(step.get("damage_scale", 1.0))
+	if _riposte:
+		damage *= 1.6
 	if _heavy or _committed:
 		damage *= HEAVY_DAMAGE_SCALE if _heavy else COMMITTED_DAMAGE_SCALE
 		stagger *= 1.3 if _heavy else 1.15
@@ -549,4 +914,4 @@ func melee_type() -> StringName:
 ## while this is true - both drive the same bones, so a reel fired mid-swing
 ## would have the two clips overwrite each other key by key.
 func holds_pose() -> bool:
-	return _state == State.SWING
+	return _state == State.SWING or _state == State.GUARD
