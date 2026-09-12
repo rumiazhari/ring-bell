@@ -6,22 +6,15 @@ extends Node
 ## Three passes, all deterministic (no randomness, fixed stage):
 ##   1. gallery  - every weapon model alone, 3/4 product shot
 ##   2. in-hand  - each weapon gripped by a survivor, close on the fist
-##   3. swings   - the eight authored swings at their strike frame, side+front
+##   3. combo rows - every non-empty row declared by MeleeCombos.COMBOS,
+##                   captured at the authored strike/hold pose, side+front
 ##
 ## PNGs land in .hermes/autopilot/reports/melee-capture-<seed>-<ts>/.
-## Also prints a PASS/MISMATCH line per swing so the capture doubles as
-## evidence that the aim -> clip mapping really fires on the live rig.
+## The combo rows are built at runtime from the combo table rather than from
+## legacy clip names. Each verdict includes both weapon id and clip so a
+## correct per-weapon mapping cannot be reported as a mismatch.
 
-const SWINGS: Array = [
-	{"clip": &"SlashR", "weapon": &"cane_sabre", "aim": Vector3(0.866, 0, -0.5), "heavy": false},
-	{"clip": &"SlashL", "weapon": &"cane_sabre", "aim": Vector3(-0.866, 0, -0.5), "heavy": false},
-	{"clip": &"DiagR", "weapon": &"cane_sabre", "aim": Vector3(0.469, 0, -0.883), "heavy": false},
-	{"clip": &"DiagL", "weapon": &"cane_sabre", "aim": Vector3(-0.469, 0, -0.883), "heavy": false},
-	{"clip": &"Sweep", "weapon": &"cane_sabre", "aim": Vector3(0, 0, 1), "heavy": false},
-	{"clip": &"Chop", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": false},
-	{"clip": &"Smash", "weapon": &"pipe_wrench", "aim": Vector3(0, 0, -1), "heavy": true},
-	{"clip": &"Thrust", "weapon": &"boiler_lance", "aim": Vector3(0, 0, -1), "heavy": false},
-]
+var _swings: Array = []
 
 ## Weapons with their own in-hand shot (fists draw nothing by design).
 const HAND_WEAPONS: Array[StringName] = [
@@ -57,6 +50,8 @@ func _run() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_build_stage()
+	_swings = _enumerate_combo_rows()
+	print("[MeleeCapture] combo rows=%d weapons=%d" % [_swings.size(), MeleeCombos.COMBOS.size()])
 	_dir = ProjectSettings.globalize_path(
 		"res://.hermes/autopilot/reports/melee-capture-%d-%d/"
 		% [WorldSeed.get_world_seed(), int(Time.get_unix_time_from_system())])
@@ -77,6 +72,49 @@ func _run() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	get_tree().quit(0)
+
+
+## Build the capture rows from the authoritative per-weapon combo table. Empty
+## heavy/counter fields are intentional for fists; they are reported as absent
+## rather than replaced with a legacy clip.
+func _enumerate_combo_rows() -> Array:
+	var rows: Array = []
+	for key in MeleeCombos.COMBOS.keys():
+		var weapon: StringName = key as StringName
+		var combo: Dictionary = MeleeCombos.COMBOS[weapon] as Dictionary
+		var chain: Array = combo.get("chain", []) as Array
+		for step_index in range(3):
+			if step_index < chain.size():
+				rows.append(_combo_row(weapon, "light_%d" % (step_index + 1),
+						chain[step_index] as StringName, false, step_index + 1))
+		_append_combo_field(rows, weapon, combo, "heavy", true, 0)
+		_append_combo_field(rows, weapon, combo, "unique", false, 0)
+		_append_combo_field(rows, weapon, combo, "guard", false, 0)
+		_append_combo_field(rows, weapon, combo, "counter", false, 0)
+	return rows
+
+
+func _append_combo_field(rows: Array, weapon: StringName, combo: Dictionary,
+			field: String, heavy: bool, step: int) -> void:
+	var clip := StringName(combo.get(field, &""))
+	if clip == &"":
+		print("[MeleeCapture] combo row %s %s unavailable (COMBOS empty)" % [
+			weapon, field])
+		return
+	rows.append(_combo_row(weapon, field, clip, heavy, step))
+
+
+func _combo_row(weapon: StringName, kind: String, clip: StringName,
+		heavy: bool, step: int) -> Dictionary:
+	var angle := deg_to_rad(MeleeSwingLibrary.entry_angle(clip))
+	return {
+		"weapon": weapon,
+		"kind": kind,
+		"clip": clip,
+		"aim": Vector3(sin(angle), 0.0, -cos(angle)),
+		"heavy": heavy,
+		"step": step,
+	}
 
 
 # --- Stage -------------------------------------------------------------------
@@ -373,87 +411,120 @@ func _head_anchor() -> Vector3:
 	return skeleton.global_transform * skeleton.get_bone_global_pose(idx).origin
 
 
-# --- Pass 3: the eight swings ------------------------------------------------
+# --- Pass 3: combo rows -------------------------------------------------------
 
 func _capture_swings() -> void:
-	for entry in SWINGS:
+	for entry in _swings:
 		var clip: StringName = entry["clip"]
-		_survivor.equip_weapon(entry["weapon"])
+		var weapon: StringName = entry["weapon"]
+		var kind: String = String(entry["kind"])
+		_survivor.equip_weapon(weapon)
 		await _settle(4)
-		var guard := 0
-		while _survivor.melee.state() != MeleeCombat.State.IDLE and guard < 200:
-			guard += 1
-			await get_tree().physics_frame
-		_survivor.facing = Vector3(0, 0, -1)
-		# Each capture is the *opening* swing, so no combo scaling and no
-		# cooldown gate from the previous shot: without this every second
-		# swing is refused (the cooldown outlives the clip).
-		_survivor.melee.set("_combo", 0)
-		_survivor.melee.set("_combo_deadline", 0)
-		_survivor.melee.set("_cooldown_left", 0.0)
-		_survivor.stamina = Survivor.STAMINA_MAX
-		var started: bool = _survivor.melee_attack(entry["aim"], entry["heavy"])
+		await _wait_for_idle()
+		var started := _start_combo_row(entry)
+		var runtime_weapon := _runtime_weapon_id(weapon)
+		var actual_weapon: StringName = _survivor.melee.weapon_id()
+		var got: StringName = _survivor.melee.current_clip()
+		var weapon_ok := actual_weapon == runtime_weapon
+		var verdict := "PASS" if started and got == clip and weapon_ok else "MISMATCH"
+		print("[MeleeCapture] %s/%s weapon=%s intended=%s actual=%s %s phase=%s" % [
+			weapon, kind, weapon, clip, got, verdict, _survivor.melee.phase()])
 		if not started:
-			print("[MeleeCapture] %s MISMATCH: swing refused" % clip)
+			print("[MeleeCapture] %s/%s MISMATCH: row refused" % [weapon, kind])
 			continue
-		# Step to the strike frame, then hold still for the shot.
-		var waited := 0
-		while _survivor.melee.phase() == "WINDUP" and waited < 400:
-			waited += 1
-			await get_tree().physics_frame
-		var got := _survivor.melee.current_clip()
-		var verdict := "PASS" if got == clip else "MISMATCH"
-		var hand_now := _hand_anchor()
-		print("[MeleeCapture] %s -> %s %s phase=%s hand_y=%.3f" % [
-			clip, got, verdict, _survivor.melee.phase(),
-			hand_now.y if hand_now != Vector3.INF else -99.0])
-		# Ground truth: a bone ORIGIN never moves when its own track rotates it,
-		# so the only honest check is the bone's rotation plus where the weapon
-		# sits. Sample the whole clip for one swing.
-		if str(clip) == "Chop":
-			var skel_t: Skeleton3D = _survivor.get("_skeleton")
-			var loc: Node = _survivor.get("_locomotion")
-			var ap: AnimationPlayer = null if loc == null else loc.get("anim_player")
-			var at_node: AnimationTree = null if loc == null else loc.get("anim_tree")
-			var bi := skel_t.find_bone("r_upper_arm")
-			for k in 8:
-				var b: Basis = skel_t.get_bone_global_pose(bi).basis
-				print("[MeleeCapture] trace k=%d anim=%s playing=%s tree=%s arm_euler=%s grip_y=%.3f" % [
-					k,
-					"null" if ap == null else ap.current_animation,
-					"null" if ap == null else str(ap.is_playing()),
-					"null" if at_node == null else str(at_node.active),
-					str(b.get_euler() * 57.2958),
-					_hand_anchor().y if _hand_anchor() != Vector3.INF else -99.0])
+
+		if kind == "guard":
+			await _settle(3)
+		else:
+			# Attack rows are held at their authored strike frame. The runtime
+			# clip is checked before and after this wait; a wrong mapping cannot
+			# hide behind a later animation state.
+			var waited := 0
+			while _survivor.melee.phase() == "WINDUP" and waited < 400:
+				waited += 1
 				await get_tree().physics_frame
-		await get_tree().physics_frame
+			got = _survivor.melee.current_clip()
+			verdict = "PASS" if got == clip and _survivor.melee.weapon_id() == runtime_weapon else "MISMATCH"
+			print("[MeleeCapture] %s/%s weapon=%s strike_actual=%s %s phase=%s" % [
+				weapon, kind, weapon, got, verdict, _survivor.melee.phase()])
+
 		var hand := _hand_anchor()
-		# Keep the actor on its mark so side/front framing stays comparable
-		# across all eight swings.
 		_survivor.global_position = Vector3(0, 0.6, 0)
 		var at := _survivor.global_position + Vector3(0, 1.05, 0)
-		# Side view: the plane every swing reads in.
 		_aim_at(at + Vector3(2.75, 0.70, 0.45), at + Vector3(0, 0.05, -0.30))
-		await _snap("%02d_swing_%s_side.png" % [_step + 1, clip])
-		# Front-ish view: the rig's visible front is +Z in its own frame and the
-		# visual root aims that front along `facing`, so the camera belongs at
-		# +facing. It used to sit at -facing, i.e. behind the actor, which is why
-		# these shots could not show a swing playing on the front of the body.
-		_aim_at(at + _survivor.facing * 2.45 + Vector3(0.85, 0.75, 0.0), at + Vector3(0, 0.05, -0.25))
-		await _snap("%02d_swing_%s_front.png" % [_step + 1, clip])
-		# Framing must be measurable, not eyeballed: project head + feet so a
-		# bad shot is a number in the log, not a guess.
+		await _snap("%02d_swing_%s_%s_%s_side.png" % [
+			_step + 1, weapon, kind, clip])
+		_aim_at(at + _survivor.facing * 2.45 + Vector3(0.85, 0.75, 0.0),
+			at + Vector3(0, 0.05, -0.25))
+		await _snap("%02d_swing_%s_%s_%s_front.png" % [
+			_step + 1, weapon, kind, clip])
+		# Keep the established numeric framing evidence for every row.
 		var head := _survivor.global_position + Vector3(0, 1.62, 0)
 		var feet := _survivor.global_position
-		print("[MeleeCapture] %s framing head=%s feet=%s behind=%s dist=%.2f" % [
-			clip, _cam.unproject_position(head), _cam.unproject_position(feet),
+		print("[MeleeCapture] %s/%s framing head=%s feet=%s behind=%s dist=%.2f" % [
+			weapon, kind, _cam.unproject_position(head), _cam.unproject_position(feet),
 			str(_cam.is_position_behind(head)),
 			_cam.global_position.distance_to(_survivor.global_position)])
 		if hand != Vector3.INF and hand == Vector3.ZERO:
-			print("[MeleeCapture] %s hand anchor degenerate" % clip)
-		# Let the clip finish before re-arming.
-		guard = 0
-		while _survivor.melee.state() != MeleeCombat.State.IDLE and guard < 400:
-			guard += 1
-			await get_tree().physics_frame
+			print("[MeleeCapture] %s/%s hand anchor degenerate" % [weapon, kind])
+
+		if kind == "guard":
+			_survivor.melee.set_guarding(false)
+		else:
+			await _wait_for_idle()
 		await _settle(4)
+
+
+func _wait_for_idle() -> void:
+	if _survivor.melee.is_guarding():
+		_survivor.melee.set_guarding(false)
+	var guard := 0
+	while _survivor.melee.state() != MeleeCombat.State.IDLE and guard < 500:
+		guard += 1
+		await get_tree().physics_frame
+
+
+func _reset_combo_gates() -> void:
+	_survivor.melee.set("_combo_deadline", 0)
+	_survivor.melee.set("_cooldown_left", 0.0)
+	_survivor.melee.set("_riposte_armed_until", 0)
+	_survivor.stamina = Survivor.STAMINA_MAX
+
+
+func _start_combo_row(entry: Dictionary) -> bool:
+	_reset_combo_gates()
+	var kind: String = String(entry["kind"])
+	if kind == "guard":
+		return _survivor.melee.set_guarding(true)
+
+	var step := int(entry.get("step", 0))
+	_survivor.melee.set("_combo", maxi(0, step - 1))
+	_survivor.melee.set("_combo_deadline", Time.get_ticks_msec() + 5000)
+	if kind == "counter":
+		# A counter is normally armed by a successful parry. The four non-sabre
+		# combo tables intentionally have no perfect-parry window, so arm the
+		# declared counter clip directly to measure its live animation path too.
+		_survivor.melee.set("_riposte_armed_until", Time.get_ticks_msec() + 1000)
+	if kind == "unique":
+		# Unique finishers are data-defined but are not selected by ordinary
+		# light/heavy input. Narrow the live combo definition for this one call,
+		# then restore it immediately after _begin_attack has selected the clip.
+		var def: Dictionary = _survivor.melee.weapon_def()
+		var combo: Dictionary = def.get("combo", {}) as Dictionary
+		var old_chain: Array = (combo.get("chain", []) as Array).duplicate()
+		var old_combo_chain: Array = (def.get("combo_chain", []) as Array).duplicate()
+		var old_pool: Array = (def.get("swing_pool", []) as Array).duplicate()
+		var one: Array = [entry["clip"]]
+		combo["chain"] = one
+		def["combo_chain"] = one
+		def["swing_pool"] = one
+		var started_unique: bool = _survivor.melee_attack(entry["aim"], false)
+		combo["chain"] = old_chain
+		def["combo_chain"] = old_combo_chain
+		def["swing_pool"] = old_pool
+		return started_unique
+	return _survivor.melee_attack(entry["aim"], bool(entry["heavy"]))
+
+
+func _runtime_weapon_id(weapon: StringName) -> StringName:
+	return &"" if weapon == &"fists" else weapon
