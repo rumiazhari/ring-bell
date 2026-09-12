@@ -111,6 +111,7 @@ const ITEMS := {
 		"melee_type": &"blade",
 		"damage": 20.0,
 		"reach": 2.0,
+		"arc_deg": 125.0,
 		"cooldown": 0.62,
 		"stamina_cost": 9.0,
 		"stagger": 1.7,
@@ -124,6 +125,7 @@ const ITEMS := {
 		"melee_type": &"blunt",
 		"damage": 34.0,
 		"reach": 2.0,
+		"arc_deg": 118.0,
 		"cooldown": 1.05,
 		"stamina_cost": 17.0,
 		"stagger": 5.0,
@@ -136,7 +138,8 @@ const ITEMS := {
 		"kind": KIND_WEAPON_MELEE,
 		"melee_type": &"axe",
 		"damage": 29.0,
-		"reach": 2.1,
+		"reach": 2.4,
+		"arc_deg": 155.0,
 		"cooldown": 0.88,
 		"stamina_cost": 14.0,
 		"stagger": 3.2,
@@ -149,7 +152,8 @@ const ITEMS := {
 		"kind": KIND_WEAPON_MELEE,
 		"melee_type": &"polearm",
 		"damage": 26.0,
-		"reach": 2.9,
+		"reach": 3.5,
+		"arc_deg": 180.0,
 		"cooldown": 0.95,
 		"stamina_cost": 13.0,
 		"stagger": 3.6,
@@ -205,6 +209,7 @@ const FISTS := {
 	"kind": KIND_WEAPON_MELEE,
 	"damage": 8.0,
 	"reach": 1.3,
+	"arc_deg": 100.0,
 	"cooldown": 0.7,
 	"melee_type": &"fist",
 	"stamina_cost": 5.0,
@@ -268,15 +273,31 @@ func get_melee_def(id: StringName) -> Dictionary:
 	var out := def.duplicate()
 	out["melee_type"] = type
 	out["type_label"] = MeleeTypes.label(type)
-	out["arc_deg"] = float(def.get("arc_deg", MeleeTypes.arc_deg(type)))
+	var fallback_reach := float(def.get("reach", FISTS["reach"]))
+	var fallback_arc := float(def.get("arc_deg", MeleeTypes.arc_deg(type)))
+	var combo_id: StringName = id if id != &"" and ITEMS.has(id) else &"fists"
+	var combo: Dictionary = MeleeCombos.definition(
+			combo_id, type, fallback_reach, fallback_arc)
+	out["combo"] = combo
+	out["combo_chain"] = (combo.get("chain", []) as Array).duplicate()
+	out["heavy_clip"] = StringName(combo.get("heavy", &""))
+	out["unique_clip"] = StringName(combo.get("unique", &""))
+	out["guard_clip"] = StringName(combo.get("guard", &""))
+	out["counter_clip"] = StringName(combo.get("counter", &""))
+	out["guard_absorb"] = float(combo.get("guard_absorb", 0.25))
+	out["parry_window"] = float(combo.get("parry_window", 0.0))
+	out["block_cost"] = float(combo.get("block_cost", 5.0))
+	out["arc_deg"] = float(combo.get("arc_deg", fallback_arc))
 	out["cleave"] = int(def.get("cleave", MeleeTypes.cleave(type)))
 	out["stagger"] = float(def.get("stagger", MeleeTypes.stagger(type)))
 	out["structural_scale"] = float(def.get(
 			"structural_scale", MeleeTypes.structural_scale(type)))
 	out["clip_speed"] = float(def.get("clip_speed", MeleeTypes.clip_speed(type)))
-	out["swing_pool"] = MeleeTypes.swing_pool(type)
+	# Keep the old field name for callers, but the weapon's combo chain is now
+	# the authoritative pool for a light attack.
+	out["swing_pool"] = (combo.get("chain", []) as Array).duplicate()
 	out["damage"] = float(def.get("damage", FISTS["damage"]))
-	out["reach"] = float(def.get("reach", FISTS["reach"]))
+	out["reach"] = float(combo.get("reach", fallback_reach))
 	out["cooldown"] = float(def.get("cooldown", FISTS["cooldown"]))
 	out["stamina_cost"] = float(def.get("stamina_cost", FISTS["stamina_cost"]))
 	out["model"] = StringName(def.get("model", &"fists"))

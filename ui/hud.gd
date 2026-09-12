@@ -17,6 +17,9 @@ const BAR_DEFS := [
 
 var _clock_label: Label
 var _weapon_label: Label
+var _combo_label: Label
+var _guard_label: Label
+var _guard_bar: ProgressBar
 var _bars := {}                # String key -> ProgressBar
 var _grab_label: Label         # Phase F slice 3: traversal counter readout
 var _quest_tracker: RichTextLabel
@@ -42,6 +45,7 @@ func _ready() -> void:
 func _build_ui() -> void:
 	_build_clock()
 	_build_weapon_label()
+	_build_combat_feedback()
 	_build_vitals()
 	_build_quest_tracker()
 	_build_prompt_and_notice()
@@ -53,6 +57,47 @@ func set_weapon_label(text: String) -> void:
 	_weapon_label.text = "Weapon: %s   [1-4]" % text
 
 
+## Frontend-readable combat feedback. The HUD polls the live component, but this
+## setter is also available to a menu/capture frontend without coupling it to
+## MeleeCombat internals.
+func set_combat_feedback(combo_step: int, combo_size: int, phase: String,
+		guarding: bool, guard_broken: bool, guard_value: float,
+		charging: bool, charge_ratio: float) -> void:
+	if _combo_label == null or _guard_label == null:
+		return
+	var pips := PackedStringArray()
+	for i in maxi(1, combo_size):
+		pips.append("●" if i <= combo_step else "○")
+	if charging:
+		_combo_label.text = "Heavy charge %d%%  %s" % [int(round(charge_ratio * 100.0)), " ".join(pips)]
+	elif combo_step > 0:
+		_combo_label.text = "Combo %d/%d  %s" % [combo_step, maxi(1, combo_size), " ".join(pips)]
+	else:
+		_combo_label.text = "Combo: —  %s" % " ".join(pips)
+	if guard_broken:
+		_guard_label.text = "GUARD BREAK  (recovering)"
+		_guard_label.add_theme_color_override("font_color", Color(1.0, 0.38, 0.28))
+	elif guarding:
+		_guard_label.text = "GUARD  [RMB held]"
+		_guard_label.add_theme_color_override("font_color", Color(0.45, 0.88, 1.0))
+	else:
+		_guard_label.text = "Guard: ready  [%s]" % phase
+		_guard_label.add_theme_color_override("font_color", Color(0.48, 0.82, 1.0))
+	_guard_bar.value = clampf(guard_value, 0.0, 100.0)
+
+
+func combo_feedback_text() -> String:
+	return _combo_label.text if _combo_label != null else ""
+
+
+func guard_feedback_text() -> String:
+	return _guard_label.text if _guard_label != null else ""
+
+
+func guard_bar_value() -> float:
+	return _guard_bar.value if _guard_bar != null else 0.0
+
+
 func _build_weapon_label() -> void:
 	_weapon_label = _make_label(16, Color(0.9, 0.9, 0.82))
 	_weapon_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
@@ -60,6 +105,44 @@ func _build_weapon_label() -> void:
 	_weapon_label.offset_top = 10.0
 	add_child(_weapon_label)
 	set_weapon_label("Fists")
+
+
+func _build_combat_feedback() -> void:
+	_combo_label = _make_label(14, Color(0.95, 0.82, 0.38))
+	_combo_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_combo_label.offset_left = 14.0
+	_combo_label.offset_top = 38.0
+	_combo_label.offset_right = 280.0
+	add_child(_combo_label)
+	_combo_label.text = "Combo: —"
+
+	_guard_label = _make_label(13, Color(0.48, 0.82, 1.0))
+	_guard_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_guard_label.offset_left = 14.0
+	_guard_label.offset_top = 62.0
+	_guard_label.offset_right = 280.0
+	add_child(_guard_label)
+	_guard_label.text = "Guard: ready  [RMB]"
+
+	_guard_bar = ProgressBar.new()
+	_guard_bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_guard_bar.offset_left = 14.0
+	_guard_bar.offset_top = 84.0
+	_guard_bar.offset_right = 184.0
+	_guard_bar.offset_bottom = 96.0
+	_guard_bar.min_value = 0.0
+	_guard_bar.max_value = 100.0
+	_guard_bar.value = 100.0
+	_guard_bar.show_percentage = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.03, 0.05, 0.08, 0.82)
+	bg.set_corner_radius_all(3)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.24, 0.66, 0.92)
+	fill.set_corner_radius_all(3)
+	_guard_bar.add_theme_stylebox_override("background", bg)
+	_guard_bar.add_theme_stylebox_override("fill", fill)
+	add_child(_guard_bar)
 
 
 func _make_label(font_size: int, color := Color.WHITE) -> Label:
@@ -348,6 +431,12 @@ func _update_bars() -> void:
 	_bars["hunger"].value = player.needs.hunger
 	_bars["thirst"].value = player.needs.thirst
 	_bars["fatigue"].value = player.needs.fatigue
+	if player.melee != null and is_instance_valid(player.melee):
+		var melee := player.melee
+		var chain: Array = melee.light_chain()
+		set_combat_feedback(melee.combo_index(), chain.size(), melee.phase(),
+				melee.is_guarding(), melee.is_guard_broken(), melee.guard_stamina(),
+				melee.is_charging(), melee.charge_ratio())
 	if player.parkour != null:
 		set_grab_counter(player.parkour.ledge_grabs, player.parkour.rooftop_mantles)
 
