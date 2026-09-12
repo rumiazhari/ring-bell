@@ -435,9 +435,11 @@ func _capture_swings() -> void:
 		# Side view: the plane every swing reads in.
 		_aim_at(at + Vector3(2.75, 0.70, 0.45), at + Vector3(0, 0.05, -0.30))
 		await _snap("%02d_swing_%s_side.png" % [_step + 1, clip])
-		# Front-ish view on the side the actor is aiming at, so the arc reads
-		# against the body instead of from behind it.
-		_aim_at(at - _survivor.facing * 2.45 + Vector3(0.85, 0.75, 0.0), at + Vector3(0, 0.05, -0.25))
+		# Front-ish view: the rig's visible front is +Z in its own frame and the
+		# visual root aims that front along `facing`, so the camera belongs at
+		# +facing. It used to sit at -facing, i.e. behind the actor, which is why
+		# these shots could not show a swing playing on the front of the body.
+		_aim_at(at + _survivor.facing * 2.45 + Vector3(0.85, 0.75, 0.0), at + Vector3(0, 0.05, -0.25))
 		await _snap("%02d_swing_%s_front.png" % [_step + 1, clip])
 		# Framing must be measurable, not eyeballed: project head + feet so a
 		# bad shot is a number in the log, not a guess.

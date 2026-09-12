@@ -241,8 +241,28 @@ static func build_clip(clip: StringName, articulated := true) -> Animation:
 	return anim
 
 
+## Rig-facing correction. Every pose number above is written in the rig's own
+## bone axes, and this rig's TRUE front is +Z: actors/humanoid_model.gd authors
+## the nose -- "Nose bump doubles as the facing cue (+Z)" -- at z=+0.125 and the
+## face panel at +Z, and survivor.gd turns the visual root with
+## atan2(facing.x, facing.z), which aims that nose along `facing`.
+##
+## The DEFS tables were authored against debug/melee_axis_probe.gd, which tags a
+## hand direction "FORWARD" when `d.z < -0.35` -- the character's BACK. The
+## author's whole mental model of the rig is therefore turned 180 degrees about
+## Y, and every X (fwd/back) and Z (side) sign written from it is mirrored.
+## Measured, not guessed: debug/melee_swing_direction_probe.gd
+## (--meleedirprobe) reported 7 of 8 clips sending the blade AWAY from the aim
+## (SlashL dot=-1.00, DiagL -0.99, SlashR +0.69 on a noisy sample, Thrust -0.88).
+##
+## A 180 degree turn about Y conjugates a rotation as
+##   R_y(pi) . R . R_y(pi)^-1  =>  Rx(t)->Rx(-t), Ry(t)->Ry(t), Rz(t)->Rz(-t)
+## so X and Z flip and the authored Y twist survives untouched. Correcting in
+## this one accessor (instead of re-typing eight pose tables) keeps the DEFS
+## numbers readable exactly as authored, and it is the single place to revert.
 static func _pose(dict: Dictionary, bone: String) -> Vector3:
-	return dict.get(bone, Vector3.ZERO) as Vector3
+	var v: Vector3 = dict.get(bone, Vector3.ZERO) as Vector3
+	return Vector3(-v.x, v.y, -v.z)
 
 
 static func _add_rotation_track(anim: Animation, bone: String,

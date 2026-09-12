@@ -440,6 +440,10 @@ func _ready() -> void:
 		var cap_melee: Node = load("res://debug/melee_capture.gd").new()
 		cap_melee.name = "MeleeCapture"
 		add_child(cap_melee)
+	elif user_args.has("--meleedirprobe"):
+		var probe_dir: Node = load("res://debug/melee_swing_direction_probe.gd").new()
+		probe_dir.name = "MeleeSwingDirectionProbe"
+		add_child(probe_dir)
 
 
 func _process(_delta: float) -> void:
@@ -487,9 +491,10 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
 			"--animationtest", "--animcapture", "--animmeasure", "--streamingregressiontest",
+			"--parkourtest",
 			"--import", "--shot", "--doortest", "--g10p1-capture",
 			"--g10p2b-capture",
-			"--meleeprobe", "--meleetest", "--meleecapture"
+			"--meleeprobe", "--meleetest", "--meleecapture", "--meleedirprobe"
 			]
 	for f in test_flags:
 		if args.has(f):
