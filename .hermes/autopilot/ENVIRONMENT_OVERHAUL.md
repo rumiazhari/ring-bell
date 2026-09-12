@@ -320,3 +320,26 @@ city generation excluded from the sample window; medium quality, 170 157 world n
 - Interiors can consume `is_indoors()` plus wetness for indoor tracked-in water.
 - A weather *script* (authored episodes) can replace the stochastic chooser by
   driving `force_weather()` — the blending path is unchanged.
+
+---
+
+## 17. Commit history (environment subsystem)
+
+- **`9f572cf`** (2026-09-13) — the subsystem's first landing: every
+  `world/environment/*` file, both shaders, and the three debug tools. Its subject line
+  is about melee because the Ring Bell worktree and git index are **shared** with the
+  combat and interior tracks, so the staged environment files rode along in that
+  commit. Nothing was lost; the content is all there.
+- **`05abb34`** (2026-09-13) — readability retune + diagnostics + this document:
+  volumetric-fog day/night albedo split (night emission 0.52 → 0.04), rain box/budget/
+  streak/wind retune, velocity-aligned streaks, `wind_dir_deg` wrapped to 0..360°,
+  multi-frame lightning peak sampling in `--envcapture`, CPU+GPU particle counting and
+  type-based node counts in `--envperf`, `.hermes/autopilot/ENVIRONMENT_OVERHAUL.md`.
+
+Branch: **`copilot/worldgen-fix`**, pushed to `origin` (never merged or fast-forwarded
+into master).
+
+Operating rule for this repo: stage **only your own paths**. Other tracks' hunks sit
+unstaged in the same index, so `git add -A` / `git commit -a` will sweep their work
+into your commit; and check `git status` before committing in case they already staged
+files of their own.
