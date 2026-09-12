@@ -553,7 +553,15 @@ static func reveal_layer_hidden(layer_key: String, tag: String,
 		max_floor: int, faded: Array, roof_floor: int = -1,
 		sight_from: Vector2 = Vector2.INF, sight_to: Vector2 = Vector2.INF) -> bool:
 	if max_floor < 0 or tag == "" or not layer_key.begins_with(tag + ":"):
-		return false
+		# Ceiling caps are interior occluders: one thin, VISUAL-ONLY (no collider,
+		# so the player walks straight through one) box per room per floor, whose
+		# only job is to stop a steep camera reading the room next door over a
+		# 2.6 m partition. That trade only makes sense while this building's own
+		# interior presentation is open. With no gate for it - the player outdoors,
+		# or inside a different building - they must not be drawn at all, or the
+		# exterior view shows one grey plane per room per floor, floating clear of
+		# the shell (measured by --q3capprobe: 3017 of 3017 caps drawn ungated).
+		return layer_key.find(":" + CEIL_CUT_PREFIX) >= 0
 	var suffix := layer_key.substr(tag.length() + 1)
 	if suffix.begins_with("roof"):
 		if roof_floor < 0:
@@ -906,6 +914,12 @@ func flush_into(parent: Node3D, body_layer := 1,
 				if key != "" else "street")
 		mi.mesh = _mesh_from({key: groups[key]})
 		parent.add_child(mi)
+		# A layer's first state is the UNGATED state, which is the only state most
+		# chunks are ever in: ChunkManager replays a real gate onto the single
+		# chunk the player is inside, and nothing touches the rest. Without this
+		# every materialised interior kept its ceiling caps drawn forever (see
+		# reveal_layer_hidden).
+		mi.visible = not reveal_layer_hidden(key, "", -1, [])
 		layer_nodes[key] = mi
 		stats["mesh_nodes"] += 1
 

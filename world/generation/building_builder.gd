@@ -3431,7 +3431,14 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			var lc := lr.get_center()
 			b.push_layer(tag + ":f%d:%s%s" % [fi, MeshBatcher.CEIL_CUT_PREFIX,
 					MeshBatcher.wall_cut_key(Vector3(lc.x, 0.0, lc.y), Vector3(lr.size.x, 0.0, lr.size.y))])
-			b.add_visual_box(Vector3(lc.x, fi * fh + fh - 0.05, lc.y),
+			# `off` is NOT optional here: every other box in this function adds it,
+			# and the layer key above stays deliberately local. Emitting the cap
+			# local threw each one clear of its own building - measured by
+			# --q3capprobe on 9 chunks: 3017 of 3017 caps sat outside their own
+			# building, worst 318 m away. Out there nothing occludes a 0.08 m
+			# slab, so the street view showed a grey plane hanging in mid-air,
+			# one per room per floor (the user's "stacked flat planes").
+			b.add_visual_box(off + Vector3(lc.x, fi * fh + fh - 0.05, lc.y),
 					Vector3(lr.size.x, 0.08, lr.size.y), WorldConstants.COL_CITY_INTERIOR_WALL_ALT)
 			b.pop_layer()
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
