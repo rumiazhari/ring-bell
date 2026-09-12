@@ -10,22 +10,46 @@ extends Node
 ## functions of state; actions are tiny state machines. Long term this becomes
 ## a utility -> goals -> planner pipeline (see ARCHITECTURE.md).
 
-enum Action { IDLE, WANDER, EAT, SLEEP, FLEE, WORK }
+enum Action { IDLE, WANDER, EAT, SLEEP, FLEE, WORK, FIGHT }
 
 const THINK_INTERVAL := 0.4
 const ARRIVE_DISTANCE := 1.2
-const PANIC_RADIUS := 9.0          # zombies closer than this trigger FLEE
+const PANIC_RADIUS := 9.0          # zombies closer than this are a decision
 const WANDER_RADIUS := 7.0         # wander around this far from home
+## An armed NPC that decides to FIGHT commits to a threat this far out, so it
+## closes the distance instead of oscillating at the edge of the panic radius.
+const ENGAGE_RADIUS := 13.0
+## Fight score of a brave, healthy, armed actor. Deliberately above the flee
+## baseline (2.5): an armed adult who is not hurt stands and fights one shambler.
+const FIGHT_BASE := 2.9
+## Every zombie beyond the first inside PANIC_RADIUS costs this much courage.
+const FIGHT_PACK_PENALTY := 0.30
+## Close to this fraction of the weapon's reach. The swing arc is centred on
+## facing, so hugging a target only pushes it out of the arc.
+const FIGHT_STANDOFF := 0.72
+## Re-arm cadence. The weapon's own cooldown and the stamina gate are the real
+## limits, so this only stops the brain calling try_attack() every physics frame.
+const FIGHT_SWING_INTERVAL := 0.25
+const FIGHT_REFUSAL_PAUSE := 0.40
+## Every Nth landed attempt is committed as a heavy blow, stamina permitting.
+const FIGHT_HEAVY_EVERY := 3
+const FIGHT_HEAVY_STAMINA := 30.0
 
 var survivor: Survivor
 var home_position := Vector3.ZERO  # where they sleep / tend to stay
 var cowardice := 1.0               # personality multiplier on fear score
 
 var current_action := Action.IDLE
+## Fight telemetry (read by the melee suite; a fight that never lands a blow is
+## a bug, not a personality).
+var fights_started := 0
+var swings_thrown := 0
 var _action_target := Vector3.ZERO
 var _think_timer := 0.0
 var _stuck_timer := 0.0
 var _last_position := Vector3.ZERO
+var _swing_timer := 0.0
+var _fight_target: Node3D = null
 
 # Society work schedule cache (per seed)
 var _cached_society: SocietyPlan = null
@@ -153,10 +177,10 @@ func _think() -> void:
 	var threat := ActorRegistry.find_nearest_in_group(
 			survivor.global_position, &"zombies", PANIC_RADIUS)
 	if threat != null:
-		var flee_score := 2.5 * cowardice
-		if flee_score > best_score:
-			best = Action.FLEE
-			best_score = flee_score
+		var choice := _threat_decision(threat)
+		if float(choice["score"]) > best_score:
+			best = choice["action"]
+			best_score = float(choice["score"])
 
 	# Hunger/fatigue override: if thresholds exceeded, EAT/SLEEP should already be higher than WORK
 	# But ensure EAT when hunger>=70 gets 0.92, SLEEP when fatigue>=70 gets 0.90, both > WORK 0.88
@@ -203,6 +227,10 @@ func _on_action_started() -> void:
 			_action_target = _work_target_position()
 			if _action_target == Vector3.INF:
 				current_action = Action.IDLE
+		Action.FIGHT:
+			_fight_target = _acquire_fight_target()
+			_swing_timer = 0.0
+			fights_started += 1
 		Action.FLEE, Action.IDLE:
 			pass
 
@@ -224,6 +252,8 @@ func _execute(delta: float) -> void:
 			_execute_sleep(delta)
 		Action.FLEE:
 			_execute_flee()
+		Action.FIGHT:
+			_execute_fight(delta)
 		Action.WORK:
 			_execute_work(delta)
 
@@ -392,3 +422,122 @@ func _nearest_food_storage() -> Vector3:
 	var crate := ActorRegistry.find_nearest_in_group(
 			survivor.global_position, &"food_storage", 60.0)
 	return crate.global_position if crate != null else Vector3.INF
+
+
+# --- Fight ------------------------------------------------------------------
+#
+# The melee kit only exists in the game if somebody in the city swings it. A
+# threat used to be one thing (flee), which left every weapon in the game
+# decorative; an armed, unhurt adult now stands and fights, and only an unarmed
+# or overmatched one runs. Both answers come out of the same scoring pass so the
+# choice stays one comparison and is readable in a test.
+
+## FLEE or FIGHT for the given threat, with the score that won. FLEE keys off
+## cowardice alone; FIGHT keys off the weapon, health, exhaustion and how many
+## zombies are in the ring. Cowardice divides the fight score, so a coward flees
+## even while holding a cane - which is the whole point of keeping both.
+func _threat_decision(threat: Node3D) -> Dictionary:
+	var flee_score := 2.5 * cowardice
+	var fight_score := 0.0
+	if _armed():
+		fight_score = FIGHT_BASE / maxf(0.35, cowardice)
+		fight_score *= clampf(0.55 + 0.45 * _health_fraction(), 0.55, 1.0)
+		fight_score -= FIGHT_PACK_PENALTY * float(maxi(0, _threat_count() - 1))
+		# Winded: the swing would be refused anyway, so do not commit to one.
+		if survivor.exhausted:
+			fight_score *= 0.5
+	if fight_score > flee_score:
+		return {"action": Action.FIGHT, "score": fight_score}
+	return {"action": Action.FLEE, "score": flee_score}
+
+
+## Fighting needs something to fight with. An unarmed NPC keeps the old answer.
+func _armed() -> bool:
+	return survivor.equipped_weapon_id != &"" \
+			and ItemDB.is_melee_weapon(survivor.equipped_weapon_id)
+
+
+## Zombies inside the panic ring (the one being decided about included).
+func _threat_count() -> int:
+	var tree := survivor.get_tree()
+	if tree == null:
+		return 1
+	var n := 0
+	for z in tree.get_nodes_in_group(&"zombies"):
+		if z is Node3D and survivor.global_position.distance_to(
+				(z as Node3D).global_position) <= PANIC_RADIUS:
+			n += 1
+	return maxi(1, n)
+
+
+func _health_fraction() -> float:
+	var h = survivor.get("health")
+	if h is HealthComponent and h.max_health > 0.0:
+		return clampf(h.current_health / h.max_health, 0.0, 1.0)
+	return 1.0
+
+
+## Committed target: keep the current one while it is alive and still inside the
+## engagement ring, otherwise take the nearest. Re-acquiring every tick made the
+## actor flip between two zombies and swing at neither.
+func _acquire_fight_target() -> Node3D:
+	if _fight_target != null and is_instance_valid(_fight_target) \
+			and not _target_dead(_fight_target) \
+			and survivor.global_position.distance_to(_fight_target.global_position) \
+			<= ENGAGE_RADIUS * 1.5:
+		return _fight_target
+	_fight_target = ActorRegistry.find_nearest_in_group(
+			survivor.global_position, &"zombies", ENGAGE_RADIUS)
+	return _fight_target
+
+
+func _target_dead(node: Node3D) -> bool:
+	var h = node.get("health")
+	return h is HealthComponent and (h as HealthComponent).is_dead
+
+
+## Weapon reach, so the standoff follows the weapon: a knife has to close, an
+## axe does not.
+func _reach() -> float:
+	if not _armed():
+		return 1.3
+	var def := ItemDB.get_melee_def(survivor.equipped_weapon_id)
+	return maxf(1.0, float(def.get("reach", 1.5)))
+
+
+## Close, face, swing. Facing is part of the attack: the swing arc is centred on
+## facing, so a swing thrown while still turning away whiffs on a target that is
+## already inside reach.
+func _execute_fight(delta: float) -> void:
+	if not _armed():
+		current_action = Action.IDLE        # weapon lost mid-fight
+		return
+	var target := _acquire_fight_target()
+	if target == null:
+		current_action = Action.IDLE
+		survivor.stop_moving()
+		return
+	var to_target := target.global_position - survivor.global_position
+	to_target.y = 0.0
+	var dist := to_target.length()
+	var dir := to_target.normalized() if dist > 0.001 else survivor.facing
+	survivor.facing = dir
+	survivor.needs.sleeping = false
+	_swing_timer = maxf(0.0, _swing_timer - delta)
+	if dist > _reach() * FIGHT_STANDOFF:
+		_move_toward(target.global_position, not survivor.exhausted, delta)
+		return
+	survivor.stop_moving()
+	if _swing_timer > 0.0:
+		return
+	if survivor.melee != null and survivor.melee.state() != MeleeCombat.State.IDLE:
+		return                              # still swinging: one blow at a time
+	var heavy := swings_thrown % FIGHT_HEAVY_EVERY == FIGHT_HEAVY_EVERY - 1 \
+			and survivor.stamina >= FIGHT_HEAVY_STAMINA
+	if survivor.melee_attack(dir, heavy):
+		swings_thrown += 1
+		_swing_timer = FIGHT_SWING_INTERVAL
+	else:
+		# Refused (cooldown or stamina): wait it out instead of hammering the
+		# call every physics frame.
+		_swing_timer = FIGHT_REFUSAL_PAUSE

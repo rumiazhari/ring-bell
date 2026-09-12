@@ -66,6 +66,8 @@ var _model_root: Node3D
 var _animator: HumanoidAnimator
 var _skeleton: Skeleton3D
 var _locomotion: CharacterLocomotion
+## Per-type hit reaction reel (see HitReaction / HitReactionLibrary).
+var hit_reaction: HitReaction
 var _visual_yaw := 0.0                 # smoothed facing from movement
 var _capsule_shape: CollisionShape3D
 var _capsule: CapsuleShape3D
@@ -136,6 +138,13 @@ func _ready() -> void:
 		_locomotion.setup(_skeleton, _model_root, {"shamble": true, "id": str(zombie_id)})
 	if _skeleton != null:
 		_animator.set_process(false)
+	# Hit reactions: the shambler reels where a trained body folds, so the reel
+	# is picked by actor kind (see HitReactionLibrary).
+	hit_reaction = HitReaction.new()
+	hit_reaction.name = "HitReaction"
+	add_child(hit_reaction)
+	hit_reaction.call_deferred("setup", self, _skeleton, _locomotion,
+			HitReactionLibrary.kind_for(true))
 
 	health = HealthComponent.new()
 	health.max_health = MAX_HEALTH
@@ -405,6 +414,19 @@ func _attack(victim: Node3D) -> void:
 	if _animator != null:
 		_animator.play_attack()
 	victim.receive_bite(ATTACK_DAMAGE, zombie_id)
+	# The bitten body has to reel too, or a bite is only a number change: a bite
+	# is a pierce event, so it plays the same family as a spear thrust.
+	var to_victim := victim.global_position - global_position
+	to_victim.y = 0.0
+	if to_victim.length() < 0.01:
+		to_victim = Vector3.FORWARD
+	to_victim = to_victim.normalized()
+	var react := victim.get_node_or_null(^"HitReaction") as HitReaction
+	if react != null:
+		react.react_impact(HitReactionLibrary.PIERCE, to_victim, 0.8)
+	ImpactFX.spawn(ImpactFX.parent_for(victim),
+			victim.global_position + Vector3.UP * 1.0, to_victim,
+			MeleeTypes.POLEARM, 0.8)
 	EventBus.attack_performed.emit(global_position)
 
 

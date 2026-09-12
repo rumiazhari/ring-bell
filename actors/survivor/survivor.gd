@@ -72,6 +72,10 @@ var _model_root: Node3D
 var _animator: HumanoidAnimator
 var _skeleton: Skeleton3D
 var _locomotion: CharacterLocomotion
+## Melee-first combat: swing direction, arcs, combos (see MeleeCombat).
+var melee: MeleeCombat
+## Per-type hit reaction reel (see HitReaction / HitReactionLibrary).
+var hit_reaction: HitReaction
 var _visual_yaw: float = 0.0
 var _lantern: OmniLight3D
 var _lantern_t := 0.0
@@ -223,6 +227,21 @@ func _setup_body() -> void:
 	# Gate animator: when skeleton exists, locomotion is authoritative
 	if _skeleton != null:
 		_animator.set_process(false)
+	# Melee combat rides the locomotion AnimationPlayer, so its setup is
+	# deferred too and therefore ordered after the locomotion setup above.
+	melee = MeleeCombat.new()
+	melee.name = "MeleeCombat"
+	add_child(melee)
+	melee.call_deferred("setup", self, _skeleton, _locomotion, _animator)
+	# Hit reactions ride the same AnimationPlayer and the same pose latch as a
+	# swing, so this is registered last (still deferred -> after locomotion and
+	# after MeleeCombat). Combat code reaches it by name, the way it reaches
+	# take_damage on any target, so no actor type has to declare it.
+	hit_reaction = HitReaction.new()
+	hit_reaction.name = "HitReaction"
+	add_child(hit_reaction)
+	hit_reaction.call_deferred("setup", self, _skeleton, _locomotion,
+			HitReactionLibrary.kind_for(false))
 
 
 func set_body_color(color: Color) -> void:
@@ -696,8 +715,29 @@ func tick_survival(delta: float) -> void:
 
 # --- Combat -----------------------------------------------------------------
 
-## Attempt one melee swing. Returns true if a swing was performed.
+## Melee swing: `aim_dir` is a world direction and picks the swing direction
+## (slash left/right, chop, thrust, sweep - see MeleeCombat). `heavy` is the
+## committed blow.
+func melee_attack(aim_dir := Vector3.ZERO, heavy := false) -> bool:
+	if melee != null:
+		return melee.try_attack(aim_dir, heavy)
+	return try_attack()
+
+
+## Swap the held melee weapon: stats and the procedural model swap together.
+## Pass an empty id for bare hands.
+func equip_weapon(id: StringName) -> void:
+	equipped_weapon_id = id if ItemDB.is_melee_weapon(id) else &""
+	if melee != null:
+		melee.equip(equipped_weapon_id)
+	EventBus.weapon_switched.emit(ItemDB.melee_label(equipped_weapon_id))
+
+
+## Swing the equipped weapon toward `facing`, light. Prefer melee_attack(),
+## which aims the swing; this remains for callers with no aim direction.
 func try_attack() -> bool:
+	if melee != null:
+		return melee.try_attack(facing, false)
 	if health.is_dead or needs.sleeping or _attack_cooldown > 0.0:
 		return false
 	if stamina < STAMINA_ATTACK_COST:
