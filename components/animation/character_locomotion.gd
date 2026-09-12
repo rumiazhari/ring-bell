@@ -100,6 +100,18 @@ var skeleton: Skeleton3D = null
 var model_root: Node3D = null
 var anim_player: AnimationPlayer = null
 var anim_tree: AnimationTree = null
+## Set while another system (a melee swing) owns the skeleton pose. This
+## outranks the per-frame chunk-active check in update(): without it the next
+## update() re-activates the tree, and the swing clip is then never rendered
+## even though the AnimationPlayer reports it as playing.
+var _pose_suspended := false
+
+
+## Hand pose authority to a one-shot clip (true before the swing, false after).
+func suspend_pose_authority(suspended: bool) -> void:
+	_pose_suspended = suspended
+	if anim_tree != null and is_instance_valid(anim_tree):
+		anim_tree.active = not suspended
 
 var _phase: float = 0.0
 var _turn_timer: float = 0.0
@@ -385,7 +397,7 @@ func update(p: Dictionary, delta: float) -> void:
 		return
 	else:
 		if anim_tree != null and is_instance_valid(anim_tree):
-			anim_tree.active = true
+			anim_tree.active = not _pose_suspended
 
 	if not _initialized or skeleton == null or not is_instance_valid(skeleton):
 		var speed_init: float = float(p.get("speed", 0.0))

@@ -1,7 +1,12 @@
 class_name WeaponSystem
 extends Node
-## Ranged firearms for the player survivor: SMG, pump shotgun, rocket
-## launcher (slots 2-4; slot 1 stays melee/fists via Survivor.try_attack).
+## Loadout holder, and the firearm path. The game is melee-first: the default
+## arsenal is four melee weapons (ItemDB.MELEE_ARSENAL) resolved by the
+## Survivor's MeleeCombat; firearms are salvage. Swap `slots` to
+## ARSENAL_RANGED / ARSENAL_MIXED and everything below still runs unchanged.
+##
+## A melee slot defers to MeleeCombat -- tick() does nothing for it and
+## current_is_melee() stays true -- so the two systems never fight for input.
 ##
 ## Aiming is top-down style: the controller feeds the mouse's ground-plane
 ## projection as the aim point; shots originate at the survivor's chest.
@@ -12,9 +17,19 @@ extends Node
 const HIT_MASK := 1 | 2 | 4          # environment | survivors | zombies
 const MUZZLE_HEIGHT := 1.35
 
-## Slot 0 is the unarmed/melee fallback handled by the Survivor itself.
-var slots: Array[StringName] = [&"", &"smg", &"shotgun", &"rocket_launcher"]
-var current_slot := 1                # start on the SMG
+## Loadout presets: melee is the default, guns are opt-in salvage.
+const ARSENAL_MELEE: Array[StringName] = [
+	&"cane_sabre", &"pipe_wrench", &"boarding_axe", &"boiler_lance",
+]
+const ARSENAL_RANGED: Array[StringName] = [
+	&"", &"smg", &"shotgun", &"rocket_launcher",
+]
+const ARSENAL_MIXED: Array[StringName] = [
+	&"cane_sabre", &"smg", &"boarding_axe", &"boiler_lance",
+]
+
+var slots: Array[StringName] = ARSENAL_MELEE.duplicate()
+var current_slot := 0                # start on the cane-sabre
 
 var _survivor: Survivor
 var _cooldown := 0.0
@@ -39,12 +54,38 @@ func select_slot(index: int) -> void:
 		return
 	current_slot = index
 	_cooldown = maxf(_cooldown, 0.12)    # tiny swap delay
-	EventBus.weapon_switched.emit(ItemDB.item_name(slots[index]))
+	_sync_held_weapon()
+	if not current_is_melee():
+		EventBus.weapon_switched.emit(ItemDB.item_name(slots[index]))
+
+
+## Replace the loadout (see ARSENAL_*). Slot 0 becomes current.
+func set_slots(arsenal: Array[StringName]) -> void:
+	if arsenal.is_empty():
+		return
+	slots = arsenal.duplicate()
+	current_slot = 0
+	_sync_held_weapon()
+	EventBus.weapon_switched.emit(weapon_label())
+
+
+## Hand the selected weapon to the survivor. Melee weapons swap the held
+## procedural model and the combat stats; guns hide it (firearms have no held
+## mesh of their own yet).
+func _sync_held_weapon() -> void:
+	if _survivor == null:
+		return
+	var id: StringName = slots[current_slot]
+	if ItemDB.is_melee_weapon(id):
+		_survivor.equip_weapon(id)
+	elif _survivor.melee != null:
+		_survivor.melee.set_weapon_visible(false)
 
 
 func weapon_label() -> String:
 	if current_is_melee():
-		return ItemDB.item_name(_survivor.equipped_weapon_id)
+		# Melee slots show their class too: "Brass Cane-Sabre - Blade".
+		return ItemDB.melee_label(_survivor.equipped_weapon_id)
 	return String(current_def().get("name", "Gun"))
 
 

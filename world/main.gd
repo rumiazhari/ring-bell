@@ -381,6 +381,18 @@ func _ready() -> void:
 		var dump: Node = load("res://debug/fringe_dump.gd").new()
 		dump.name = "FringeDump"
 		add_child(dump)
+	elif user_args.has("--meleeprobe"):
+		var probe_melee: Node = load("res://debug/melee_axis_probe.gd").new()
+		probe_melee.name = "MeleeAxisProbe"
+		add_child(probe_melee)
+	elif user_args.has("--meleetest"):
+		var tester_melee: Node = load("res://debug/melee_test.gd").new()
+		tester_melee.name = "MeleeTest"
+		add_child(tester_melee)
+	elif user_args.has("--meleecapture"):
+		var cap_melee: Node = load("res://debug/melee_capture.gd").new()
+		cap_melee.name = "MeleeCapture"
+		add_child(cap_melee)
 
 
 func _process(_delta: float) -> void:
@@ -428,8 +440,9 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 		"--verticaltest", "--vertical",
 			"--animationtest", "--animcapture", "--animmeasure", "--streamingregressiontest",
 			"--import", "--shot", "--doortest", "--g10p1-capture",
-			"--g10p2b-capture"
-	]
+			"--g10p2b-capture",
+			"--meleeprobe", "--meleetest", "--meleecapture"
+			]
 	for f in test_flags:
 		if args.has(f):
 			return false

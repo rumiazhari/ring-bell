@@ -83,8 +83,15 @@ func _physics_process(delta: float) -> void:
 		aim_point = _camera_rig.call(&"ground_point_under_mouse",
 				_survivor.global_position.y)
 	_weapons.tick(delta, aim_point)
-	if _weapons.current_is_melee() and Input.is_action_just_pressed(&"attack"):
-		_survivor.try_attack()
+	if _weapons.current_is_melee():
+		# Melee is directional: the mouse aim picks the swing (slash left or
+		# right, chop, thrust, sweep); RMB commits to a heavier blow.
+		var aim := aim_point - _survivor.global_position
+		aim.y = 0.0
+		if Input.is_action_just_pressed(&"heavy_attack"):
+			_survivor.melee_attack(aim, true)
+		elif Input.is_action_just_pressed(&"attack"):
+			_survivor.melee_attack(aim, false)
 
 	if Input.is_action_just_pressed(&"eat"):
 		_try_eat()

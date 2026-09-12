@@ -12,7 +12,8 @@ func _enter_tree() -> void:
 	_add_action(&"move_right", [_key(KEY_D), _key(KEY_RIGHT)])
 	_add_action(&"sprint", [_key(KEY_SHIFT)])
 	_add_action(&"interact", [_key(KEY_E)])
-	_add_action(&"attack", [_mouse(MOUSE_BUTTON_LEFT)])
+	_add_action(&"attack", [_mouse(MOUSE_BUTTON_LEFT)])         # melee swing
+	_add_action(&"heavy_attack", [_mouse(MOUSE_BUTTON_RIGHT)])  # heavy swing
 	_add_action(&"jump", [_key(KEY_SPACE)])
 	_add_action(&"crouch", [_key(KEY_CTRL)])
 	_add_action(&"camera_rotate_left", [_key(KEY_Q)])
