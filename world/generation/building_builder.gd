@@ -84,15 +84,6 @@ const BAL_RAIL_T := 0.07          # railing member thickness
 const BAL_PROB := 0.7             # chance a given (floor, side) gets a balcony
 const BAL_MIN_SIDE := 6.0         # skip balconies on facades shorter than this
 
-# --- Phase L: street awnings (AC-style climbable-city parkour feature) -------
-const AWN_PROJ := 1.1             # canopy protrusion beyond the wall face
-const AWN_W := 2.4                # canopy width (along the facade)
-const AWN_DECK_T := 0.12          # canopy slab thickness
-const AWN_DECK_Y := 2.3           # canopy DECK TOP height above grade (standable)
-const AWN_RAIL_H := 0.45          # front lip height (grabbable parkour ledge)
-const AWN_RAIL_T := 0.07          # front-lip member thickness
-const AWN_PROB := 0.55            # chance a given ground-floor facade gets one
-const AWN_MIN_SIDE := 5.0         # skip awnings on facades shorter than this
 
 # --- Phase O: construction scaffolding on plaza-adjacent historic facades ---
 const SCAFF_PROJ := 1.0           # scaffold depth beyond the wall face
@@ -426,13 +417,6 @@ static func build(b: MeshBatcher, spec: Dictionary) -> void:
 		# gated to human-scale storeys above ground, on the long facades only.
 		if f >= 1:
 			_balconies(b, off, w, d, fh, f, tag, spec)
-		# Phase L: AC-style street awnings - a sloped canopy deck projects
-		# from the GROUND-floor facade (shopfront wall), capped by a steel
-		# front lip that doubles as a grabbable parkour ledge. Deterministic
-		# per (side, building), gated to the entrance/retail street wall, and
-		# only where the facade is long enough to host a believable marquee.
-		if f == 0:
-			_awnings(b, off, w, d, fh, tag, spec, door_edge)
 		b.pop_layer()
 
 	# Phase O: construction scaffolding on plaza-adjacent historic facades.
@@ -780,14 +764,11 @@ static func _balconies(b: MeshBatcher, off: Vector3, w: float, d: float,
 	var door_edge: int = int(spec.get("door_edge", 0))
 	var facades := ["N", "E", "S", "W"]   # order matches side encoding 0..3
 	for side in 4:
-		# Phase N: the old hard skip blocked the street wall so an
-		# awning (ground floor, door_edge) could never chain to a
-		# first-floor balcony on the SAME facade - the iconic AC
-		# ground->first-floor vertical. Shopfront dressing lives on
-		# f==0 only, so balconies at f>=1 no longer need to keep that
-		# wall clear. The street wall now rolls the same BAL_PROB as
-		# any other facade so stacked awning->balcony can actually
-		# generate in the city (seeded, still gated by BAL_MIN_SIDE).
+		# The street wall rolls the same BAL_PROB as any other facade: the
+		# old hard skip there existed only so the ground-floor marquee could
+		# own door_edge, and that marquee is gone (see the entrance-clearance
+		# note below), so nothing needs keeping clear above the door.
+		# f == 0 never reaches here anyway (callers gate f >= 1).
 		if side == door_edge and f == 0:
 			continue   # vestigial: balconies never at f==0 anyway
 		var length := w if (side == 0 or side == 2) else d
@@ -858,88 +839,6 @@ static func _add_balcony(b: MeshBatcher, cx: float, cy: float, cz: float,
 					&"steel", true, "balcony", -1)
 
 
-## Phase L: AC-style street awnings. A sloped canopy deck projects from ONE
-## ground-floor (shopfront) facade per building, capped by a steel front lip
-## whose top edge is a grabbable parkour ledge and whose sloped top is
-## STANDABLE (collides) so the player can mantle from the street or from a
-## nearby balcony/deck. Deterministic per (side, building), gated to the
-## entrance/retail street wall and to facades long enough to host a marquee,
-## and shares the door-wall discipline so shopfronts stay readable.
-static func _awnings(b: MeshBatcher, off: Vector3, w: float, d: float,
-		fh: float, tag: String, spec: Dictionary,
-		door_edge: int) -> void:
-	var facade_side: int = door_edge
-	var length := w if (facade_side == 0 or facade_side == 2) else d
-	if length < AWN_MIN_SIDE:
-		return   # facade too short to host a believable marquee
-	var rng := b.rng_for("awning",
-		[WorldSeed.str_hash(tag), facade_side])
-	if rng.randf() >= AWN_PROB:
-		return   # ~45% of eligible street walls get one - avoids total cover
-	var slot: Vector3 = _awning_slot(w, d, facade_side)
-	var cx := off.x + slot.x
-	var cy := off.y + slot.y
-	var cz := off.z + slot.z
-	_add_awning(b, cx, cy, cz, facade_side)
-
-
-## World-local center (no building offset) of an awning canopy for `side`.
-static func _awning_slot(w: float, d: float, side: int) -> Vector3:
-	var y := AWN_DECK_Y - AWN_DECK_T * 0.5     # canopy slab center height
-	var t := (w if (side == 0 or side == 2) else d) * 0.5  # centered on facade
-	match side:
-		0: return Vector3(t, y, WALL_T * 0.5 - AWN_PROJ * 0.5)      # N (-Z)
-		1: return Vector3(w - WALL_T * 0.5 + AWN_PROJ * 0.5, y, t)  # E (+X)
-		2: return Vector3(t, y, d - WALL_T * 0.5 + AWN_PROJ * 0.5)  # S (+Z)
-		_: return Vector3(WALL_T * 0.5 - AWN_PROJ * 0.5, y, t)      # W (-X)
-
-
-## One awning: sloped standable canopy deck (collides) + steel front lip.
-## The canopy SLOPES down-and-out (tilt about the horizontal facade axis) so
-## it reads like a real marquee and its top stays a flat standable surface;
-## the front lip top sits AWN_RAIL_H above the canopy deck (grabbable ledge).
-static func _add_awning(b: MeshBatcher, cx: float, cy: float, cz: float,
-		side: int) -> void:
-	var horizontal := side == 0 or side == 2   # N/S facades run along X
-	var cw := AWN_W if horizontal else AWN_PROJ
-	var cd := AWN_PROJ if horizontal else AWN_W
-	# Slope: +0.10 per metre of outward run (tilt about the facade axis).
-	var slope := 0.10
-	var axis: Vector3 = Vector3(1, 0, 0) if horizontal else Vector3(0, 0, 1)
-	var basis := Basis(axis, atan(slope))
-	var deck_c := Color("6b4f3a").darkened(0.05)   # canvas/wood awning tone
-	b.add_box_rotated(Vector3(cx, cy, cz),
-		Vector3(cw, AWN_DECK_T, cd), basis, deck_c, true,
-		false, &"wood", "awning", 0)
-	# Steel front lip: runs along the facade edge, facing out into the city.
-	# Top of the lip sits AWN_RAIL_H above the canopy deck -> catchable ledge.
-	var ry := cy + AWN_DECK_T * 0.5 + AWN_RAIL_H * 0.5
-	var lip_c := Color("6b6f73")
-	var fr_w := AWN_W if horizontal else AWN_RAIL_T
-	var fr_d := AWN_RAIL_T if horizontal else AWN_W
-	var fr_x: float = cx
-	var fr_z: float = cz
-	if horizontal:
-		fr_z += (AWN_PROJ - AWN_RAIL_T) * 0.5 * (1.0 if side == 2 else -1.0)
-	else:
-		fr_x += (AWN_PROJ - AWN_RAIL_T) * 0.5 * (1.0 if side == 1 else -1.0)
-	b.add_destructible_box(Vector3(fr_x, ry, fr_z),
-		Vector3(fr_w, AWN_RAIL_H, fr_d), lip_c,
-		&"steel", true, "awning", 0)
-	# Two side returns (short steel posts along the canopy edges).
-	var ret_len := AWN_PROJ - 2.0 * AWN_RAIL_T
-	if horizontal:
-		for sx: float in [cx - AWN_W * 0.5 + AWN_RAIL_T * 0.5,
-				cx + AWN_W * 0.5 - AWN_RAIL_T * 0.5]:
-			b.add_destructible_box(Vector3(sx, ry, fr_z),
-				Vector3(AWN_RAIL_T, AWN_RAIL_H, ret_len), lip_c,
-				&"steel", true, "awning", 0)
-	else:
-		for sz: float in [cz - AWN_W * 0.5 + AWN_RAIL_T * 0.5,
-				cz + AWN_W * 0.5 - AWN_RAIL_T * 0.5]:
-			b.add_destructible_box(Vector3(fr_x, ry, sz),
-				Vector3(ret_len, AWN_RAIL_H, AWN_RAIL_T), lip_c,
-				&"steel", true, "awning", 0)
 
 ## Phase O: construction scaffolding on plaza-adjacent historic facades.
 ## A steel pole cage + plank decks (standable) runs the FULL height of ONE

@@ -171,7 +171,7 @@ func _run_all() -> void:
 			_test_bulkhead_ladder())
 	_check("facade balconies: deck+steel lip on upper storeys, gated to multi-storey",
 		_test_balconies())
-	_check("street awnings: canopy deck + steel lip on ground facade, gated to street wall",
+	_check("entrance clearance: no marquee projects over the doorway at canopy height",
 		_test_awnings())
 	_check("construction scaffolding: steel cage + plank decks on plaza-adjacent historic facades",
 		_test_scaffolds())
@@ -1013,94 +1013,71 @@ func _test_balconies() -> bool:
 	return true
 
 
-# --- 24f: Street awnings (Phase L) ------------------------------------------
+# --- 24f: Entrance clearance (the Phase-L street marquee is retired) --------
 func _test_awnings() -> bool:
-	# A ground-floor street wall MUST project an AC-style awning: a colliding
-	# "awning" canopy deck whose top sits near AWN_DECK_Y above grade (a
-	# standable parkour surface) plus a steel front lip whose TOP sits
-	# AWN_RAIL_H above the deck (a grabbable parkour ledge). The canopy must
-	# protrude beyond a wall face, sit at ground level (never an upper storey),
-	# a rebuild is byte-identical, and a building with a too-short street facade
-	# grows none.
-	var AWN_PROJ := 1.1
-	var AWN_DECK_Y := 2.3
-	var AWN_RAIL_H := 0.45
+	# The AC-style marquee that used to cap every eligible ground-floor street
+	# wall is RETIRED: centred on the door wall at ~2.3 m, 2.4 m wide and 1.1 m
+	# deep, it hung straight over the entrance and read to a player as a useless
+	# slab blocking the doorway. The contract is now the inverse - nothing may
+	# project out of the door wall across the doorway at canopy height, on any
+	# building, and no box may carry the retired "awning" tag.
 	var spec := {
 		"rect": Rect2(0, 0, 12, 10),
 		"floor_h": 3.0, "floors": 4, "id": "awningtest",
 		"door_edge": 0,
 		"style": {"wall": 1, "roof": 2, "attic": false},
 	}
-	var b := MeshBatcher.new()
-	BuildingBuilder.build(b, spec)
-	var awn := _collect_awning(b)
-	if awn.is_empty():
-		print("[CityTest] awning: street wall grew no awning")
-		return false
-	var saw_deck := false
-	var saw_lip := false
-	for s: Dictionary in awn:
-		var pos: Vector3 = s["pos"]
-		var sz: Vector3 = s["size"]
-		if pos.y - sz.y * 0.5 < 0.5:
-			print("[CityTest] awning: box below grade at %s" % [pos])
+	var checked := 0
+	for n in 8:
+		var s := spec.duplicate(true)
+		s["id"] = "awningtest%d" % n
+		var b := MeshBatcher.new()
+		BuildingBuilder.build(b, s)
+		if not _collect_awning(b).is_empty():
+			print("[CityTest] awning: retired marquee came back on %s" % s["id"])
 			return false
-		if pos.y - sz.y * 0.5 > AWN_DECK_Y + 1.0:
-			print("[CityTest] awning: box too high (not ground level?) at %s"
-				% [pos])
+		var over := _collect_door_overhang(b, s)
+		if not over.is_empty():
+			print("[CityTest] awning: %d box(es) project over the doorway on %s: %s"
+				% [over.size(), s["id"], over])
 			return false
-		# Protrusion must leave the footprint band on the N wall (door_edge 0).
-		var oz: float = pos.z - sz.z * 0.5
-		var oz2: float = pos.z + sz.z * 0.5
-		var beyond_z := oz < -0.05 or oz2 > 10.0 + 0.05
-		if not beyond_z:
-			print("[CityTest] awning: box does not protrude past wall at %s"
-				% [pos])
-			return false
-		if StringName(s["material"]) == &"wood":
-			# Canopy deck: standable top near AWN_DECK_Y above grade.
-			saw_deck = true
-		if StringName(s["material"]) == &"steel":
-			# Front lip: vertical extent reads as AWN_RAIL_H exactly.
-			saw_lip = true
-			if absf(sz.y - AWN_RAIL_H) > 0.05:
-				print("[CityTest] awning: lip height %f != %f"
-					% [sz.y, AWN_RAIL_H])
-				return false
-	if not saw_deck:
-		print("[CityTest] awning: no standable canopy deck box")
+		checked += 1
+	# A short facade must stay clear too (no gating regression in either path).
+	var tiny := spec.duplicate(true)
+	tiny["rect"] = Rect2(0, 0, 4, 4)
+	tiny["floors"] = 1
+	tiny["id"] = "awning-tiny"
+	var bt := MeshBatcher.new()
+	BuildingBuilder.build(bt, tiny)
+	if not _collect_awning(bt).is_empty() 			or not _collect_door_overhang(bt, tiny).is_empty():
+		print("[CityTest] awning: short-facade building is not clear either")
 		return false
-	if not saw_lip:
-		print("[CityTest] awning: no grabbable steel front lip")
-		return false
-
-	# Determinism: rebuild is byte-identical.
-	var b2 := MeshBatcher.new()
-	BuildingBuilder.build(b2, spec)
-	var awn2 := _collect_awning(b2)
-	if awn.size() != awn2.size():
-		print("[CityTest] awning: nondeterministic count %d vs %d"
-			% [awn.size(), awn2.size()])
-		return false
-	for i in awn.size():
-		if awn[i]["pos"] != awn2[i]["pos"] \
-				or awn[i]["size"] != awn2[i]["size"]:
-			print("[CityTest] awning: nondeterministic box %d" % i)
-			return false
-
-	# Gating: a building whose street facade is too short grows no awning.
-	var tiny := {
-		"rect": Rect2(0, 0, 4, 4),
-		"floor_h": 3.0, "floors": 1, "id": "awning-tiny",
-		"door_edge": 0,
-		"style": {"wall": 1, "roof": 2, "attic": false},
-	}
-	var b3 := MeshBatcher.new()
-	BuildingBuilder.build(b3, tiny)
-	if not _collect_awning(b3).is_empty():
-		print("[CityTest] awning: tiny-facade building wrongly grew one")
+	if checked != 8:
+		print("[CityTest] awning: only %d buildings checked" % checked)
 		return false
 	return true
+
+
+## Boxes that leave the door wall (N face here) across the doorway at canopy
+## height - the footprint of the retired marquee. Empty is the required state.
+func _collect_door_overhang(b: MeshBatcher, spec: Dictionary) -> Array:
+	var out: Array = []
+	var rect: Rect2 = spec["rect"]
+	var door := BuildingBuilder._access_door_local(rect.size.x, rect.size.y,
+		int(spec.get("door_edge", 0)))
+	for s: Dictionary in b.specs():
+		var pos: Vector3 = s["pos"]
+		var sz: Vector3 = s["size"]
+		if pos.y + sz.y * 0.5 < 2.0 or pos.y - sz.y * 0.5 > 2.9:
+			continue                      # outside canopy height
+		if pos.z + sz.z * 0.5 > 0.0:
+			continue                      # still inside the N wall face
+		if absf(pos.x - door.x) > 0.6 + sz.x * 0.5:
+			continue                      # not across the doorway span
+		out.append(Vector3(roundf(pos.x * 100.0) / 100.0,
+			roundf(pos.y * 100.0) / 100.0, roundf(pos.z * 100.0) / 100.0))
+	return out
+
 
 # --- 24g: Construction scaffolding (Phase O) --------------------------------
 func _test_scaffolds() -> bool:
