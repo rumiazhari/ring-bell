@@ -44,7 +44,10 @@ func _ready() -> void:
 
 
 func run() -> void:
-	_probe_only = not OS.get_cmdline_user_args().has("--rendered")
+	# Headless is fine for the metric part: the boom length plus the occlusion
+	# ray that says whether the lens is inside a building. Rendering needs a
+	# real renderer (run_suite.py strips --rendered, so ask DisplayServer).
+	_probe_only = DisplayServer.get_name() == "headless"
 	output = "%s/%s" % [OUT_DIR, OS.get_environment("RB_TAG")]
 	if not _probe_only:
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output))
