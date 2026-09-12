@@ -27,6 +27,20 @@
 | Q / R | Rotate camera (also RMB-drag) |
 | Mouse wheel | Zoom |
 
+| Esc | Pause menu (Resume / Options / Exit) |
+
+## Settings & the ESC pause menu
+
+`Esc` during play opens `ui/pause_menu.gd` (autoload `PauseMenu`): **Resume**, **Options** (Graphics + Sound tabs) and **Exit** (with a confirm page — Exit quits to desktop; it does not return to the main menu, which the current session lifecycle cannot rebuild). Opening the menu sets `get_tree().paused = true`, and the menu itself runs `PROCESS_MODE_ALWAYS` so it keeps working while everything else stops.
+
+Every value lives in `core/autoload/game_settings.gd` (autoload `GameSettings`) and persists to `user://settings.json` = `%APPDATA%\Godot\app_userdata\Ring Bell\settings.json` — plain, human-editable JSON. Unknown or missing keys fall back to the `*_DEFAULTS` tables, so an old file never breaks a new version, and the defaults reproduce the pre-options look exactly (shipping this menu changed nothing until a row is touched).
+
+Graphics keys: `preset` (`low`/`medium`/`high`/`ultra`/`custom`), `msaa` (0/1/2/3 = off/2x/4x/8x), `fxaa`, `taa`, `upscaler` (`bilinear`/`fsr1`/`fsr2`, plus disabled DLSS/TSR placeholders), `render_scale` (0.5-1.0, the upscale resolution scale), `shadows`, `shadow_quality` (`low`/`medium`/`high`/`ultra` = 512/1024/2048/8192 shadow atlas), `ssao`, `glow`, `volumetric_fog`, `distance_fog`, `view_distance` (`near`/`default`/`far` = camera far plane x0.35/x1/x3), `max_fps` and `vsync`.
+
+Sound keys: `master`, `music`, `sfx`, `ambience`, `ui` (0-1) and `mute`. `GameSettings` creates the `Master/Music/SFX/Ambience/UI` buses at startup. The game ships no audio players yet, so the sliders are wired and contract-tested (they drive real bus volumes) but have nothing to hear until the first sound effect routes to them.
+
+**Adding a future graphics option** (better shader, occlusion culling, more post-processing, DLSS/TSR): add the key to `GRAPHICS_DEFAULTS`, apply it inside `apply_graphics()` or one of the `_apply_*` helpers, and add one row in `ui/pause_menu.gd`. Nothing else changes — the menu is built from those tables at runtime and is never a second source of truth, and `world/main.gd` never touches these flags. A new upscaler is one entry in `UPSCALERS` with its `available` flag flipped once the engine/hardware supports it.
+
 ## Debug hotkeys
 
 | Key | Effect |
@@ -101,6 +115,12 @@ python tools/run_suite.py --praguetest 540
 python tools/run_suite.py --praguetest 600 --dist
 # Full-plan counts only (blocks / plots / wings, no distribution assertions):
 python tools/run_suite.py --praguetest 300 --full
+
+# 14) ESC pause menu + GameSettings contract (no window needed)
+python tools/run_suite.py --pausemenutest 420
+
+# 15) ESC menu windowed proof (needs a real window/GPU, not headless)
+& $G --path $P -- --pausemenucapture
 ```
 
 The project wrappers `tools/run_suite.py` invoke `godot --headless --path <proj> -- --<flag>` and judge by the `finished with 0 failure(s)` marker printed by each harness (Windows `3221225477` with marker is a pass). Long Godot runs can hang past the shell timeout and lose partial output — `run_suite.py` redirects to a file so timeouts still yield diagnostics. Do not launch a second Godot instance while one may still be alive (`tasklist /FI IMAGENAME eq Godot*`).
@@ -148,6 +168,10 @@ Same-seed geology and biome queries identical shuffled incl. negative coords, di
 
 ChunkManager exists, `3x3` ACTIVE ring, player spawned, exterior wall blocks physics ray, zombies and door entities exist, closed leaf blocks doorway center, open doorway clear without RID exclusion and swung leaf remains collidable, far ring activates after teleport and origin chunks unload/return deterministically, stair probe reaches upper floor, camera rig exposes real lens offset and sector/facade math, interior presentation distance `<=9 m` while preserving user zoom, and streamed destruction survives unload/reload.
 
+### What `--pausemenutest` verifies
+
+The ESC pause menu and the settings authority behind it, inside the real streamed world: `pause_menu` is bound to ESC; ESC opens the menu in-game and closes it again; the menu lists Resume / Options / Exit with Graphics + Sound tabs; every options row resolves to a live widget (a null row silently stops the sync below it); opening pauses the SceneTree, the menu keeps processing while paused, a world node stops ticking and resumes after closing; a setting changed while paused still reaches the engine; each graphics row really moves the engine (MSAA/FXAA/TAA/upscaler/render scale on the viewport, frame cap on `Engine.max_fps`, shadows on the sun, glow/volumetric/distance fog on the `WorldEnvironment`, view distance on the camera far plane) and each sound row really moves its audio bus; the defaults match the shipped project settings; Exit asks for confirmation instead of quitting instantly; and settings round-trip through `user://settings.json` with their declared types.
+
 ### What `--walkthrough` verifies
 
 Honest player traversal (no position writes/teleport): closed door blocks, E opens it, walk door->stairwell, climb all 5 storeys to roof deck, camera tracks vertical climb, descend to ground, walk out, close door and verify it blocks again. No waypoint skips.
@@ -172,6 +196,7 @@ Do not compensate with teleport or disabled collision. A screenshot built with `
 ## Conventions for AI-assisted changes
 
 - Read ARCHITECTURE.md before refactoring anything.
+- Player-facing options (graphics + sound) live in `core/autoload/game_settings.gd` (`GameSettings`) and are persisted in `user://settings.json`. `ui/pause_menu.gd` only reads/writes that autoload — UI code must never call `RenderingServer`/`ProjectSettings`/`AudioServer` directly — so a future shader, occlusion culling, extra post-processing or DLSS/TSR toggle is a new key in the defaults table plus one row in the menu, never a second settings system.
 - One responsibility per file; keep files small and explicitly named.
 - Update the signal contract list in `event_bus.gd` when adding signals.
 - Never hard-code actor ids outside `population.gd`, `dialogue_data.gd`,

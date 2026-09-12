@@ -29,6 +29,8 @@ WorldState="*res://core/autoload/world_state.gd"
 QuestManager="*res://core/autoload/quest_manager.gd"
 SaveManager="*res://core/autoload/save_manager.gd"
 DebugOverlay="*res://core/autoload/debug_overlay.gd"
+GameSettings="*res://core/autoload/game_settings.gd"
+PauseMenu="*res://ui/pause_menu.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]

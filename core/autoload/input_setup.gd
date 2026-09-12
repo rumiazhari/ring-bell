@@ -23,6 +23,9 @@ func _enter_tree() -> void:
 	_add_action(&"weapon_2", [_key(KEY_2)])
 	_add_action(&"weapon_3", [_key(KEY_3)])
 	_add_action(&"weapon_4", [_key(KEY_4)])
+	# ESC opens the in-game pause menu (ui/pause_menu.gd). Bound here like every
+	# other action so headless runs and the editor share one input map.
+	_add_action(&"pause_menu", [_key(KEY_ESCAPE)])
 
 
 func _add_action(action: StringName, events: Array) -> void:

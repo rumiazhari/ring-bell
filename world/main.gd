@@ -130,6 +130,9 @@ func _ready() -> void:
 	if args.has("--q3camcollcap"):
 		add_child(load("res://debug/q3_camera_collision_capture.gd").new())
 		return
+	if args.has("--q3intecamflutter"):
+		add_child(load("res://debug/q3_camera_interior_flutter.gd").new())
+		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())
 	if args.has("--treecapture"):
@@ -143,6 +146,12 @@ func _ready() -> void:
 		return
 	if args.has("--chunkplanprobe"):
 		add_child(load("res://debug/chunk_plan_probe.gd").new())
+		return
+	if args.has("--citygreenprobe"):
+		add_child(load("res://debug/city_green_probe.gd").new())
+		return
+	if args.has("--citygreencapture"):
+		add_child(load("res://debug/city_green_capture.gd").new())
 		return
 	if args.has("--chunkbudget"):
 		add_child(load("res://debug/chunk_budget_test.gd").new())
@@ -288,6 +297,17 @@ func _ready() -> void:
 		var tester_area: Node = load("res://debug/area_capture.gd").new()
 		tester_area.name = "AreaCapture"
 		add_child(tester_area)
+	elif user_args.has("--pausemenutest"):
+		# AFTER the world build: the pause menu only exists in a live session
+		# (player actor + camera + sun + environment to bind), so the contract
+		# test has to run once the streamed city is up.
+		var tester_pause: Node = load("res://debug/pause_menu_test.gd").new()
+		tester_pause.name = "PauseMenuTest"
+		add_child(tester_pause)
+	elif user_args.has("--pausemenucapture"):
+		var capture_pause: Node = load("res://debug/pause_menu_capture.gd").new()
+		capture_pause.name = "PauseMenuCapture"
+		add_child(capture_pause)
 	elif user_args.has("--abysstest"):
 		# Anti-abyss recovery harness: needs the real streamed city, player and
 		# ChunkManager, so it runs here instead of the early probe block.
@@ -427,6 +447,7 @@ func _should_show_main_menu(args: PackedStringArray) -> bool:
 			"--fringetest", "--buildingcontracttest", "--sitecontracttest", "--propslogictest", "--g10p2a-ruralprobe",
 			"--perftest",
 			"--cavetest",
+			"--pausemenutest", "--pausemenucapture",
 		"--fringe-capture", "--fringe-dump", "--seed",
 		"--verticaltest", "--vertical",
 			"--animationtest", "--animcapture", "--animmeasure", "--streamingregressiontest",
@@ -834,26 +855,16 @@ func _update_city_interior() -> void:
 		return
 	var p3 := player.global_position
 	var p := Vector2(p3.x, p3.z)
-	var spec := {}
-	var inside := false
-	var floor_i := -1
-	for candidate in city_plan.buildings_in_rect(
-			Rect2(p - Vector2.ONE * 1.5, Vector2.ONE * 3.0)):
-		var candidate_id := str(candidate.get("id", ""))
-		if not _interior_ground_cache.has(candidate_id):
-			_interior_ground_cache[candidate_id] = ChunkBuilder._grounded_spec(candidate, chunk_manager.world_plan)
-		var res: Dictionary = InteriorProbe.evaluate(
-				p, p3.y, _interior_ground_cache[candidate_id],
-				_was_inside and str(candidate.get("id", "")) == _gate_tag)
-		if bool(res["inside"]):
-			spec = candidate
-			inside = true
-			floor_i = int(res["floor"])
-			break
-	if not inside:
-		_was_inside = false
-	else:
-		_was_inside = true
+	# ONE authority for "inside a city building / which storey" (hysteresis,
+	# real interior boundary, valid storey under the feet). The camera's
+	# interior presentation and the cutaway gate both derive from it, so they
+	# can never disagree about whether the player is indoors.
+	var state := CityInteriorState.evaluate(city_plan, chunk_manager.world_plan,
+			p3, _was_inside, _gate_tag, _interior_ground_cache)
+	var inside := bool(state["inside"])
+	var floor_i := int(state["floor"])
+	var spec: Dictionary = state["spec"]
+	_was_inside = inside
 
 	var gate_active := inside and not spec.is_empty()
 	var n := -1
@@ -921,6 +932,15 @@ func _update_city_interior() -> void:
 		_faded = []
 	if camera_rig != null:
 		camera_rig.set_interior(gate_active)
+		if gate_active:
+			# The building we are inside is exactly the geometry the interior
+			# presentation cuts away for the camera, so hand the rig its
+			# footprint band: the boom looks THROUGH that shell instead of
+			# collapsing onto the hidden facade (the "camera closing in and out
+			# without reason" while walking around indoors).
+			var shell := CityInteriorState.shell_of(spec)
+			camera_rig.set_interior_shell(shell["rect"], float(shell["yaw"]),
+					shell["y"])
 
 
 # --- World provider contract (see core/autoload/save_manager.gd) -------------
