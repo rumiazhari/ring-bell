@@ -106,6 +106,10 @@ func _run_all() -> void:
 	await _test_fists()
 	await _test_cooldown_and_combo()
 	await _test_loadout()
+	await _test_hit_reactions()
+	await _test_impact_fx()
+	await _test_fight_ai()
+	_test_capture_framing()
 	print("%s finished with %d failure(s) (%d checks)" % [MARK, failures, checks])
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -888,3 +892,333 @@ func _held_visible() -> bool:
 				if grandchild is Node3D:
 					return (grandchild as Node3D).visible
 	return false
+
+
+# --- Hit reactions, impact FX, fight AI, capture framing ---------------------
+
+func _test_hit_reactions() -> void:
+	print("%s subtest hit_reactions" % MARK)
+	# Data first: every kind x family must build a real, rotation-only clip.
+	for kind in HitReactionLibrary.KINDS:
+		var lib := HitReactionLibrary.build_library(kind, true)
+		for impact in HitReactionLibrary.IMPACTS:
+			var clip: Animation = lib.get_animation(
+					HitReactionLibrary.clip_name(kind, impact))
+			var tracks := clip.get_track_count() if clip != null else -1
+			_check("reel %s/%s builds" % [kind, impact], clip != null and tracks >= 4,
+					"%d tracks" % tracks)
+			# Track paths are plain bone paths (":hips") because the clip plays on
+			# the rig's AnimationPlayer with the skeleton as its root: the track
+			# TYPE is what says "this rotates a bone", not the path.
+			var rot_only := tracks > 0
+			var keyed := 0
+			if clip != null:
+				for i in clip.get_track_count():
+					if clip.track_get_type(i) != Animation.TYPE_ROTATION_3D:
+						rot_only = false
+					elif clip.track_get_key_count(i) >= 4:
+						keyed += 1
+			_check("%s/%s writes only bone rotations" % [kind, impact], rot_only,
+					"%d rotation tracks" % tracks)
+			_check("%s/%s keys a pose on every bone" % [kind, impact], keyed >= tracks,
+					"%d/%d keyed" % [keyed, tracks])
+	_check("human and shambler reels are different clips",
+			absf(HitReactionLibrary.clip_length(HitReactionLibrary.KIND_HUMAN,
+					HitReactionLibrary.SLASH)
+				- HitReactionLibrary.clip_length(HitReactionLibrary.KIND_SHAMBLER,
+					HitReactionLibrary.SLASH)) > 0.05,
+			"%.2f vs %.2f" % [
+				HitReactionLibrary.clip_length(HitReactionLibrary.KIND_HUMAN,
+						HitReactionLibrary.SLASH),
+				HitReactionLibrary.clip_length(HitReactionLibrary.KIND_SHAMBLER,
+						HitReactionLibrary.SLASH)])
+	_check("a shambler reels longer than a trained body",
+			HitReactionLibrary.clip_length(HitReactionLibrary.KIND_SHAMBLER,
+					HitReactionLibrary.SLASH)
+				> HitReactionLibrary.clip_length(HitReactionLibrary.KIND_HUMAN,
+					HitReactionLibrary.SLASH))
+	_check("a harder blow reels faster",
+			HitReactionLibrary.speed_scale(2.0) > HitReactionLibrary.speed_scale(0.5),
+			"%.2f vs %.2f" % [HitReactionLibrary.speed_scale(2.0),
+				HitReactionLibrary.speed_scale(0.5)])
+	_check("weapon classes fold onto impact families",
+			MeleeTypes.impact(MeleeTypes.BLADE) == HitReactionLibrary.SLASH
+			and MeleeTypes.impact(MeleeTypes.AXE) == HitReactionLibrary.SLASH
+			and MeleeTypes.impact(MeleeTypes.BLUNT) == HitReactionLibrary.CRUSH
+			and MeleeTypes.impact(MeleeTypes.FIST) == HitReactionLibrary.CRUSH
+			and MeleeTypes.impact(MeleeTypes.POLEARM) == HitReactionLibrary.PIERCE,
+			"%s %s %s" % [MeleeTypes.impact(MeleeTypes.BLADE),
+				MeleeTypes.impact(MeleeTypes.BLUNT),
+				MeleeTypes.impact(MeleeTypes.POLEARM)])
+	_check("the zombie kind picks the shambler reel",
+			HitReactionLibrary.kind_for(true) == HitReactionLibrary.KIND_SHAMBLER
+			and HitReactionLibrary.kind_for(false) == HitReactionLibrary.KIND_HUMAN)
+	var every_weapon := true
+	var uncovered := ""
+	for id in ItemDB.MELEE_ARSENAL:
+		var def := ItemDB.get_melee_def(id)
+		var impact := HitReactionLibrary.impact_for(
+				StringName(def.get("melee_type", MeleeTypes.DEFAULT_TYPE)))
+		if not HitReactionLibrary.has(HitReactionLibrary.KIND_HUMAN, impact):
+			every_weapon = false
+			uncovered = String(id)
+	_check("every melee weapon has a reel for its class", every_weapon, uncovered)
+	# Then on a live actor.
+	await _clear_fixtures()
+	await _setup_survivor(&"cane_sabre")
+	_check("the survivor builds a hit reaction", _survivor.hit_reaction != null)
+	_check("the reel rides the rig's AnimationPlayer",
+			_survivor.hit_reaction != null and _survivor.hit_reaction.renders())
+	var loco: Node = _survivor.get("_locomotion")
+	var ap: AnimationPlayer = null
+	if loco != null:
+		ap = loco.get("anim_player") as AnimationPlayer
+	_check("the hit library is registered on the rig",
+			ap != null and ap.has_animation_library(HitReactionLibrary.LIB_NAME),
+			str(HitReactionLibrary.LIB_NAME))
+	_check("an idle actor holds no pose",
+			not _survivor.hit_reaction.holds_pose())
+	_check("a cut reels the body",
+			_survivor.hit_reaction.react_to_weapon(MeleeTypes.BLADE,
+					Vector3(0, 0, -1), 1.0),
+			str(_survivor.hit_reaction.summary()))
+	_check("the reel holds the pose while it plays",
+			_survivor.hit_reaction.holds_pose())
+	_check("the clip on the player is the reel",
+			ap != null and String(ap.current_animation).begins_with(
+					String(HitReactionLibrary.LIB_NAME)),
+			String(ap.current_animation) if ap != null else "no player")
+	_check("a second hit inside the first third is refused",
+			not _survivor.hit_reaction.react_to_weapon(MeleeTypes.BLUNT,
+					Vector3(0, 0, -1), 1.0))
+	await _step_physics(45)
+	_check("the reel releases the pose when it ends",
+			not _survivor.hit_reaction.holds_pose())
+	# Pose authority: a committed swing outranks an incoming hit.
+	_check("the survivor can swing", _swing(Vector3(0, 0, -1)))
+	_check("the swing holds the pose", _survivor.melee.holds_pose())
+	var refusals_before := int(_survivor.hit_reaction.summary().get("refusals", 0))
+	_check("a hit during a committed swing is refused",
+			not _survivor.hit_reaction.react_to_weapon(MeleeTypes.POLEARM,
+					Vector3(0, 0, -1), 1.5))
+	_check("that refusal is counted, not silent",
+			int(_survivor.hit_reaction.summary().get("refusals", 0)) > refusals_before,
+			str(_survivor.hit_reaction.summary()))
+	await _step_physics(45)
+	# And a zombie reels with its own clip.
+	var zombie := Zombie.new()
+	_spawn(zombie, BASE + Vector3(0, 0, -4.0))
+	zombie.set_physics_process(false)     # frozen: this test is about the reel
+	await _step_physics(3)
+	_check("the zombie builds a hit reaction", zombie.hit_reaction != null)
+	_check("the zombie uses the shambler reel",
+			zombie.hit_reaction.kind_id() == HitReactionLibrary.KIND_SHAMBLER,
+			String(zombie.hit_reaction.kind_id()))
+	_check("a bitten body reels",
+			zombie.hit_reaction.react_to_weapon(MeleeTypes.BLUNT,
+					Vector3(0, 0, -1), 1.2),
+			str(zombie.hit_reaction.summary()))
+	await _step_physics(60)
+	await _clear_fixtures()
+
+
+func _test_impact_fx() -> void:
+	print("%s subtest impact_fx" % MARK)
+	var slash := ImpactFX.profile(MeleeTypes.BLADE)
+	var crush := ImpactFX.profile(MeleeTypes.BLUNT)
+	var pierce := ImpactFX.profile(MeleeTypes.POLEARM)
+	_check("each class has its own burst profile",
+			not slash.is_empty() and slash != crush and crush != pierce
+			and slash != pierce)
+	_check("a cut sprays faster than a crush",
+			float(slash.get("speed", 0.0)) > float(crush.get("speed", 0.0)),
+			"%.1f vs %.1f" % [float(slash.get("speed", 0.0)),
+				float(crush.get("speed", 0.0))])
+	_check("a crush hangs longer in the air",
+			float(crush.get("life", 0.0)) > float(slash.get("life", 0.0)),
+			"%.2f vs %.2f" % [float(crush.get("life", 0.0)),
+				float(slash.get("life", 0.0))])
+	_check("a thrust is a tighter cone than a smash",
+			float(pierce.get("spread", 0.0)) < float(crush.get("spread", 0.0)))
+	_check("bursts are labelled", String(slash.get("label", "")) != ""
+			and String(crush.get("label", "")) != ""
+			and String(pierce.get("label", "")) != "")
+	# A landed swing spawns one burst, and the burst outlives its victim.
+	await _clear_fixtures()
+	ImpactFX.reset_stats()
+	await _setup_survivor(&"boarding_axe")
+	await _clear_stray_survivors()
+	var target := _spawn(Target.new(), BASE + Vector3(0, 0, -1.4))
+	_landed.clear()
+	# The strike keys at ~35% of the clip, so reading the stats a few frames after
+	# the request is too early: step past the strike phase first.
+	_swing(Vector3(0, 0, -1))
+	await _step_physics(30)
+	var spawned := int(ImpactFX.stats().get("spawned", 0))
+	_check("a landed hit spawns one burst", spawned == 1,
+			"spawned %d, landed %s" % [spawned, str(_landed)])
+	_check("live bursts stay under the cap",
+			ImpactFX.live_count() <= ImpactFX.MAX_LIVE,
+			"%d live" % ImpactFX.live_count())
+	_check("the burst is a real node in the scene",
+			ImpactFX.live_count() >= 1, str(ImpactFX.stats()))
+	# The body is removed underneath it: the burst is parented to the scene and
+	# not to the corpse, so it has to still be there on the following frames.
+	target.queue_free()
+	await _step_physics(8)
+	_check("the burst survives the actor it was struck against",
+			ImpactFX.live_count() >= 1, str(ImpactFX.stats()))
+	await _step_physics(150)
+	_check("the burst reaps itself and never leaks",
+			ImpactFX.live_count() == 0, str(ImpactFX.stats()))
+	await _clear_fixtures()
+
+
+## Survivors are attached straight to the test node by _setup_survivor (they are
+## not fixtures), so an earlier subtest leaves bodies standing on BASE. A swing
+## takes the NEAREST thing in its arc first, so a stray body at 0 m eats the
+## cleave slot and the intended target is never touched.
+func _clear_stray_survivors() -> void:
+	for child in get_children():
+		if child is Survivor and child != _survivor:
+			child.queue_free()
+	await get_tree().process_frame
+
+
+func _test_fight_ai() -> void:
+	print("%s subtest fight_ai" % MARK)
+	await _clear_fixtures()
+	await _setup_survivor(&"cane_sabre")
+	var brain := NPCBrain.new()
+	_survivor.add_child(brain)
+	await get_tree().process_frame
+	_check("the brain is attached to the survivor", brain.survivor == _survivor)
+	_check("the survivor is armed for the test",
+			ItemDB.is_melee_weapon(_survivor.equipped_weapon_id),
+			String(_survivor.equipped_weapon_id))
+	var zombie := Zombie.new()
+	_spawn(zombie, BASE + Vector3(0, 0, -1.0))
+	zombie.set_physics_process(false)     # the fight is between the brain and it
+	await _step_physics(3)
+	_check("the zombie joins the zombie group", zombie.is_in_group(&"zombies"))
+	# The decision itself: armed and healthy picks FIGHT, a coward does not.
+	var choice: Dictionary = brain.call("_threat_decision", zombie)
+	_check("an armed adult decides to fight one zombie",
+			int(choice.get("action", -1)) == int(NPCBrain.Action.FIGHT),
+			str(choice))
+	brain.cowardice = 2.5
+	var coward: Dictionary = brain.call("_threat_decision", zombie)
+	_check("a coward still flees while armed",
+			int(coward.get("action", -1)) == int(NPCBrain.Action.FLEE),
+			str(coward))
+	brain.cowardice = 1.0
+	_survivor.equip_weapon(&"fists")
+	await _step_physics(3)
+	var unarmed: Dictionary = brain.call("_threat_decision", zombie)
+	_check("an unarmed NPC will not pick a fight",
+			int(unarmed.get("action", -1)) == int(NPCBrain.Action.FLEE),
+			str(unarmed))
+	_survivor.equip_weapon(&"cane_sabre")
+	await _step_physics(3)
+	# Now let the brain actually run: physics on, zombie inside the standoff.
+	# Strays first: an earlier subtest's body standing on BASE would be nearer
+	# than the zombie and would eat the cleave slot.
+	await _clear_stray_survivors()
+	ImpactFX.reset_stats()
+	_survivor.set_physics_process(true)
+	_landed.clear()
+	brain.current_action = NPCBrain.Action.IDLE
+	var frames := 0
+	while frames < 600 and (brain.swings_thrown == 0 or _landed.is_empty()):
+		await get_tree().physics_frame
+		frames += 1
+	# What the arc actually saw from the fighter's chest: the decisive evidence
+	# when a swing reports hits but the intended body takes nothing.
+	var arc: Array = _survivor.melee.call("_query_arc",
+			_survivor.global_position + Vector3.UP * MeleeCombat.CHEST_HEIGHT,
+			3.0, 120.0)
+	var seen := PackedStringArray()
+	for entry in arc:
+		seen.append("%s@%.2fm" % [(entry["collider"] as Node).name, entry["distance"]])
+	print("%s fight diagnostics: dist=%.2f phase=%s arc=[%s] landed=%s zombie=%.0f/%.0f" % [
+		MARK, _survivor.global_position.distance_to(zombie.global_position),
+		String(_survivor.melee.phase()),
+		", ".join(seen), str(_landed),
+		zombie.health.current_health, zombie.health.max_health])
+	_check("the brain picks a fight on its own", brain.fights_started >= 1,
+			"fights=%d frames=%d" % [brain.fights_started, frames])
+	_check("the brain throws a swing with no scripted input",
+			brain.swings_thrown >= 1,
+			"swings=%d frames=%d action=%d" % [brain.swings_thrown, frames,
+				brain.current_action])
+	_check("the AI's swing lands on the zombie", not _landed.is_empty(),
+			str(_landed))
+	var hits := 0
+	for entry in _landed:
+		hits += int(entry["hits"])
+	_check("the AI's swing actually connects", hits >= 1, str(_landed))
+	_check("the zombie takes damage from the AI",
+			zombie.health != null
+			and zombie.health.current_health < zombie.health.max_health,
+			"%.0f/%.0f same_node_as_target=%s" % [zombie.health.current_health,
+				zombie.health.max_health, str(zombie.is_in_group(&"zombies"))])
+	_check("the struck zombie reels",
+			zombie.hit_reaction != null and zombie.hit_reaction.plays >= 1,
+			str(zombie.hit_reaction.summary()) if zombie.hit_reaction != null else "")
+	_check("the burst fired on the AI's hit",
+			int(ImpactFX.stats().get("spawned", 0)) >= 1,
+			str(ImpactFX.stats()))
+	if _survivor.health.current_health < _survivor.health.max_health:
+		_check("a bitten survivor reels too",
+				_survivor.hit_reaction.plays >= 1,
+				str(_survivor.hit_reaction.summary()))
+	else:
+		print("%s SKIP no bite landed on the survivor in %d frames" % [MARK, frames])
+	brain.queue_free()
+	await _clear_fixtures()
+
+
+func _test_capture_framing() -> void:
+	print("%s subtest capture_framing" % MARK)
+	# The defect on film, as a number: the weapon-gallery camera sat at a fixed
+	# (0.62, 0.42, -0.70) while the sabre model is long along +Z and spun -32 deg,
+	# so its length pointed at the lens.
+	var sabre := CaptureFraming.long_axis_vector(Vector3(0.07, 0.07, 1.10))
+	_check("a long +Z weapon is detected as Z-long", sabre == Vector3.BACK,
+			str(sabre))
+	var spun := CaptureFraming.rotated_axis(sabre, -32.0)
+	var old_dir := Vector3(0.62, 0.42, -0.70).normalized()
+	var old_deg := CaptureFraming.broadside_deg(spun, old_dir)
+	_check("the old fixed camera was end-on to the cane-sabre",
+			old_deg < 40.0, "%.0f deg off the long axis" % old_deg)
+	var new_dir := CaptureFraming.view_dir(spun)
+	var new_deg := CaptureFraming.broadside_deg(spun, new_dir)
+	_check("the derived camera looks across the same weapon",
+			new_deg >= 55.0, "%.0f deg off the long axis" % new_deg)
+	_check("the derived shot reads as broadside",
+			CaptureFraming.readable(spun, new_dir, 55.0))
+	# The same maths has to hold for a weapon authored on any axis.
+	var axes: Array[Vector3] = [Vector3.RIGHT, Vector3.UP, Vector3.BACK]
+	for axis in axes:
+		var dir := CaptureFraming.view_dir(axis)
+		_check("a %s-long weapon is framed across its length" % str(axis),
+				CaptureFraming.readable(axis, dir, 50.0),
+				"%.0f deg" % CaptureFraming.broadside_deg(axis, dir))
+	# The old camera was fine for an X-long weapon: that is why only some of the
+	# product shots were unreadable.
+	var x_long := CaptureFraming.rotated_axis(Vector3.RIGHT, -32.0)
+	_check("the old camera happened to be fine for an X-long weapon",
+			CaptureFraming.broadside_deg(x_long, old_dir) > 55.0,
+			"%.0f deg" % CaptureFraming.broadside_deg(x_long, old_dir))
+	# Distance follows size and lens.
+	_check("a bigger subject is shot from further away",
+			CaptureFraming.distance_for(1.2, 46.0, 0.7)
+				> CaptureFraming.distance_for(0.6, 46.0, 0.7))
+	_check("a narrower lens needs more distance",
+			CaptureFraming.distance_for(1.0, 30.0, 0.7)
+				> CaptureFraming.distance_for(1.0, 60.0, 0.7))
+	_check("filling more of the frame means standing closer",
+			CaptureFraming.distance_for(1.0, 46.0, 0.9)
+				< CaptureFraming.distance_for(1.0, 46.0, 0.6))
+	_check("the camera keeps a subject-side preference",
+			CaptureFraming.view_dir(Vector3.BACK, 22.0, 0.42, Vector3.RIGHT).x > 0.0)

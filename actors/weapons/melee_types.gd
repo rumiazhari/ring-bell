@@ -82,6 +82,26 @@ const CLIP_SPEED := {
 ## Melee class of a falling-back item that predates the class system.
 const DEFAULT_TYPE := BLUNT
 
+## Impact family: the three physical events a melee class produces. Weapon
+## classes fold onto these so the rest of the game never grows a five-way
+## ladder - HitReactionLibrary picks which reel plays, ImpactFX which burst.
+const IMPACT_SLASH := &"slash"      # blade / axe edge across the body
+const IMPACT_CRUSH := &"crush"      # blunt force, the body folds
+const IMPACT_PIERCE := &"pierce"    # a point driven in, the body is thrown back
+const IMPACTS := {
+	BLADE: IMPACT_SLASH,
+	AXE: IMPACT_SLASH,
+	BLUNT: IMPACT_CRUSH,
+	FIST: IMPACT_CRUSH,
+	POLEARM: IMPACT_PIERCE,
+}
+
+
+## Impact family of a melee class. Unknown classes fold onto CRUSH, the most
+## generic read, so a data-driven weapon added later still reacts.
+static func impact(type: StringName) -> StringName:
+	return StringName(IMPACTS.get(type, IMPACT_CRUSH))
+
 
 static func label(type: StringName) -> String:
 	return String(LABELS.get(type, LABELS[DEFAULT_TYPE]))

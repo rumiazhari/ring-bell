@@ -54,6 +54,10 @@ const COMBO_MULT_CAP := 1.35
 const FINISHER_EVERY := 3
 const FINISHER_BONUS := 1.2
 
+## Damage a "reference" blow deals. Hit reactions and impact bursts scale their
+## force around this number, so a knife jab and an axe smash do not read alike.
+const REFERENCE_DAMAGE := 20.0
+
 var actor: Survivor
 var last_swing: StringName = &""
 var last_downgraded := false
@@ -411,6 +415,13 @@ func _damage_actor(target: Node3D, damage: float, origin: Vector3,
 	var point := target.global_position + Vector3.UP * CHEST_HEIGHT * 0.6
 	DebrisManager.burst_box(point, Vector3.ONE * 0.16,
 			MaterialDB.get_material(&"flesh").get("debris_color"), &"flesh", 2, 1.4)
+	# Per-type read: the burst and the reel are both scaled by how hard the blow
+	# was, so a knife jab and an axe smash do not look like the same event.
+	var force := clampf(damage / REFERENCE_DAMAGE, 0.5, 2.0)
+	ImpactFX.spawn(ImpactFX.parent_for(target), point, _swing_dir, melee_type(), force)
+	var react := target.get_node_or_null(^"HitReaction") as HitReaction
+	if react != null:
+		react.react_to_weapon(melee_type(), _swing_dir, force)
 	return true
 
 
@@ -423,6 +434,10 @@ func _damage_structure(target: Node3D, damage: float, structural: float,
 	DebrisManager.burst_box(point, Vector3.ONE * 0.14,
 			MaterialDB.get_material(_structure_material(target)).get("debris_color"),
 			_structure_material(target), 2, 1.2)
+	# A wall cannot reel, but the hit still has to read: the burst keeps the
+	# weapon family's motion and borrows the material's colour.
+	ImpactFX.spawn_structure(ImpactFX.parent_for(target), point, _swing_dir,
+			melee_type(), _structure_material(target), 1.0)
 	return true
 
 
@@ -520,3 +535,18 @@ func _refresh_model() -> void:
 	_grip.add_child(_mesh)
 	# Bare hands draw nothing at all: the fists model is an empty placeholder.
 	_grip.visible = _weapon_id != &""
+
+
+# --- Readouts ----------------------------------------------------------------
+
+## Melee class of the equipped weapon (see MeleeTypes): the impact family, hit
+## reaction and burst profile are all chosen from this.
+func melee_type() -> StringName:
+	return StringName(_def.get("melee_type", &"fist"))
+
+
+## True while this swing owns the skeleton pose. A hit reaction must not start
+## while this is true - both drive the same bones, so a reel fired mid-swing
+## would have the two clips overwrite each other key by key.
+func holds_pose() -> bool:
+	return _state == State.SWING

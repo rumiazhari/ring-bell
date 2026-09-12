@@ -43,6 +43,12 @@ const TIER_PROGRAMS := {
 }
 const UPPER_TIERS: Array = [&"sleeping", &"living", &"kitchen", &"sleeping"]
 
+# Local build unblock, deliberately left uncommitted: HEAD references
+# SERVICE_KINDS without declaring it (the declaration currently lives only in
+# the other session's working tree). Needed so a clean worktree can compile.
+const SERVICE_KINDS := [&"storage", &"store_room", &"warehouse", &"archive",
+		&"loading", &"toilet"]
+
 static func _tier_kinds(use: String, fi: int) -> Array:
 	if fi == 0:
 		return TIER_PROGRAMS.get(use, [&"living", &"kitchen", &"living"])

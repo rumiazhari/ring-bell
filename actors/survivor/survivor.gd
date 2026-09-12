@@ -74,6 +74,8 @@ var _skeleton: Skeleton3D
 var _locomotion: CharacterLocomotion
 ## Melee-first combat: swing direction, arcs, combos (see MeleeCombat).
 var melee: MeleeCombat
+## Per-type hit reaction reel (see HitReaction / HitReactionLibrary).
+var hit_reaction: HitReaction
 var _visual_yaw: float = 0.0
 var _lantern: OmniLight3D
 var _lantern_t := 0.0
@@ -231,6 +233,15 @@ func _setup_body() -> void:
 	melee.name = "MeleeCombat"
 	add_child(melee)
 	melee.call_deferred("setup", self, _skeleton, _locomotion, _animator)
+	# Hit reactions ride the same AnimationPlayer and the same pose latch as a
+	# swing, so this is registered last (still deferred -> after locomotion and
+	# after MeleeCombat). Combat code reaches it by name, the way it reaches
+	# take_damage on any target, so no actor type has to declare it.
+	hit_reaction = HitReaction.new()
+	hit_reaction.name = "HitReaction"
+	add_child(hit_reaction)
+	hit_reaction.call_deferred("setup", self, _skeleton, _locomotion,
+			HitReactionLibrary.kind_for(false))
 
 
 func set_body_color(color: Color) -> void:

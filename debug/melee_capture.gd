@@ -198,6 +198,23 @@ func _aabb(root: Node3D) -> AABB:
 	return box
 
 
+## AABB in the node's OWN frame: the world-space _aabb above cannot say which way
+## a weapon's length runs once the weapon is rotated by the hand it hangs off.
+func _local_aabb(root: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	var to_local := root.global_transform.affine_inverse()
+	for mi in _meshes(root):
+		var rel: Transform3D = to_local * mi.global_transform
+		var box: AABB = rel * mi.get_aabb()
+		if first:
+			out = box
+			first = false
+		else:
+			out = out.merge(box)
+	return out
+
+
 func _meshes(root: Node) -> Array[MeshInstance3D]:
 	var out: Array[MeshInstance3D] = []
 	if root is MeshInstance3D:
@@ -231,20 +248,31 @@ func _capture_gallery() -> void:
 	await _snap("%02d_gallery_row.png" % (_step + 1))
 	row.queue_free()
 
-	# Product shot per weapon: frame the model's own bounds.
+	# Product shot per weapon: frame the model's own bounds and aim the camera
+	# ACROSS the weapon's long axis (CaptureFraming). A fixed camera direction is
+	# broadside to a model whose length runs along X and exactly end-on to one
+	# whose length runs along Z - which is how the cane-sabre shot came out as a
+	# stub. The framing line below prints the angle so the shot can be judged by
+	# a number as well as by eye.
 	for id in ids:
 		var model := MeleeWeaponModels.build(id as StringName)
 		_stage.add_child(model)
-		var box := _aabb(model)
-		var centre := box.get_center()
-		var size := box.size
-		var span := maxf(0.4, maxf(size.x, maxf(size.y, size.z)))
-		var d := span * 1.55 + 0.35
+		# One presentation spin for every weapon, then the camera follows it.
 		model.rotation_degrees = Vector3(0, -32, 0)
 		await _settle(4)
-		box = _aabb(model)
-		centre = box.get_center()
-		_aim_at(centre + Vector3(d * 0.62, d * 0.42, -d * 0.70), centre)
+		var box := _aabb(model)
+		var centre := box.get_center()
+		var long_local := CaptureFraming.long_axis_vector(box.size)
+		var long_world := CaptureFraming.rotated_axis(long_local,
+				model.rotation_degrees.y)
+		var radius := maxf(0.25, box.size.length() * 0.5)
+		var cam_dir := CaptureFraming.view_dir(long_world)
+		var d := CaptureFraming.distance_for(radius, _cam.fov, 0.72)
+		_aim_at(centre + cam_dir * d, centre)
+		var report := CaptureFraming.frame_coverage(_cam, box)
+		print("[MeleeCapture] framing %s long=%s broadside=%.0f fill=%.0f%% inside=%s" % [
+			id, str(long_local), CaptureFraming.broadside_deg(long_world, cam_dir),
+			float(report["fill"]) * 100.0, str(report["inside"])])
 		await _snap("%02d_weapon_%s.png" % [_step + 1, id])
 		model.queue_free()
 		await get_tree().process_frame
@@ -281,16 +309,37 @@ func _capture_in_hand() -> void:
 		# weapon out of frame entirely.
 		var mesh: Node3D = _survivor.melee.get("_mesh")
 		var box := _aabb(mesh) if mesh != null else AABB()
-		var at := box.get_center()
 		if box.size.length() < 0.05:
-			at = _hand_anchor()
-			if at == Vector3.INF:
-				at = _survivor.global_position + Vector3(0, 1.0, 0)
-			box = AABB(at, Vector3(0.5, 0.5, 0.5))
-		var span := maxf(0.35, maxf(box.size.x, maxf(box.size.y, box.size.z)))
-		var d := span * 1.45 + 0.30
-		# Three-quarter view from the actor's right, above the weapon.
-		_aim_at(at + _survivor.facing * (d * 0.5) + Vector3(d * 0.85, d * 0.45, 0.0), at)
+			var anchor := _hand_anchor()
+			if anchor == Vector3.INF:
+				anchor = _survivor.global_position + Vector3(0, 1.0, 0)
+			box = AABB(anchor, Vector3(0.5, 0.5, 0.5))
+		# The head belongs in the frame as well: a QA shot that decapitates the
+		# actor reads as a framing bug even when the weapon itself is perfect.
+		var head := _head_anchor()
+		if head != Vector3.INF:
+			box = box.merge(AABB(head - Vector3.ONE * 0.18, Vector3.ONE * 0.36))
+		var at := box.get_center()
+		# Aim ACROSS the weapon's own long axis, measured in the weapon's frame
+		# and then taken to world space: a sword cane hangs off the hand at an
+		# angle, so one fixed camera offset is side-on to a sabre and end-on to
+		# an axe. The camera also takes the weapon's own side of the body, so the
+		# torso cannot sit between the lens and the weapon.
+		var long_world := Vector3.UP
+		if mesh != null:
+			var local_box := _local_aabb(mesh)
+			long_world = (mesh.global_transform.basis
+					* CaptureFraming.long_axis_vector(local_box.size)).normalized()
+		var to_weapon := at - _survivor.global_position
+		to_weapon.y = 0.0
+		var cam_dir := CaptureFraming.view_dir(long_world, 28.0, 0.30, to_weapon)
+		var radius := maxf(0.30, box.size.length() * 0.5)
+		var d := CaptureFraming.distance_for(radius, _cam.fov, 0.76)
+		_aim_at(at + cam_dir * d, at)
+		var report := CaptureFraming.frame_coverage(_cam, box)
+		print("[MeleeCapture] framing hand_%s broadside=%.0f fill=%.0f%% inside=%s" % [
+			id, CaptureFraming.broadside_deg(long_world, cam_dir),
+			float(report["fill"]) * 100.0, str(report["inside"])])
 		await _snap("%02d_hand_%s.png" % [_step + 1, id])
 	# Idle reference from the swing camera: without it there is no way to tell
 	# a caught-mid-swing frame from a rest pose by eye.
@@ -311,6 +360,17 @@ func _hand_anchor() -> Vector3:
 			if holder != null:
 				return holder.global_position
 	return Vector3.INF
+
+
+## World position of the actor's head bone (Vector3.INF when the rig has none).
+func _head_anchor() -> Vector3:
+	var skeleton: Skeleton3D = _survivor.get("_skeleton")
+	if skeleton == null:
+		return Vector3.INF
+	var idx := skeleton.find_bone(&"head")
+	if idx < 0:
+		return Vector3.INF
+	return skeleton.global_transform * skeleton.get_bone_global_pose(idx).origin
 
 
 # --- Pass 3: the eight swings ------------------------------------------------
