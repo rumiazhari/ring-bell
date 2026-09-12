@@ -120,6 +120,11 @@ var _floor_gate_faded: Array = []
 # The roof is exterior, so it is only hidden while the player is strictly
 # below this storey.
 var _floor_gate_roof_floor := -1
+## Camera->player sightline in footprint-local plan metres, handed in by the
+## gate. Interior walls are cut only where this line actually crosses them (see
+## MeshBatcher.wall_cut_hidden) - never per storey.
+var _floor_gate_sight_from := Vector2.INF
+var _floor_gate_sight_to := Vector2.INF
 
 var _pending: Array[Vector2i] = []
 var _inflight := {}                    # Vector2i -> {batcher, task_id}
@@ -1275,7 +1280,8 @@ func _materialize(coord: Vector2i, batcher: MeshBatcher, terrain_manifest: Dicti
 	# manager-owned gate after all fresh layer and asset nodes are available.
 	if coord == _floor_gate_coord:
 		apply_floor_gate(coord, _floor_gate_tag, _floor_gate_max_floor,
-				_floor_gate_faded, _floor_gate_roof_floor)
+				_floor_gate_faded, _floor_gate_roof_floor,
+				_floor_gate_sight_from, _floor_gate_sight_to)
 	_terrain_vertices_total += terrain_verts
 	_terrain_triangles_total += terrain_tris
 	_terrain_colliders_total += terrain_cols
@@ -1648,7 +1654,8 @@ func door_states(coord: Vector2i) -> Dictionary:
 ## per-layer but the SET changes only when the camera sector changes, which
 ## reads as a smooth swap rather than flicker.
 func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
-		faded: Array = [], roof_floor: int = -1) -> void:
+		faded: Array = [], roof_floor: int = -1,
+		sight_from: Vector2 = Vector2.INF, sight_to: Vector2 = Vector2.INF) -> void:
 	# Remember the current request even when the chunk is not resident yet.
 	# A later _materialize() replaces the record and must replay this exact
 	# state onto the newly created layer and asset nodes.
@@ -1657,6 +1664,8 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	_floor_gate_max_floor = max_floor
 	_floor_gate_faded = faded.duplicate()
 	_floor_gate_roof_floor = roof_floor
+	_floor_gate_sight_from = sight_from
+	_floor_gate_sight_to = sight_to
 	if not _chunks.has(coord):
 		return
 	var rec: Dictionary = _chunks[coord]
@@ -1665,7 +1674,8 @@ func apply_floor_gate(coord: Vector2i, tag: String, max_floor: int,
 	for key: Variant in rec.get("layers", {}).keys():
 		var layer_key := String(key)
 		var hide := MeshBatcher.reveal_layer_hidden(layer_key, tag,
-				max_floor, faded, roof_floor)
+				max_floor, faded, roof_floor,
+				_floor_gate_sight_from, _floor_gate_sight_to)
 		if bool(applied.get(layer_key, false)) != hide:
 			applied[layer_key] = hide
 			changed = true

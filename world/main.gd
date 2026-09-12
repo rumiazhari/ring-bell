@@ -40,6 +40,12 @@ var _mode := WorldMode.LEGACY_BLOCK
 var _gate_coord := Vector2i(99, 99)   # chunk currently floor-gated
 var _gate_tag := ""                   # building id currently floor-gated
 var _gate_floor := -1                  # storey currently floor-gated
+## Camera->player sightline (footprint-local plan metres) that the last gate
+## apply used. Interior walls are cut against it, so the gate must re-apply
+## when the player or the camera has moved far enough to change which wall
+## stands between them.
+var _gate_sight_from := Vector2.INF
+var _gate_sight_to := Vector2.INF
 var _was_inside := false              # InteriorProbe hysteresis state
 var _interior_ground_cache := {}
 var _faded := []                      # currently faded facade letters
@@ -100,6 +106,12 @@ func _ready() -> void:
 		return
 	if args.has("--q3doorwidthaudit"):
 		add_child(load("res://debug/q3_door_width_audit.gd").new())
+		return
+	if args.has("--q3roomperception"):
+		add_child(load("res://debug/q3_room_perception_capture.gd").new())
+		return
+	if args.has("--q3doorwalleaudit"):
+		add_child(load("res://debug/q3_door_wall_audit.gd").new())
 		return
 	if args.has("--groundplanecapture"):
 		add_child(load("res://debug/ground_plane_capture.gd").new())
@@ -856,14 +868,30 @@ func _update_city_interior() -> void:
 				# Fallback to rig position if camera not yet inside tree.
 				if camera_rig.is_inside_tree():
 					cam_xz = Vector2(camera_rig.global_position.x, camera_rig.global_position.z)
-		var local_camera := p + (cam_xz - p).rotated(-float(spec.get("yaw", 0.0)))
+		var yaw := float(spec.get("yaw", 0.0))
+		var local_camera := p + (cam_xz - p).rotated(-yaw)
 		var new_faded: Array = InteriorProbe.faded_facades(p, local_camera) \
 				if floor_i < n else []
+		# Interior wall cut is camera-driven and per wall, so the gate needs the
+		# camera->player line in the same footprint-local plan frame the wall
+		# rects are keyed in (rotate about the footprint centre, translate by
+		# its plan position - the frame building_builder builds partitions in).
+		var fp_rect: Rect2 = spec["rect"]
+		var fp_center := fp_rect.get_center()
+		var sight_to := CityPlan._rotate_plan_point(fp_center, p, -yaw) - fp_rect.position
+		var sight_from := CityPlan._rotate_plan_point(fp_center, cam_xz, -yaw) - fp_rect.position
+		# Re-apply when the camera swings far enough to cross a different wall,
+		# not only when the sector letters change: the cut set is geometric.
+		var sight_moved := sight_to.distance_to(_gate_sight_to) > 0.30 \
+				or sight_from.distance_to(_gate_sight_from) > 0.45
 		if owner_coord != _gate_coord or tag != _gate_tag \
-				or floor_i != _gate_floor or new_faded != _faded:
-			if _gate_coord != Vector2i(99, 99):
+				or floor_i != _gate_floor or new_faded != _faded or sight_moved:
+			if _gate_coord != Vector2i(99, 99) and (owner_coord != _gate_coord or tag != _gate_tag):
 				chunk_manager.apply_floor_gate(_gate_coord, "", -1)
-			chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded, n)
+			chunk_manager.apply_floor_gate(owner_coord, tag, floor_i, new_faded, n,
+					sight_from, sight_to)
+			_gate_sight_from = sight_from
+			_gate_sight_to = sight_to
 		_gate_coord = owner_coord
 		_gate_tag = tag
 		_gate_floor = floor_i

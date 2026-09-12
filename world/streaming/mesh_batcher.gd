@@ -22,6 +22,19 @@ extends RefCounted
 ## Determinism: entry order -> identical meshes and ids. ChunkBuilder adds
 ## boxes in plan-derived order only (never iterating unsorted dictionaries).
 
+## Interior wall cut (see reveal_layer_hidden / wall_cut_hidden). An interior
+## wall's plaster above the picture rail lives in its own layer keyed
+## "<tag>:f<floor>:wallcut:<x_z_w_h>"; the gate cuts it only while the camera
+## actually looks through that wall at the player.
+const WALL_CUT_PREFIX := "wallcut:"
+## Ceiling caps are keyed the same way and hidden only for the room the player
+## occupies (see ceiling_cut_hidden).
+const CEIL_CUT_PREFIX := "ceilcut:"
+## Half-width of the camera's view wedge at the player, in metres. A wall inside
+## that wedge blocks the sightline; anything wider cuts walls the camera never
+## looks through.
+const WALL_CUT_WEDGE_M := 1.4
+
 var _specs: Array[Dictionary] = []     # {id,pos,size,basis,color,collide,roof,material,layer}
 var generation_seed: int = WorldSeed.get_world_seed()
 
@@ -537,7 +550,8 @@ func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: Strin
 ## sky. Passing roof_floor < 0 keeps the legacy rule (roof hidden whenever the
 ## gate is active) for callers that predate the deck.
 static func reveal_layer_hidden(layer_key: String, tag: String,
-		max_floor: int, faded: Array, roof_floor: int = -1) -> bool:
+		max_floor: int, faded: Array, roof_floor: int = -1,
+		sight_from: Vector2 = Vector2.INF, sight_to: Vector2 = Vector2.INF) -> bool:
 	if max_floor < 0 or tag == "" or not layer_key.begins_with(tag + ":"):
 		return false
 	var suffix := layer_key.substr(tag.length() + 1)
@@ -558,7 +572,88 @@ static func reveal_layer_hidden(layer_key: String, tag: String,
 	var bucket_sep := facade_name.find("|")
 	if bucket_sep >= 0:
 		facade_name = facade_name.substr(0, bucket_sep)
-	return fl > max_floor or (fl == max_floor and (facade_name == "cutaway" or faded.has(facade_name)))
+	if fl > max_floor:
+		return true
+	if fl < max_floor:
+		return false
+	if facade_name.begins_with(WALL_CUT_PREFIX):
+		return wall_cut_hidden(facade_name.substr(WALL_CUT_PREFIX.length()), sight_from, sight_to)
+	if facade_name.begins_with(CEIL_CUT_PREFIX):
+		return ceiling_cut_hidden(facade_name.substr(CEIL_CUT_PREFIX.length()), sight_to)
+	return facade_name == "cutaway" or faded.has(facade_name)
+
+
+## Parse a "x_z_w_h" layer-key payload into a plan rect (footprint-local metres).
+static func _parse_rect_key(rect_key: String) -> Rect2:
+	var parts := rect_key.split("_")
+	if parts.size() != 4:
+		return Rect2()
+	return Rect2(parts[0].to_float(), parts[1].to_float(), parts[2].to_float(), parts[3].to_float())
+
+
+## Ceiling caps: a room keeps its own ceiling unless the PLAYER is standing in
+## it. The camera has to see into that one room (it is the only room the player
+## is in, and the only room the cut is allowed to open); every other room stays
+## roofed, so a steep top-down camera cannot read the neighbours over the tops
+## of their walls.
+static func ceiling_cut_hidden(rect_key: String, player_local: Vector2) -> bool:
+	if not player_local.is_finite():
+		return false
+	var r := _parse_rect_key(rect_key)
+	if r.size.x <= 0.0 or r.size.y <= 0.0:
+		return false
+	return r.grow(0.08).has_point(player_local)
+
+
+## Layer-key payload for one interior wall box: its plan rect in the same
+## footprint-local frame the partition rects use ("x_z_w_h", metres to the
+## centimetre). Single authority for the format - wall_cut_hidden splits the
+## same four fields back out.
+static func wall_cut_key(pos: Vector3, size: Vector3) -> String:
+	return "%.2f_%.2f_%.2f_%.2f" % [
+			pos.x - size.x * 0.5, pos.z - size.z * 0.5, size.x, size.z]
+
+
+## Interior-wall cut decision (camera-driven, not storey-driven).
+##
+## Locked interior-perception rule: an interior wall is NOT cut unless it
+## obstructs the camera view of the player. The layer key carries the wall's own
+## plan rect ("wallcut:x_z_w_h", footprint-local metres) and the gate hands in
+## the camera->player sightline in the same frame, so only the walls standing
+## inside the camera's view wedge lose their plaster above the picture rail.
+## Every other wall in the building keeps full height, which is also what keeps
+## rooms the player is not in from being seen through a forest of half walls.
+static func wall_cut_hidden(rect_key: String, sight_from: Vector2, sight_to: Vector2) -> bool:
+	if not sight_from.is_finite() or not sight_to.is_finite():
+		return false
+	var r := _parse_rect_key(rect_key)
+	if r.size.x <= 0.0 or r.size.y <= 0.0:
+		return false
+	var dir := sight_to - sight_from
+	if dir.length_squared() < 0.04:
+		return false
+	var side := Vector2(-dir.y, dir.x).normalized() * WALL_CUT_WEDGE_M
+	var apex := sight_from
+	var left := sight_to + side
+	var right := sight_to - side
+	var bb := Rect2(apex, Vector2.ZERO)
+	bb = bb.expand(left)
+	bb = bb.expand(right)
+	if not bb.intersects(r):
+		return false
+	var tri := PackedVector2Array([apex, left, right])
+	var corners := PackedVector2Array([
+			r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
+	for i in corners.size():
+		var a: Vector2 = corners[i]
+		var b: Vector2 = corners[(i + 1) % corners.size()]
+		if Geometry2D.segment_intersects_segment(apex, left, a, b) != null:
+			return true
+		if Geometry2D.segment_intersects_segment(apex, right, a, b) != null:
+			return true
+		if Geometry2D.segment_intersects_segment(left, right, a, b) != null:
+			return true
+	return Geometry2D.is_point_in_polygon(r.get_center(), tri)
 
 
 ## A door leaf must never outlive the wall it is hung in. Exterior leaves carry

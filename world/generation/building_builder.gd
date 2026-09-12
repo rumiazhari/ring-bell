@@ -3518,6 +3518,23 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 		var dress_ok := dress_roll == 0 				or float(spec.get("dress_override", 0.0)) > 0.5
 		var dressed: bool = dress_ok and fi == 0 and str(fl.get("topology", "")) == "lobby"
 		b.push_layer(tag + ":f%d" % fi)
+		# Ceiling caps: one thin occluder per room at the top of this storey. A
+		# steep top-down camera looks straight over a 2.6 m interior wall and
+		# reads the room behind it, so every room keeps a ceiling of its own and
+		# every room but the one the player stands in keeps it while playing
+		# (MeshBatcher.ceiling_cut_hidden hides exactly the occupied room, which
+		# is the one room the camera has to see into).
+		for room: Dictionary in fl.get("rooms", []):
+			var rr: Rect2 = room.get("rect", Rect2())
+			if rr.size.x < 0.6 or rr.size.y < 0.6:
+				continue
+			var lr := Rect2(rr.position - footprint.position, rr.size)
+			var lc := lr.get_center()
+			b.push_layer(tag + ":f%d:%s%s" % [fi, MeshBatcher.CEIL_CUT_PREFIX,
+					MeshBatcher.wall_cut_key(Vector3(lc.x, 0.0, lc.y), Vector3(lr.size.x, 0.0, lr.size.y))])
+			b.add_visual_box(Vector3(lc.x, fi * fh + fh - 0.05, lc.y),
+					Vector3(lr.size.x, 0.08, lr.size.y), WorldConstants.COL_CITY_INTERIOR_WALL_ALT)
+			b.pop_layer()
 		# entrance corridor to keep clear on ground floor (2.2m wide, 3.0m deep inward)
 		var corridor := Rect2()
 		if fi == 0:
@@ -3543,9 +3560,31 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			# below adds `off` and the assembler applies parcel yaw exactly once.
 			pr.position -= footprint.position
 			op.position -= footprint.position
+			# A walk route that crosses this wall only needs a hole where the
+			# player actually walks. Partitions used to be DROPPED whole when any
+			# part of them crossed a keep-out, so 19.8% of the plan's walls
+			# (15575 of 78511, measured by --q3doorwalleaudit) never reached the
+			# screen and floors the plan calls six rooms rendered as one hall.
+			# Now: if the route passes THROUGH this wall's doorway, the doorway is
+			# already the passage and the wall is emitted as planned. If the route
+			# crosses the wall somewhere else, the wall is clipped there (the same
+			# treatment solid walls have had since Q1).
+			var piece_keepouts: Array[Rect2] = []
 			if not interior_partition_visible(p, spec, fi):
-				continue
+				var is_vert := pr.size.x < pr.size.y + 0.01
+				var opening_plan := Rect2(pr.position.x, op.position.y, pr.size.x, op.size.y) if is_vert \
+						else Rect2(op.position.x, pr.position.y, op.size.x, pr.size.y)
+				var route_through_door := op.size.x > 0.05 and op.size.y > 0.05 \
+						and _rect_hits_any(opening_plan, keepouts)
+				if not route_through_door:
+					piece_keepouts = keepouts
 			# Partitions are along shared room edges: pr is 0.18 thick wall (WorldConstants.CITY_INTERIOR_WALL_T), op is 0.95 opening.
+			# One cut identity per WALL, not per box: a wall either blocks the
+			# camera or it does not, and a per-box key would also multiply the
+			# layer nodes the streamer has to manage.
+			var wkey := MeshBatcher.wall_cut_key(
+					Vector3(pr.get_center().x, 0.0, pr.get_center().y),
+					Vector3(pr.size.x, 0.0, pr.size.y))
 			var y0 := float(fi) * fh
 			var wall_h := fh
 			if wall_h > WorldConstants.CITY_INTERIOR_OPEN_H:
@@ -3568,15 +3607,27 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var top_h := maxf(0.0, ox0 - py0)
 				var bot_h := maxf(0.0, py1 - ox1)
 				var cx := px + pw * 0.5
-				if top_h > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, py0 + top_h*0.5), Vector3(pw, fh, top_h), wall_col, dressed)
-				if bot_h > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + fh*0.5, ox1 + bot_h*0.5), Vector3(pw, fh, bot_h), wall_col, dressed)
-				var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
-				if lintel_h > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(cx, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h*0.5, op.get_center().y), Vector3(pw, lintel_h, op.size.y), wall_col)
-				if dress_ok:
-					_interior_architrave(b, off, fi, fh, Vector3(px, 0.0, 0.0), pr, op, true)
+				if op.size.y <= 0.05:
+					# SEALED boundary: a shared room edge the spanning tree never
+					# reached. No aperture, so the wall is one solid run over the
+					# plan rect - deriving it from a zero-size opening would emit a
+					# degenerate lintel and a box spanning to plan origin.
+					_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px, py0, pw, ph),
+							y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+				else:
+					if top_h > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px, py0, pw, top_h),
+								y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+					if bot_h > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px, ox1, pw, bot_h),
+								y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+					var lintel_h := fh - WorldConstants.CITY_INTERIOR_OPEN_H
+					if lintel_h > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px, op.position.y, pw, op.size.y),
+								y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h * 0.5, lintel_h,
+								wall_col, false, wkey, piece_keepouts)
+					if dress_ok:
+						_interior_architrave(b, off, fi, fh, Vector3(px, 0.0, 0.0), pr, op, true)
 			else:
 				var ph2 := pr.size.y
 				if absf(ph2 - WorldConstants.CITY_INTERIOR_WALL_T) > 0.02:
@@ -3590,15 +3641,24 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 				var left_w := maxf(0.0, ox0b - px0)
 				var right_w := maxf(0.0, px1 - ox1b)
 				var cy := py + ph2 * 0.5
-				if left_w > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(px0 + left_w*0.5, y0 + fh*0.5, cy), Vector3(left_w, fh, ph2), wall_col, dressed)
-				if right_w > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(ox1b + right_w*0.5, y0 + fh*0.5, cy), Vector3(right_w, fh, ph2), wall_col, dressed)
-				var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
-				if lintel_h2 > 0.05:
-					_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(op.get_center().x, y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2*0.5, cy), Vector3(op.size.x, lintel_h2, ph2), wall_col)
-				if dress_ok:
-					_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
+				if op.size.x <= 0.05:
+					# SEALED boundary (see the vertical branch): one solid run.
+					_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px0, py, pw2, ph2),
+							y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+				else:
+					if left_w > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(px0, py, left_w, ph2),
+								y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+					if right_w > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(ox1b, py, right_w, ph2),
+								y0 + fh * 0.5, fh, wall_col, dressed, wkey, piece_keepouts)
+					var lintel_h2 := fh - WorldConstants.CITY_INTERIOR_OPEN_H
+					if lintel_h2 > 0.05:
+						_emit_wall_piece(b, tag, fi, fh, off.y, off, Rect2(op.position.x, py, op.size.x, ph2),
+								y0 + WorldConstants.CITY_INTERIOR_OPEN_H + lintel_h2 * 0.5, lintel_h2,
+								wall_col, false, wkey, piece_keepouts)
+					if dress_ok:
+						_interior_architrave(b, off, fi, fh, Vector3(0.0, 0.0, py), pr, op, false)
 		for wall: Rect2 in fl.get("solid_walls", []):
 			if _rule_skipped("solid_walls"):
 				continue
@@ -3608,9 +3668,13 @@ static func _emit_interior_partitions(b: MeshBatcher, off: Vector3, w: float, d:
 			# wall is CLIPPED around the keep-outs instead of dropped, so the plan's
 			# layout survives and a real opening appears where people walk.
 			var wr := Rect2(wall.position - footprint.position, wall.size)
+			# Same single cut identity for every clipped segment of this wall.
+			var wskey := MeshBatcher.wall_cut_key(
+					Vector3(wr.get_center().x, 0.0, wr.get_center().y),
+					Vector3(wr.size.x, 0.0, wr.size.y))
 			for seg: Rect2 in _clip_rect(wr, keepouts):
 				var sc := seg.get_center()
-				_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(sc.x, fi * fh + fh * 0.5, sc.y), Vector3(seg.size.x, fh, seg.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed)
+				_interior_wall_box(b, tag, fi, fh, off.y, off + Vector3(sc.x, fi * fh + fh * 0.5, sc.y), Vector3(seg.size.x, fh, seg.size.y), WorldConstants.COL_CITY_INTERIOR_WALL, dressed, wskey)
 		for item: Dictionary in fl.get("furniture", []):
 			if _rule_skipped("furniture"):
 				continue
@@ -3774,7 +3838,36 @@ static func _rect_subtract(a: Rect2, b: Rect2) -> Array[Rect2]:
 	return out
 
 
-## Subtract every keep-out from `r`; deterministic and order-independent.
+## True when `r` overlaps any circulation keep-out.
+static func _rect_hits_any(r: Rect2, keepouts: Array[Rect2]) -> bool:
+	for k in keepouts:
+		if r.intersects(k):
+			return true
+	return false
+
+
+## Emit one plan piece of an interior wall, clipped around the circulation
+## keep-outs when this wall crosses a walk route. Solid walls have been clipped
+## this way since Q1; partitions used to be DROPPED whole, which is why 19.8% of
+## the plan's walls (15575 of 78511, measured by --q3doorwalleaudit) never
+## reached the player's screen and a floor the plan calls six rooms rendered as
+## one open hall. Clipping keeps the route open AND keeps the walls.
+static func _emit_wall_piece(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float,
+		off: Vector3, plan: Rect2, y_center: float, height: float, col: Color,
+		dressed: bool, wall_key: String, keepouts: Array[Rect2]) -> void:
+	if plan.size.x <= 0.05 or plan.size.y <= 0.05:
+		return
+	if keepouts.is_empty():
+		_interior_wall_box(b, tag, fi, fh, ground,
+				off + Vector3(plan.get_center().x, y_center, plan.get_center().y),
+				Vector3(plan.size.x, height, plan.size.y), col, dressed, wall_key)
+		return
+	for seg: Rect2 in _clip_rect(plan, keepouts):
+		_interior_wall_box(b, tag, fi, fh, ground,
+				off + Vector3(seg.get_center().x, y_center, seg.get_center().y),
+				Vector3(seg.size.x, height, seg.size.y), col, dressed, wall_key)
+
+
 static func _clip_rect(r: Rect2, keepouts: Array[Rect2]) -> Array[Rect2]:
 	var parts: Array[Rect2] = [r]
 	for k in keepouts:
@@ -4283,7 +4376,11 @@ static func _interior_entry_casing(b: MeshBatcher, off: Vector3, w: float, d: fl
 			b.add_visual_box(off + Vector3(x3, y0 + h + fr * 0.5, d * 0.5), Vector3(th, fr, door_w + fr * 2.0), col)
 
 
-static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color, dressed: bool = false) -> void:
+static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, ground: float, pos: Vector3, size: Vector3, col: Color, dressed: bool = false, wall_key: String = "") -> void:
+	# Plaster above the picture rail goes into the wall's own cut layer; the
+	# camera-drive decides per wall (MeshBatcher.wall_cut_hidden). wall_key is the
+	# whole wall's plan rect so every box of one wall shares one layer.
+	var cut_key := wall_key if wall_key != "" else MeshBatcher.wall_cut_key(pos, size)
 	var bottom := pos.y - size.y * 0.5
 	var top := pos.y + size.y * 0.5
 	var split := ground + fi * fh + 1.05
@@ -4298,7 +4395,9 @@ static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, 
 			var upper_bottom := maxf(bottom, split)
 			var upper_h := top - split
 			if upper_h > 0.02:
+				b.push_layer(tag + ":f%d:%s%s" % [fi, MeshBatcher.WALL_CUT_PREFIX, cut_key])
 				b.add_structural_box(Vector3(pos.x, split + upper_h * 0.5, pos.z), Vector3(size.x, upper_h, size.z), plaster)
+				b.pop_layer()
 			b.add_structural_box(Vector3(pos.x, bottom + lower_h * 0.5, pos.z), Vector3(size.x, lower_h, size.z), lower_col)
 			# Dark skirting at the base + oak cap rail at the picture line.
 			b.add_visual_box(Vector3(pos.x, bottom + 0.07, pos.z), Vector3(size.x + 0.05, 0.14, size.z + 0.05), Color("3a2a1a"))
@@ -4308,6 +4407,14 @@ static func _interior_wall_box(b: MeshBatcher, tag: String, fi: int, fh: float, 
 	if top > split and not (dressed and bottom < split):
 		var upper_bottom := maxf(bottom, split)
 		var upper_h := top - upper_bottom
-		b.push_layer(tag + ":f%d:cutaway" % fi)
+		b.push_layer(tag + ":f%d:%s%s" % [fi, MeshBatcher.WALL_CUT_PREFIX, cut_key])
 		b.add_structural_box(Vector3(pos.x, upper_bottom + upper_h * 0.5, pos.z), Vector3(size.x, upper_h, size.z), col)
 		b.pop_layer()
+
+
+## Plan rect of one wall box, in the same footprint-local frame the partition
+## rects use, as a layer-key payload ("x_z_w_h", metres to the centimetre). The
+## gate parses it to test the camera sightline, so the wall's own extent - not
+## the storey - decides whether this wall is cut.
+static func _wall_cut_key(pos: Vector3, size: Vector3) -> String:
+	return MeshBatcher.wall_cut_key(pos, size)

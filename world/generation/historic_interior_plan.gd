@@ -221,15 +221,17 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 		groups.append(i)
 		degree[i] = 0
 	for link_pass in 3:
-		var repairing := link_pass > 0
 		var strict := link_pass < 2
 		for candidate: Dictionary in candidates:
 			var i: int = candidate.i
 			var j: int = candidate.j
 			var wall: Rect2 = candidate.wall
 			if groups[i] == groups[j]:
-				if not repairing:
-					solid_walls.append(wall)
+				# Already linked: this boundary is a party wall. It used to be
+				# recorded only on the first pass, so a pair that met in a repair
+				# pass ended up with NO geometry at all and the player walked
+				# between two rooms through a hole the plan never asked for.
+				_add_solid(solid_walls, wall)
 				continue
 			if strict:
 				# An ordinary room stops at two connections so a bedroom or a shop
@@ -239,6 +241,7 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 				var cap_i: int = 3 if rooms[i].kind in [&"stair_hall", &"landing"] else 2
 				var cap_j: int = 3 if rooms[j].kind in [&"stair_hall", &"landing"] else 2
 				if int(degree[i]) >= cap_i or int(degree[j]) >= cap_j:
+					_add_solid(solid_walls, wall)
 					continue
 			degree[i] = int(degree[i]) + 1
 			degree[j] = int(degree[j]) + 1
@@ -255,6 +258,7 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 			if wall_length - span < 0.2:
 				span = maxf(0.9, wall_length - 0.2)
 				if span > wall_length - 0.1:
+					_add_solid(solid_walls, wall)
 					continue
 			var center := wall.get_center()
 			if vertical and (rooms[i].kind == &"landing" or rooms[j].kind == &"landing"):
@@ -270,6 +274,16 @@ static func floor_plan(spec: Dictionary, fi: int) -> Dictionary:
 	return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors,
 		"stations": [], "solid_walls": solid_walls, "corridor_layout": true, "topology": "historic_wing", "use": use}
 
+## Record a boundary as SOLID geometry (a wall with no opening). The link passes
+## visit the same boundary up to three times, so the same wall rect must land in
+## the list once.
+static func _add_solid(solid_walls: Array, wall: Rect2) -> void:
+	for w: Rect2 in solid_walls:
+		if w.position.distance_to(wall.position) < 0.05 and w.size.distance_to(wall.size) < 0.05:
+			return
+	solid_walls.append(wall)
+
+
 static func room(bid: String, fi: int, index: int, kind: StringName, rect: Rect2, entry: bool) -> Dictionary:
 	return {"id": "%s_f%d_%s_%d" % [bid, fi, kind, index], "kind": kind, "rect": rect,
-		"entry": entry, "service": kind == &"toilet" or kind == &"storage"}
+		"entry": entry, "service": kind == &"entry" or kind == &"toilet" or kind in SERVICE_KINDS}

@@ -303,6 +303,36 @@ static func _floor_manifest(bid: String, fi: int, use_val: String, inner: Rect2,
 				var pid2 := "%s_f%d_p%d" % [bid, fi, partitions.size()]
 				partitions.append({"id": pid2, "a": a["id"], "b": b["id"], "rect": wall_rect, "opening": opening})
 				doors.append(_door_for_partition(bid, fi, partitions.size()-1, opening, wall_rect, a["id"], b["id"], fh, rng))
+	# ---- SEAL: every shared room boundary gets a wall ---------------------------
+	# The spanning tree above only guarantees REACHABILITY. It stops the moment
+	# the graph is connected - `if partitions.size() >= rooms.size() - 1: break` -
+	# so every remaining shared edge stays wide open. Measured on the live city
+	# (--q3doorwalleaudit, 2099 buildings): 5351 of 58124 shared room edges
+	# (9.2%) had NO wall at all, and a 7-room floor showed 5 of its 11
+	# boundaries with nothing in them: the player walks through what the plan
+	# calls two rooms as one open space, and the door the tree placed sits in a
+	# wall that the rest of the boundary does not have. Seal the leftovers with
+	# a doorless partition. Doors stay exactly where the tree put them, so
+	# circulation and the reachability guarantee are untouched.
+	# A room the tree left without a door stays open to its neighbour: sealing
+	# that boundary could box it in with no way in. Only seal between rooms that
+	# already have a door of their own.
+	var doored := {}
+	for d: Dictionary in doors:
+		doored[str(d.get("room_a", ""))] = true
+		doored[str(d.get("room_b", ""))] = true
+	for e in _adjacent_edges(rooms):
+		var seal := _seal_wall_rect(e)
+		if seal.size == Vector2.ZERO:
+			continue
+		if not doored.has(str(e["a"])) or not doored.has(str(e["b"])):
+			continue
+		if _boundary_walled(seal, partitions):
+			continue
+		partitions.append({
+			"id": "%s_f%d_seal%d" % [bid, fi, partitions.size()],
+			"a": e["a"], "b": e["b"], "rect": seal, "opening": Rect2(),
+			"sealed": true})
 	# Stations
 	if use_val == "residential":
 		var sleep_room: Dictionary = {}
@@ -344,6 +374,45 @@ static func _floor_manifest(bid: String, fi: int, use_val: String, inner: Rect2,
 	if stations.size() > 1:
 		stations = stations.slice(0,1)
 	return {"floor_i": fi, "rooms": rooms, "partitions": partitions, "doors": doors, "stations": stations}
+
+## Wall rect for one adjacent-room edge: 0.18 m strip on the shared line, inset
+## 0.3 m from the room corners. Same formula the spanning-tree phase uses, so a
+## sealed boundary and a tree boundary are geometrically identical.
+static func _seal_wall_rect(e: Dictionary) -> Rect2:
+	var ra: Rect2 = e["ra"]
+	var rb: Rect2 = e["rb"]
+	if bool(e["vertical"]):
+		var x := ra.end.x if absf(ra.end.x - rb.position.x) < 0.1 else rb.end.x
+		var y0 := maxf(ra.position.y, rb.position.y) + 0.3
+		var y1 := minf(ra.end.y, rb.end.y) - 0.3
+		if y1 - y0 < 0.25:
+			return Rect2()
+		return Rect2(x - 0.09, y0, 0.18, y1 - y0)
+	var y := ra.end.y if absf(ra.end.y - rb.position.y) < 0.1 else rb.end.y
+	var x0 := maxf(ra.position.x, rb.position.x) + 0.3
+	var x1 := minf(ra.end.x, rb.end.x) - 0.3
+	if x1 - x0 < 0.25:
+		return Rect2()
+	return Rect2(x0, y - 0.09, x1 - x0, 0.18)
+
+
+## True when a partition (or solid wall) already runs along this boundary line.
+static func _boundary_walled(wr: Rect2, partitions: Array) -> bool:
+	var vertical := wr.size.x < wr.size.y
+	for p in partitions:
+		var pr: Rect2 = p.get("rect", Rect2())
+		if vertical:
+			if absf(pr.get_center().x - wr.get_center().x) > 0.35:
+				continue
+			if minf(pr.end.y, wr.end.y) - maxf(pr.position.y, wr.position.y) >= 0.5:
+				return true
+		else:
+			if absf(pr.get_center().y - wr.get_center().y) > 0.35:
+				continue
+			if minf(pr.end.x, wr.end.x) - maxf(pr.position.x, wr.position.x) >= 0.5:
+				return true
+	return false
+
 
 static func _door_for_partition(bid: String, fi: int, idx: int, opening: Rect2, wall_rect: Rect2, a_id: String, b_id: String, fh: float, rng: RandomNumberGenerator) -> Dictionary:
 	var hinge_left := rng.randf() < 0.5
