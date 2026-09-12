@@ -1141,7 +1141,8 @@ func _flush_collision_into(parent: Node3D, body_layer := 1) -> void:
 		# tags are deliberately not stamped.
 		var feat_tag := String(col["tag"])
 		if feat_tag in ["awning", "balcony", "tower", "bhplant",
-				"bhladder", "bhexit", "scaffold", "cornice", "pilaster"]:
+				"bhladder", "bhexit", "scaffold", "cornice", "pilaster",
+				"parapet", "band"]:
 			shape_node.set_meta("vox_tag", StringName(feat_tag))
 		_shape_nodes[int(col["id"])] = shape_node
 		body.add_child(shape_node)
