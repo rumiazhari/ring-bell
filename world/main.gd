@@ -272,6 +272,18 @@ func _ready() -> void:
 		climb_anim.name = "AnimClimb"
 		add_child(climb_anim)
 		return
+	if args.has("--parkourtest"):
+		# Q2 parkour contract: a parse error in the harness must fail the suite,
+		# not hang it (nothing else would quit the tree).
+		var parkour_script: Variant = load("res://debug/parkour_contract_test.gd")
+		if parkour_script == null or not (parkour_script is GDScript) or not (parkour_script as GDScript).can_instantiate():
+			push_error("[ParkourContractTest] harness failed to load (parse error); failing the run")
+			get_tree().quit(1)
+			return
+		var parkour_test: Node = (parkour_script as GDScript).new()
+		parkour_test.name = "ParkourContractTest"
+		add_child(parkour_test)
+		return
 	if args.has("--worldrealizationtest"):
 		var realization_tester: Node = load("res://debug/world_realization_test.gd").new()
 		realization_tester.name = "WorldRealizationTest"

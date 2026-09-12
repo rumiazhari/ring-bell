@@ -93,6 +93,41 @@ const CLIMB_DRIVE_SPEED := 2.2         # m/s toward a plain crate/box ledge
 const CORNICE_DRIVE_SPEED := 3.0       # stronger drive onto building rooftops
 const AWNING_DRIVE_SPEED := 2.6        # canvas deck: firm but forgiving assist
 
+# --- Q2: verified feature holds -------------------------------------------
+# A tag CLASSIFIES a hold; the shape's own box geometry VERIFIES it. Every tag
+# here is a feature the generator emits as *colliding* structure (see
+# BuildingBuilder: cornices, parapets, balconies, scaffolding, bulkhead
+# plant/exit boxes). Thin decorative trim is deliberately absent: geometry
+# alone must never turn a 0.06 m moulding into a handhold.
+const CLIMBABLE_TAGS := [
+	&"cornice", &"parapet", &"balcony", &"scaffold", &"awning", &"tower",
+	&"pilaster", &"bhplant", &"bhexit", &"bhladder",
+]
+const HOLD_CLASS_SLAB := &"slab"       # top surface deep enough to stand on
+const HOLD_CLASS_BAR := &"bar"         # slender lip: hang + shimmy only
+const HOLD_DEPTH_MIN_SLAB := 0.14      # usable depth for a standable hold
+const HOLD_DEPTH_MIN_BAR := 0.05       # usable depth for a hangable one
+const HOLD_WIDTH_MIN := 0.45           # usable width along the facade
+const HOLD_HEIGHT_MIN := 0.15          # vertical grip face: a 0.08 m moulding has none
+const HOLD_DEPTH_WIDE := 0.25          # ...unless the top face is this wide to hook
+const HOLD_USABLE_MAX := 1.60          # cap on the inboard probe run
+const HOLD_STEP := 0.05                # inboard/outboard probe granularity
+const HOLD_SCAN_OFFSETS: Array[float] = [
+	0.00, 0.08, -0.12, 0.16, -0.24, 0.24, -0.34, 0.34,
+]	# face plane, then inboard/outboard columns
+const HOLD_SCAN_MAX_PLANE := 0.45      # scanned lip must sit on the face we hit
+const HANG_WALL_OFFSET := 0.45         # body axis -> hold's outer face
+const HANG_BODY_DROP := 1.45           # feet sit this far below the lip
+const HANG_SNAP_MAX := 0.12            # m/frame: bounded skin, never a teleport
+const SHIMMY_DRIVE_SPEED := 0.60       # m/s along the ledge (mirrors the locomotion's SHIMMY_SPEED)
+const HANG_RADIUS := 0.30              # hang/stand capsule radius
+const HOLD_STAND_OFFSETS: Array[float] = [0.24, 0.36, 0.50, 0.65, 0.85]
+const HOLD_STAND_DROP_MAX := 1.00      # how far below the lip a landing may be
+const CORNER_RISE_MIN := -0.60
+const CORNER_RISE_MAX := 1.30
+const LEDGE_CORNER_COOLDOWN := 0.25   # re-arm after a climb leap
+const LEDGE_CLIMB_HYSTERESIS := 0.15  # a re-grab must beat the lip we left
+
 ## Fires on every successful ledge grab. is_building is true when the grabbed
 ## wall belongs to batched city structure (vox_material == &"concrete"), i.e.
 ## the survivor mantled onto a rooftop/cornice rather than a crate.
@@ -117,6 +152,22 @@ var _last_loco_state := -1             # ANTI-STUCK: previous locomotion state
 var _climb_time_left := -1.0           # follow-through window (< 0 = idle)
 var _climb_dir := Vector3.ZERO
 var _climb_speed := 0.0
+# --- Q2 verified holds ----------------------------------------------------
+var _hang_hold: Dictionary = {}        # verified record of the hold in hand
+var hold_accepts := 0                  # lifetime: holds that passed verification
+var hold_rejects := 0                  # lifetime: candidates killed by geometry
+var last_hold_kind := &""              # tag/prop/structure of the latest grab
+var last_hold_width := 0.0             # measured usable width (m)
+var last_hold_depth := 0.0             # measured usable depth (m)
+var last_hold_hang_clear := false      # hang capsule had real clearance
+var last_hold_stand_clear := false     # a standing spot existed on the lip
+var shimmy_ends := 0                   # lifetime: shimmy ran into a ledge end
+var corner_handoffs := 0               # lifetime: shimmy walked round a corner
+var ledge_climbs := 0                  # lifetime: climb-ups from a hang
+var hang_ticks := 0                    # lifetime: frames held by the anchor
+var shimmy_driven_ticks := 0           # lifetime: frames the hang drove the shimmy
+var last_shimmy_travel := 0.0          # signed travel (m) along the ledge tangent
+var _climb_floor_y := -1.0e8           # lip we just left (anti re-catch)
 
 
 ## Wire to the owning body. Call once, right after add_child().
@@ -128,6 +179,12 @@ func setup(survivor: Survivor) -> void:
 ## Called by PlayerController once per jump-input press.
 func try_jump() -> void:
 	if _survivor == null or _survivor.health.is_dead:
+		return
+	# Q2: a jump press while hanging off a verified hold is a CLIMB, not a
+	# jump - mantle onto the lip when a standing spot was measured there,
+	# otherwise leap for a higher hold.
+	if _is_hanging_state(_loco_state()):
+		_try_hang_climb()
 		return
 	if not _survivor.is_on_floor():
 		return
@@ -370,14 +427,9 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 	primary = primary.normalized()
 	if primary.length_squared() < 0.5:
 		return
-	# P-C2: check if has locomotion to store ledge probe instead of instant grab
-	var has_locomotion: bool = false
-	if _survivor.has_method("get_locomotion"):
-		var loco = _survivor.get_locomotion()
-		if loco != null and is_instance_valid(loco):
-			has_locomotion = true
-	# Phase F slice 2: intended direction first (unchanged behaviour for
-	# intentional grabs), then evenly spaced fallback rays around the body.
+	# Phase F slice 2: intended direction first, then evenly spaced fallback
+	# rays around the body - every one of them now goes through the verified
+	# hold query, so a blank facade cell cannot latch the player.
 	var dirs: Array[Vector3] = [primary]
 	for i in range(1, LEDGE_SEEK_RAYS):
 		var ang := TAU * float(i) / float(LEDGE_SEEK_RAYS)
@@ -386,102 +438,379 @@ func _try_ledge_grab(move_dir: Vector3) -> void:
 		var probe := _probe_ledge(d)
 		if probe.is_empty():
 			continue
-		# P-C2: store ledge probe for locomotion HANG
-		var wall: Dictionary = probe["wall"]
-		var rise: float = float(probe["rise"])
-		# Build ledge_probe dict for locomotion
-		var lip_pos: Vector3 = Vector3.ZERO
-		var lip_norm: Vector3 = Vector3(0,1,0)
-		if wall.has("position"):
-			# Use wall hit position plus small offset for lip
-			lip_pos = wall.position as Vector3
-			# Try to get lip height from rise
-			lip_pos.y = _survivor.global_position.y + rise
-		if wall.has("normal"):
-			lip_norm = -d
-		_ledge_probe = {"rise": rise, "ledge_pos": lip_pos, "ledge_normal": lip_norm, "has_hit": true, "wall": wall, "dir": d}
-		if _commit_grab(d, probe["wall"], probe["rise"]):
+		if _commit_grab(d, probe):
 			return
 
 
-## Ray probes for one direction: two lateral chest-height rays confirm a
-## broad wall face, then a downward probe finds the lip. Returns
-## {"wall": Dictionary, "rise": float} or {} when nothing is graspable here.
+## Q2 verified hold query for one direction. Returns {} or a hold record:
+## {kind, tag, class, shape_node, lip, wall_normal, tangent, rise, box_depth,
+##  usable_depth, usable_width, usable_half_width, hang_clear, stand_clear,
+##  stand_offset, wall, dir}
+##
+## The rule is: a climbable tag CLASSIFIES the hold, the shape's own box
+## geometry VERIFIES it, and "free air above the top face" is what separates a
+## real projection (cornice, parapet, balcony deck, awning, crate, bulkhead)
+## from a blank facade cell or a storey seam. The pre-Q2 probe pushed a
+## downward ray a fixed 0.45 m past the wall face, so only boxes deeper than
+## 0.45 m were ever grabbable - every shallower feature (the 0.2 m cornice,
+## the 0.28 m parapet ring) was invisible to the hands.
 func _probe_ledge(dir: Vector3) -> Dictionary:
+	if _survivor == null or _survivor.get_world_3d() == null:
+		return {}
+	var d := Vector3(dir.x, 0.0, dir.z)
+	if d.length_squared() < 0.01:
+		return {}
+	d = d.normalized()
 	var space := _survivor.get_world_3d().direct_space_state
+	if space == null:
+		return {}
 	var feet := _survivor.global_position
-	var side := Vector3(-dir.z, 0.0, dir.x)
-	var chest_org := Vector3(feet.x, feet.y + LEDGE_PROBE_HEIGHT, feet.z)
+	var side := Vector3(-d.z, 0.0, d.x)
+	# 1. A face we can climb: chest-height rays must hit a surface facing us.
 	var wall_hit := {}
-	for off: float in [-LEDGE_PROBE_OFFSET, LEDGE_PROBE_OFFSET]:
-		var org := chest_org + side * off
-		var q := PhysicsRayQueryParameters3D.create(org, org + dir * LEDGE_PROBE_REACH)
-		q.exclude = [_survivor]
-		q.collide_with_areas = false
-		var hit := space.intersect_ray(q)
-		if not hit.is_empty():
-			wall_hit = hit
-			break
+	for off: float in [-LEDGE_PROBE_OFFSET, 0.0, LEDGE_PROBE_OFFSET]:
+		var org := Vector3(feet.x, feet.y + LEDGE_PROBE_HEIGHT, feet.z) + side * off
+		var hit := _ray_to(space, org, org + d * LEDGE_PROBE_REACH)
+		if hit.is_empty():
+			continue
+		var hn := hit.normal as Vector3
+		hn.y = 0.0
+		if hn.length_squared() < 0.01 or hn.normalized().dot(d) > -0.5:
+			continue
+		wall_hit = hit
+		break
 	if wall_hit.is_empty():
 		return {}
-	# Downward probe from above expected reach to find the ledge lip.
-	var push := dir * 0.45
-	var start_x: float = float(wall_hit.position.x) + push.x
-	var start_z: float = float(wall_hit.position.z) + push.z
-	var start_y := feet.y + LEDGE_REACH_ABOVE + 0.1
-	var end_y := feet.y + LEDGE_TOP_MIN - 0.05
-	var q2 := PhysicsRayQueryParameters3D.create(
-		Vector3(start_x, start_y, start_z),
-		Vector3(start_x, end_y, start_z))
-	q2.exclude = [_survivor]
-	q2.collide_with_areas = false
-	var lip := space.intersect_ray(q2)
-	if lip.is_empty():
+	var face_plane := (wall_hit.position as Vector3).dot(d)
+	# 2. The shape the chest rays hit is the first candidate (shared table
+	#    edges, crates, low cornices).
+	var rec := _verify_hold(space, _hit_shape_node(wall_hit), d, side, feet, face_plane)
+	if not rec.is_empty():
+		rec["wall"] = wall_hit
+		rec["dir"] = d
+		return rec
+	# 3. Bounded outward scan: the cornice/parapet band sits above or just
+	#    outside the face we hit, and a lip shallower than LEDGE_PROBE_OFFSET
+	#    can never be found by a fixed-offset probe.
+	var base := wall_hit.position as Vector3
+	var top_y := feet.y + LEDGE_REACH_ABOVE + 0.15
+	var bot_y := feet.y + LEDGE_TOP_MIN - 0.05
+	for off: float in HOLD_SCAN_OFFSETS:
+		var probe_pt := base + d * off
+		var hit2 := _ray_to(
+			space,
+			Vector3(probe_pt.x, top_y, probe_pt.z),
+			Vector3(probe_pt.x, bot_y, probe_pt.z))
+		if hit2.is_empty():
+			continue
+		var rec2 := _verify_hold(space, _hit_shape_node(hit2), d, side, feet, face_plane)
+		if rec2.is_empty():
+			continue
+		rec2["wall"] = hit2
+		rec2["dir"] = d
+		rec2["scan_offset"] = off
+		return rec2
+	return {}
+
+
+## Classify + verify one candidate collision shape as a climbable hold.
+## `d` points from the player into the wall, `side` is the facade tangent.
+func _verify_hold(space: PhysicsDirectSpaceState3D, node: CollisionShape3D,
+		d: Vector3, side: Vector3, feet: Vector3, face_plane: float) -> Dictionary:
+	if node == null or not is_instance_valid(node):
 		return {}
-	if float(lip.normal.y) < LEDGE_SURFACE_NORMAL_Y:
+	var shape := node.shape
+	if not (shape is BoxShape3D):
 		return {}
-	var rise := float(lip.position.y) - feet.y
+	var box := shape as BoxShape3D
+	var xf := node.global_transform
+	if absf(xf.basis.y.normalized().dot(Vector3.UP)) < 0.99:
+		return {}                                   # tilted: no honest top face
+	var ex := xf.basis.x.normalized() * box.size.x * 0.5
+	var ez := xf.basis.z.normalized() * box.size.z * 0.5
+	var half_d: float = absf(ex.dot(d)) + absf(ez.dot(d))
+	var half_s: float = absf(ex.dot(side)) + absf(ez.dot(side))
+	var c := xf.origin
+	var top := c.y + box.size.y * 0.5
+	var rise := top - feet.y
 	if rise < LEDGE_TOP_MIN or rise > LEDGE_REACH_ABOVE:
 		return {}
-	return {"wall": wall_hit, "rise": rise}
+	var edge := c - d * half_d                       # top edge facing the player
+	edge.y = top
+	if edge.dot(d) > face_plane + HOLD_SCAN_MAX_PLANE:
+		hold_rejects += 1
+		return {}                                    # buried inside the wall
+	var tag := StringName(node.get_meta("vox_tag", &""))
+	var material := StringName(node.get_meta("vox_material", &""))
+	var tagged := CLIMBABLE_TAGS.has(tag)
+	# Usable depth: how far inboard from the front edge the top face stays
+	# free. A facade cell has the wall continuing above it (0 m), a 0.085 m
+	# string course gives 0.085 m, a cornice/parapet/crate gives its depth.
+	var usable := 0.0
+	var span: float = minf(half_d * 2.0, HOLD_USABLE_MAX)
+	while usable + HOLD_STEP <= span:
+		var pt := edge + d * (usable + HOLD_STEP)
+		pt.y = top
+		if not _air_above(space, pt):
+			break
+		usable += HOLD_STEP
+	var min_depth := HOLD_DEPTH_MIN_BAR if tagged else HOLD_DEPTH_MIN_SLAB
+	if usable < min_depth:
+		hold_rejects += 1
+		return {}
+	# A lip has to offer a hand something: either a vertical face tall enough to
+	# hook (cornice/parapet/sill) or a top face wide enough to lay a hand over
+	# (scaffold plank, deck). A 0.08 x 0.10 m string course offers neither, so
+	# decorative trim stays scenery no matter what it is tagged.
+	if box.size.y < HOLD_HEIGHT_MIN and usable < HOLD_DEPTH_WIDE:
+		hold_rejects += 1
+		return {}
+	# Usable width along the facade, measured both ways from the probe column:
+	# this single honest number decides shimmy travel and mantle room.
+	var half_free := 0.0
+	while half_free + HOLD_STEP <= half_s:
+		var off := half_free + HOLD_STEP
+		var pl := edge + side * off
+		var pr := edge - side * off
+		if not _air_above(space, Vector3(pl.x, top, pl.z)):
+			break
+		if not _air_above(space, Vector3(pr.x, top, pr.z)):
+			break
+		half_free = off
+	if half_free * 2.0 < HOLD_WIDTH_MIN:
+		hold_rejects += 1
+		return {}
+	var kind := tag
+	if kind == &"":
+		kind = &"structure" if material != &"" else &"prop"
+	var w_dir := -d                                  # outward, toward the player
+	var lip := edge                                  # outer edge of the top face
+	var out_face := c - d * half_d
+	var rec := {
+		"kind": kind,
+		"tag": tag,
+		"shape_node": node,
+		"lip": lip,
+		"outer_face": out_face,
+		"wall_normal": w_dir,
+		"tangent": side,
+		"rise": rise,
+		"box_depth": half_d * 2.0,
+		"usable_depth": usable,
+		"usable_width": half_free * 2.0,
+		"usable_half_width": half_free,
+	}
+	# Clearance is measured, not assumed: a hang needs room for a 0.30 m
+	# radius body at HANG_WALL_OFFSET out from the face, and a mantle needs an
+	# actual standing spot on the lip.
+	var hang_pt := lip + w_dir * HANG_WALL_OFFSET
+	rec["hang_clear"] = _capsule_clear(space, hang_pt, top - HANG_BODY_DROP, HANG_RADIUS, 1.62)
+	var stand := _stand_search(space, rec)
+	rec["stand_clear"] = bool(stand["clear"])
+	rec["stand_offset"] = float(stand["offset"])
+	# A hold with nowhere to put the body is not a hold: the hang capsule is
+	# blocked AND the lip has no standing spot, so a grab would only clip.
+	if not bool(rec["hang_clear"]) and not bool(rec["stand_clear"]):
+		hold_rejects += 1
+		return {}
+	# A slab is a top surface the body can stand on, so it needs both the usable
+	# depth and a real standing spot (a 0.24 m cornice against a wall measures
+	# deep enough but is a handhold: hang + shimmy only).
+	rec["class"] = HOLD_CLASS_SLAB \
+			if (usable >= HOLD_DEPTH_MIN_SLAB and bool(rec["stand_clear"])) \
+			else HOLD_CLASS_BAR
+	hold_accepts += 1
+	return rec
 
 
-## Apply a confirmed grab in direction dir. Returns false (no side effects)
-## when the survivor lacks the stamina this particular lip demands.
-func _commit_grab(dir: Vector3, wall_hit: Dictionary, rise: float) -> bool:
+## A verified standing spot on the lip. A mantle ends ON the hold, so the
+## candidate points walk INBOARD from the front edge and each one must
+##  - fit the body capsule without overlapping structure (this is what keeps a
+##    0.2 m cornice a handhold: inboard of its lip is solid wall), and
+##  - have a surface to land on within HOLD_STAND_DROP_MAX (the lip's own top
+##    face, or the roof behind a parapet the body pulls over).
+## Without the second test a body would be declared able to stand on a lip with
+## nothing under it, and the pull-up would leave it in mid-air.
+func _stand_search(space: PhysicsDirectSpaceState3D, rec: Dictionary) -> Dictionary:
+	var lip: Vector3 = rec["lip"]
+	var inboard: Vector3 = -(rec["wall_normal"] as Vector3)
+	var usable := float(rec.get("usable_depth", 0.0))
+	var feet_y := lip.y + 0.02
+	for off: float in HOLD_STAND_OFFSETS:
+		# A slender member can still have a real floor BEHIND it: an awning lip
+		# is a 0.45 m railing standing on a 2.4 m deck, so the landing is one
+		# step over the railing, not on the railing. The cap only exists to stop
+		# us claiming a landing past the top face of a *slab* we measured
+		# (a 0.24 m cornice has wall where a landing would be); for anything
+		# thinner the capsule test and the floor test below are the real gate,
+		# and they reject the cornice case on their own (capsule inside wall).
+		if off > usable + 0.10 and usable >= HOLD_DEPTH_MIN_SLAB:
+			break
+		var pt := lip + inboard * off
+		if not _capsule_clear(space, pt, feet_y, HANG_RADIUS - 0.02, 1.62):
+			continue
+		if not _floor_below(space, pt, feet_y):
+			continue
+		return {"clear": true, "offset": off}
+	return {"clear": false, "offset": 0.0}
+
+
+## Is there a top surface to land on within HOLD_STAND_DROP_MAX below the
+## candidate feet?
+func _floor_below(space: PhysicsDirectSpaceState3D, pt: Vector3, feet_y: float) -> bool:
+	var hit := _ray_to(space,
+			Vector3(pt.x, feet_y + 0.06, pt.z),
+			Vector3(pt.x, feet_y - HOLD_STAND_DROP_MAX, pt.z))
+	if hit.is_empty():
+		return false
+	var n := hit.normal as Vector3
+	return n.dot(Vector3.UP) > LEDGE_SURFACE_NORMAL_Y
+
+
+## Is the space above `pt` (a point on a top face) free? This is the test that
+## makes a top face a HOLD: blank facade cells and storey seams have the wall
+## continuing above them, so they always answer false.
+func _air_above(space: PhysicsDirectSpaceState3D, pt: Vector3) -> bool:
+	var q := PhysicsRayQueryParameters3D.create(
+		pt + Vector3(0.0, 0.02, 0.0),
+		pt + Vector3(0.0, LEDGE_PROBE_HEIGHT, 0.0))
+	q.exclude = [_survivor]
+	q.collide_with_areas = false
+	# A ray that STARTS inside solid structure must read as "not air": that is
+	# exactly the storey seam / buried cell case. Without this, Godot skips a
+	# body it starts inside and a blank facade cell looks like a deep ledge.
+	q.hit_from_inside = true
+	return space.intersect_ray(q).is_empty()
+
+
+## Capsule clearance test used by both the hang and the stand verification.
+func _capsule_clear(space: PhysicsDirectSpaceState3D, xz_pt: Vector3,
+		feet_y: float, radius: float, height: float) -> bool:
+	var cap := CapsuleShape3D.new()
+	cap.radius = radius
+	cap.height = maxf(height, radius * 2.0 + 0.02)
+	var q := PhysicsShapeQueryParameters3D.new()
+	q.shape = cap
+	q.transform = Transform3D(Basis.IDENTITY, Vector3(xz_pt.x, feet_y + height * 0.5, xz_pt.z))
+	q.collision_mask = 1
+	q.exclude = [_survivor.get_rid()]
+	q.collide_with_areas = false
+	return space.intersect_shape(q, 1).is_empty()
+
+
+func _ray_to(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dictionary:
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [_survivor]
+	q.collide_with_areas = false
+	return space.intersect_ray(q)
+
+
+## CollisionShape3D behind a ray/shape hit (a batched cell is many shapes on
+## one body, and the metas live on the shape owner).
+func _hit_shape_node(hit: Dictionary) -> CollisionShape3D:
+	if hit.is_empty():
+		return null
+	var collider: Object = hit.get("collider")
+	if collider == null or not (collider is CollisionObject3D):
+		return null
+	var co := collider as CollisionObject3D
+	var idx := int(hit.get("shape", -1))
+	if idx < 0:
+		return null
+	var owner := co.shape_owner_get_owner(co.shape_find_owner(idx))
+	if owner is CollisionShape3D:
+		return owner as CollisionShape3D
+	return null
+
+
+## Apply a confirmed grab (the verified record from _probe_ledge). Returns
+## false (no side effects) when the survivor lacks the stamina this lip
+## demands. Two honest outcomes:
+##  - stand_clear: assisted mantle, as before (boost + drive over the lip).
+##  - otherwise: an anchored hang on the measured lip - no boost, no clip, no
+##    silent sink; the body is pinned to the hold and can shimmy it, climb it
+##    when a real standing spot exists, or drop.
+func _commit_grab(dir: Vector3, rec: Dictionary) -> bool:
+	var rise := float(rec["rise"])
+	# Anti re-catch: after a climb leap the same edge must not be grabbed
+	# again on the way down - the hands need real progress.
+	if _climb_floor_y > -1.0e7:
+		var lip_y := float((rec["lip"] as Vector3).y)
+		if lip_y <= _climb_floor_y + LEDGE_CLIMB_HYSTERESIS:
+			return false
 	var cost := _ledge_stamina_cost(rise)
 	if _survivor.stamina < cost:
 		return false
-	# GRAB: pay stamina, launch into the climb, reset fall peak so the
-	# arrested descent does not charge fall damage.
 	_survivor.stamina -= cost
 	last_stamina_cost = cost
-	var need := rise + LEDGE_CLIMB_CLEARANCE
-	var boost: float = sqrt(2.0 * _survivor.GRAVITY * need)
-	boost = clampf(boost, LEDGE_CLIMB_BOOST_MIN, LEDGE_CLIMB_BOOST_MAX)
-	_survivor.velocity.y = boost
-	_survivor.velocity.x *= LEDGE_FORWARD_MULT
-	_survivor.velocity.z *= LEDGE_FORWARD_MULT
 	_ledge_cooldown = LEDGE_COOLDOWN
 	_peak_y = _survivor.global_position.y
 	ledge_grabs += 1
-	# Phase F: classify the wall (batched building structure vs plain prop),
-	# announce it, and arm the assisted drive that carries us over the lip.
+	var wall_hit: Dictionary = rec.get("wall", {})
+	var node: CollisionShape3D = rec.get("shape_node") as CollisionShape3D
+	var tag := StringName(rec.get("tag", &""))
 	var is_building := _hit_is_concrete(wall_hit)
+	if not is_building and node != null:
+		is_building = StringName(node.get_meta("vox_material", &"")) == &"concrete"
 	last_grab_was_building = is_building
 	if is_building:
 		rooftop_mantles += 1
-	# Phase M: feature-tagged grabs (street awnings today) count as their
-	# own soft-structure class - gentler follow-through than a concrete
-	# cornice, own lifetime counter for tests/HUD.
-	last_grab_was_awning = _hit_vox_tag(wall_hit) == &"awning"
+	last_grab_was_awning = tag == &"awning"
 	if last_grab_was_awning:
 		awning_grabs += 1
-	_climb_dir = dir
-	_climb_speed = CORNICE_DRIVE_SPEED if is_building else CLIMB_DRIVE_SPEED
-	if last_grab_was_awning:
-		_climb_speed = AWNING_DRIVE_SPEED
-	_climb_time_left = CLIMB_FOLLOW_TIME
+	last_hold_kind = StringName(rec.get("kind", &""))
+	last_hold_width = float(rec.get("usable_width", 0.0))
+	last_hold_depth = float(rec.get("usable_depth", 0.0))
+	last_hold_hang_clear = bool(rec.get("hang_clear", false))
+	last_hold_stand_clear = bool(rec.get("stand_clear", false))
+	# Honest hands: the LEDGE PROBE the locomotion hangs from is the verified
+	# lip and its real normal, not a point 0.45 m out in the air.
+	_ledge_probe = {
+		"rise": rise,
+		"ledge_pos": rec["lip"],
+		"ledge_normal": rec["wall_normal"],
+		"has_hit": true,
+		"ledge_length": float(rec.get("usable_width", 0.0)),
+		"class": String(rec.get("class", &"")),
+		"kind": String(rec.get("kind", &"")),
+		"wall": wall_hit,
+		"dir": dir,
+		"hold": rec,
+	}
+	# Shimmy only exists where the ledge was measured long enough for it.
+	if float(rec.get("usable_width", 0.0)) >= 2.0 - 0.05:
+		_shimmy_probe = {
+			"has_hit": true,
+			"ledge_length": float(rec.get("usable_width", 0.0)),
+			"wall_length": float(rec.get("usable_width", 0.0)),
+			"ledge_pos": rec["lip"],
+			"ledge_normal": rec["wall_normal"],
+			"tangent": rec["tangent"],
+			"half_width": float(rec.get("usable_half_width", 0.0)),
+		}
+	else:
+		_shimmy_probe = {}
+	_hang_hold = rec.duplicate(false)
+	_hang_hold["anchored"] = not last_hold_stand_clear
+	_hang_hold["travel"] = 0.0
+	if last_hold_stand_clear:
+		var need := rise + LEDGE_CLIMB_CLEARANCE
+		var boost: float = clampf(
+			sqrt(2.0 * _survivor.GRAVITY * need),
+			LEDGE_CLIMB_BOOST_MIN, LEDGE_CLIMB_BOOST_MAX)
+		_survivor.velocity.y = maxf(_survivor.velocity.y, boost)
+		_survivor.velocity.x *= LEDGE_FORWARD_MULT
+		_survivor.velocity.z *= LEDGE_FORWARD_MULT
+		_climb_dir = dir
+		_climb_speed = CORNICE_DRIVE_SPEED if is_building else CLIMB_DRIVE_SPEED
+		if last_grab_was_awning:
+			_climb_speed = AWNING_DRIVE_SPEED
+		_climb_time_left = CLIMB_FOLLOW_TIME
+	else:
+		_survivor.velocity = Vector3.ZERO
+		_climb_time_left = -1.0
+		_climb_speed = 0.0
+	_climb_floor_y = -1.0e8
 	ledge_grabbed.emit(is_building)
 	return true
 
@@ -608,7 +937,10 @@ func reset_fall_tracking(feet_y: float) -> void:
 func tick(_delta: float) -> void:
 	if _survivor == null or _survivor.health.is_dead:
 		return
+	# Q2: hold a hang on its verified lip (bounded, after the physics step).
+	_tick_anchored_hang(_delta)
 	if _survivor.is_on_floor():
+		_climb_floor_y = -1.0e8
 		var drop := _peak_y - _survivor.global_position.y
 		if drop > FALL_SAFE_HEIGHT:
 			_survivor.take_damage(
@@ -616,3 +948,160 @@ func tick(_delta: float) -> void:
 		_peak_y = _survivor.global_position.y
 	else:
 		_peak_y = maxf(_peak_y, _survivor.global_position.y)
+
+## Q2: the owning locomotion state as an int (-1 when there is no locomotion).
+func _loco_state() -> int:
+	if _survivor == null or not _survivor.has_method("get_locomotion"):
+		return -1
+	var loco = _survivor.get_locomotion()
+	if loco == null or not is_instance_valid(loco):
+		return -1
+	return int(loco.state)
+
+
+func _is_hanging_state(st: int) -> bool:
+	return st == CharacterLocomotion.State.HANG \
+			or st == CharacterLocomotion.State.SHIMMY \
+			or st == CharacterLocomotion.State.DROP2HANG
+
+
+## Q2 anchored hang. While the locomotion hangs off a verified hold that has no
+## standing spot on it, gravity used to drag the body down the facade every
+## frame - the pre-Q2 "sink". Here the body is held at the measured lip:
+##  - wall-normal offset and height follow the lip (hands where they were put),
+##  - tangential travel stays free (that is the shimmy the survivor drives) but
+##    is clamped to the ledge width we actually measured,
+##  - every correction is capped at HANG_SNAP_MAX per frame, so this is a
+##    bounded skin and never a teleport,
+##  - the hold is released the instant the state leaves the hang set.
+func _tick_anchored_hang(delta: float) -> void:
+	if _hang_hold.is_empty() or _survivor == null or _survivor.health.is_dead:
+		return
+	if not bool(_hang_hold.get("anchored", false)):
+		return
+	var st := _loco_state()
+	if st == CharacterLocomotion.State.DROP2HANG:
+		_hang_hold = {}                        # deliberate let-go: no pinning
+		return
+	if st == CharacterLocomotion.State.CLIMB_UP:
+		return                              # mantle in flight: hands are free
+	if not _is_hanging_state(st):
+		_hang_hold = {}
+		return
+	hang_ticks += 1
+	var lip: Vector3 = _hang_hold["lip"]
+	var w_dir: Vector3 = _hang_hold["wall_normal"]
+	# Q2 shimmy axis: the survivor's own right-hand axis on the hold's wall. The
+	# stored `tangent` is its mirror, and the body's strafe recipe cannot carry a
+	# shimmy at all - it turns to face its own input, so its strafe reads 0 on the
+	# very next frame and the old hands walked nowhere. The travel is therefore
+	# driven here, along the width this hold was measured to have.
+	var tan: Vector3 = (-w_dir).cross(Vector3.UP).normalized()
+	var half_w := float(_hang_hold.get("usable_half_width", 0.0))
+	var pos := _survivor.global_position
+	var travel := (pos - lip).dot(tan)
+	travel = _drive_shimmy(travel, tan, half_w, delta)
+	# Walking into the end of the measured ledge: offer the corner once.
+	if absf(travel) >= half_w - 0.02 and not bool(_hang_hold.get("handoff_tried", false)):
+		_hang_hold["handoff_tried"] = true
+		if _try_corner_handoff(tan * signf(travel), lip):
+			return
+	if absf(travel) >= half_w - 0.02 and int(_hang_hold.get("ends_counted", 0)) == 0:
+		_hang_hold["ends_counted"] = 1
+		shimmy_ends += 1
+	var want := clampf(travel, -half_w, half_w)
+	_hang_hold["travel"] = want
+	var target := lip + w_dir * HANG_WALL_OFFSET + tan * want
+	target.y = lip.y - HANG_BODY_DROP
+	pos += (target - pos).limit_length(HANG_SNAP_MAX)
+	_survivor.global_position = pos
+	# Hands carry the weight: no downward drift while anchored.
+	_survivor.velocity.y = maxf(_survivor.velocity.y, 0.0)
+
+
+## Q2 shimmy drive. One honest number decides the travel: the usable half-width
+## measured on the hold in hand. The locomotion's strafe recipe cannot carry a
+## shimmy (see _tick_anchored_hang), so the anchored hang advances the hands
+## along the ledge by the player's tangential intent and clamps them to that
+## measured width - the shimmy ends where the geometry ends, never in mid-air.
+func _drive_shimmy(travel: float, tan: Vector3, half_w: float, delta: float) -> float:
+	if half_w <= 0.0:
+		return clampf(travel, -half_w, half_w)
+	var md: Variant = _survivor.get("_move_dir")
+	var intent := 0.0
+	if md is Vector3:
+		intent = clampf((md as Vector3).dot(tan), -1.0, 1.0)
+	if absf(intent) <= 0.15:
+		return clampf(travel, -half_w, half_w)
+	shimmy_driven_ticks += 1
+	last_shimmy_travel = clampf(travel + intent * SHIMMY_DRIVE_SPEED * delta, -half_w, half_w)
+	return last_shimmy_travel
+
+
+## Q2 corner handoff: the shimmy reached the end of the measured ledge while
+## still pushing outward, so look round the corner (perpendicular to the ledge
+## tangent) for a fresh verified hold at a sane height and, when there is one,
+## hand the body over to it instead of dead-stopping against the end.
+func _try_corner_handoff(corner_dir: Vector3, from_lip: Vector3) -> bool:
+	var rec := _probe_ledge(corner_dir)
+	if rec.is_empty():
+		return false
+	var dy := float((rec["lip"] as Vector3).y) - from_lip.y
+	if dy < CORNER_RISE_MIN or dy > CORNER_RISE_MAX:
+		return false
+	if not _commit_grab(corner_dir, rec):
+		return false
+	corner_handoffs += 1
+	return true
+
+
+## Q2 climb-from-hang (jump input while hanging). With a measured standing spot
+## on the lip: mantle onto it. Without one: leap for a higher hold - the falling
+## grab re-arms off the lip we left (LEDGE_CLIMB_HYSTERESIS), so the same edge
+## cannot be caught twice in a row.
+func _try_hang_climb() -> void:
+	if _hang_hold.is_empty() or _survivor == null or _survivor.exhausted:
+		return
+	var rise := float(_hang_hold.get("rise", 1.0))
+	var cost := _ledge_stamina_cost(rise)
+	if _survivor.stamina < cost:
+		return
+	_survivor.stamina -= cost
+	last_stamina_cost = cost
+	var lip: Vector3 = _hang_hold["lip"]
+	var w_dir: Vector3 = _hang_hold["wall_normal"]
+	ledge_climbs += 1
+	if bool(_hang_hold.get("stand_clear", false)):
+		var need: float = maxf(
+			0.40, lip.y - _survivor.global_position.y + LEDGE_CLIMB_CLEARANCE)
+		_survivor.velocity.y = clampf(
+			sqrt(2.0 * _survivor.GRAVITY * need),
+			LEDGE_CLIMB_BOOST_MIN, LEDGE_CLIMB_BOOST_MAX)
+		_climb_dir = -w_dir                      # drive onto the top face
+		_climb_speed = CORNICE_DRIVE_SPEED
+		_climb_time_left = CLIMB_FOLLOW_TIME
+		_ledge_cooldown = LEDGE_COOLDOWN
+	else:
+		_survivor.velocity.y = maxf(_survivor.velocity.y, JUMP_SPEED * 0.9)
+		_ledge_cooldown = LEDGE_CORNER_COOLDOWN
+		_climb_floor_y = lip.y
+	_hang_hold = {}
+
+
+## Q2 hold report for tests, HUD and debug overlays.
+func get_hold_report() -> Dictionary:
+	return {
+		"accepts": hold_accepts,
+		"rejects": hold_rejects,
+		"kind": String(last_hold_kind),
+		"width": last_hold_width,
+		"depth": last_hold_depth,
+		"hang_clear": last_hold_hang_clear,
+		"stand_clear": last_hold_stand_clear,
+		"shimmy_ends": shimmy_ends,
+		"corner_handoffs": corner_handoffs,
+		"climbs": ledge_climbs,
+		"hang_ticks": hang_ticks,
+		"shimmy_ticks": shimmy_driven_ticks,
+		"shimmy_travel": last_shimmy_travel,
+	}
