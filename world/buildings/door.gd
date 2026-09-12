@@ -85,6 +85,15 @@ func _ready() -> void:
 	_leaf.gravity_scale = 0.0
 	_leaf.axis_lock_angular_x = true
 	_leaf.axis_lock_angular_z = true
+	# HINGE-ORIGIN MASS CENTRE (measured fix). The leaf body's origin is the
+	# hinge, but its only collision shape sits half a width across the doorway,
+	# so Godot's AUTO centre of mass landed on the leaf's MIDDLE and every
+	# angular_velocity drive spun the leaf about its centre: measured, the leaf
+	# centre held at the aperture middle (0.00 m of travel) while the hinge
+	# point orbited 0.73 m - a door turning in place like a revolving prop.
+	# Real doors turn on their edge, so the mass centre is pinned to the hinge.
+	_leaf.center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	_leaf.center_of_mass = Vector3.ZERO
 	# A closed door starts as a settled, physical leaf. Without an anchored
 	# initial pose, gravity can move the rigid body before the first interaction
 	# and leave the manifest aperture unblocked even though the door is CLOSED.
