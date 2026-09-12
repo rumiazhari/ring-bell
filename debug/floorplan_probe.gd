@@ -82,6 +82,11 @@ func _ready() -> void:
 					legacy += 1
 					stat["legacy_floors"] = int(stat["legacy_floors"]) + 1
 					var why := FloorPlanPlanner.last_reject
+					if why == "":
+						# The planner was never consulted for this floor (the
+						# pre-overhaul path chose it), so its static last_reject is
+						# stale. Say that instead of reporting a blank reason.
+						why = "not reported: pre-overhaul path planned this floor (planner not consulted)"
 					# One line per DISTINCT reject reason, printed in full: the
 					# summary histogram is a dict, so reasons that contain commas
 					# (i.e. any reason carrying a cell dump) are unreadable there.

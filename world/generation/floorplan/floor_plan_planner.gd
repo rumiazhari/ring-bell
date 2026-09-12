@@ -32,6 +32,11 @@ const OPEN_W := 0.95
 const MIN_INNER := 4.2
 ## Shortest shared edge that can hold a 0.95 aperture plus jambs.
 const DOOR_EDGE_MIN := 1.25
+## Two circulation cells are the same circulation system: the edge only
+## has to carry the aperture (0.95) plus slim jambs. Sealing a 1.19 m
+## landing-to-corridor edge splits the floor's circulation in two, and
+## the reachability gate rightly rejects that plan.
+const PASSAGE_EDGE_MIN := 1.15
 ## Shared edge must be at least this long to count as a room boundary at all.
 const EDGE_MIN := 0.55
 const SEALED := Rect2(0.0, 0.0, 0.0, 0.0)
@@ -741,7 +746,7 @@ static func _adjacency(cells: Array) -> Array:
 
 ## Emit one boundary. Returns true when a real door was cut.
 static func _add_boundary(parts: Array, door_list: Array, a_i: int, b_i: int,
-		e: Dictionary, with_door: bool) -> bool:
+		e: Dictionary, with_door: bool, edge_min: float = DOOR_EDGE_MIN) -> bool:
 	var lo := float(e["lo"])
 	var hi := float(e["hi"])
 	var at := float(e["at"])
@@ -754,7 +759,7 @@ static func _add_boundary(parts: Array, door_list: Array, a_i: int, b_i: int,
 			else Rect2(at - h, lo, WALL_T, hi - lo)
 	var door := false
 	var opening := SEALED
-	if with_door and hi - lo >= DOOR_EDGE_MIN:
+	if with_door and hi - lo >= edge_min:
 		var c := clampf((lo + hi) * 0.5, lo + OPEN_W * 0.5 + 0.12, hi - OPEN_W * 0.5 - 0.12)
 		# Opening rect: 0.95 aperture along the wall, 1.0 deep across it (the
 		# same shape InteriorPlan's own partitions use; consumers split the wall
@@ -777,11 +782,15 @@ static func _boundaries(cells: Array) -> Dictionary:
 	var parts: Array = []
 	var door_list: Array = []
 	# 1. circulation connects to circulation - the hall always reaches the spine.
+	# Two circ cells open to each other with a passage (PASSAGE_EDGE_MIN): a
+	# landing and its corridor are one space, and a sealed edge between them
+	# would split the floor's circulation into two components.
 	for e: Dictionary in adj:
 		var a: Dictionary = cells[int(e["i"])]
 		var b: Dictionary = cells[int(e["j"])]
 		if bool(a["circ"]) and bool(b["circ"]):
-			if _add_boundary(parts, door_list, int(e["i"]), int(e["j"]), e, true):
+			if _add_boundary(parts, door_list, int(e["i"]), int(e["j"]), e, true,
+					PASSAGE_EDGE_MIN):
 				a["doors"] = int(a["doors"]) + 1
 				b["doors"] = int(b["doors"]) + 1
 	# 2. every room gets its door on the widest edge it shares with circulation.

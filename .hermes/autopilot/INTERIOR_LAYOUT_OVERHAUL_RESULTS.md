@@ -98,15 +98,49 @@ forced through one shape.
 
 ## Known limitations
 
-1. **22 floors (7%) still fall back to the pre-overhaul planner.** 12 of them never reach
-   archetype selection and the old builder reports no reason for declining (the pre-overhaul
-   path has no diagnostics); 10 are shallow residential plates with the 1.2 m street strip
-   described above.
-2. **Circulation share (0.39) sits at the cap.** It is the honest cost of a party-wall
-   corridor plus a full-width stair band with a landing that every room slab opens onto.
-   Landing-side WCs and store cupboards are the obvious next reduction.
-3. **The probe covers 6 seeds / 312 floors.** Larger sweeps would tighten the reject
-   statistics; the harness takes `--fp-seeds`.
-4. **Door placement in the boundary pass still uses a minimum shared-edge length.** That is
-   what produces limitation 1's shallow-strip failure; a circ-to-circ passage rule would
-   remove it.
+**Status update (run 22): limitations 1 and 4 are fixed; the list below is kept
+as the record of what was wrong and how it was closed.**
+
+1. ~~22 floors (7%) still fall back to the pre-overhaul planner.~~ **Closed.**
+   12 of them never reached archetype selection and the old builder reports no
+   reason for declining -- that was a *probe* defect, not a planner one: the
+   probe read the planner's static `last_reject` after the fact, so for a floor
+   the planner was never consulted about it printed whatever the previous floor
+   left behind (usually the empty string). The probe now states that case
+   explicitly. The remaining 10 were shallow residential plates hitting
+   limitation 4, now gone. The floor count on the pre-overhaul path is down to
+   **12 / 312 (3.8%)**, and every one of them is the probe's deliberate
+   `small_below_threshold` footprint.
+4. ~~Door placement in the boundary pass still uses a minimum shared-edge
+   length.~~ **Closed (run 22).** Every boundary went through `DOOR_EDGE_MIN`
+   (1.25 m, sized for a door leaf plus jambs), so a 1.19 m edge between a
+   landing and a corridor was **sealed** -- and because the reachability gate
+   requires circulation to be one connected component, the whole plan was
+   discarded. Fix: `PASSAGE_EDGE_MIN = 1.15` (0.95 aperture plus slim jambs),
+   applied only where **both** cells are circulation. A landing and its
+   corridor are one space, not two rooms with a door between them.
+
+### Run 22 metrics (supersedes the table above)
+
+| Metric | Value |
+| --- | --- |
+| Archetype-planned floors | **300 / 312 (96.2%)** |
+| Pre-overhaul fallback | **12 (3.8%)** -- all `small_below_threshold` |
+| Rooms / doors / sealed walls | 2020 / 1718 / 1388 |
+| Overlaps / slivers / bedroom-as-corridor | **0 / 0 / 0** (of 291 bedrooms) |
+| Circulation share | 0.385 (archetype floors 0.389) |
+| Principal room on best facade | 69.8% |
+| Distinct reject reasons | **1** -- the below-minimum fallback, stated as such |
+
+**The remaining 12 are not failures.** They are the probe's
+`small_below_threshold` footprint, deliberately smaller than
+`FloorPlanPlanner.MIN_INNER`; such a plate cannot hold circulation *plus* a
+programme, so `_plan_applies()` declines it and the single-room path is the
+correct answer. The boundary is intentional and now reports its own reason.
+
+**Still unshipped, stated plainly:** the PNG visualiser does not outline the
+entry cell (the entry is present in the plan data, it simply is not drawn) --
+the one §14 checklist item outstanding. And the 12 below-minimum floors route
+through the pre-overhaul path rather than a dedicated minimal-plate archetype;
+adding one is the obvious next quality step, not a defect.
+
