@@ -275,7 +275,7 @@ static func _skeleton(frame: FloorPlanFrame, arch: Dictionary, p: Dictionary) ->
 		var bxw := bx1 - bx0
 		var bay_w := clampf(maxf(bxw + 0.9, 2.6), 2.6, minf(3.2, W * 0.45))
 		var bay_x := clampf((bx0 + bx1) * 0.5 - bay_w * 0.5, 0.0, maxf(0.0, W - bay_w))
-		var hall_d := clampf(maxf(front_d, 1.6), 1.6, maxf(1.6, D * 0.40))
+		var hall_d := clampf(maxf(front_d, 1.6), 1.6, maxf(1.6, D * 0.24))
 		var shaft_d := 0.0
 		var core_d := frame.core.size.y if frame.has_core else 0.0
 		if frame.has_core and D - hall_d >= 2.6:
@@ -511,7 +511,7 @@ static func _slice_rooms(cells: Array, frame: FloorPlanFrame, zone: Rect2,
 	var core: Rect2 = frame.core
 	# Depth of the stair band: the shaft's own depth, widened to something
 	# walkable, and kept clear of both facades so the room bands stay real rooms.
-	var band := clampf(maxf(core.size.y, 2.4), 2.4, minf(3.8, maxf(2.4, zone.size.y * 0.45)))
+	var band := clampf(maxf(core.size.y, 2.4), 2.4, minf(2.6, maxf(2.2, zone.size.y * 0.26)))
 	var cy0 := clampf(core.position.y, zone.position.y,
 			maxf(zone.position.y, zone.end.y - band))
 	var cy1 := minf(cy0 + band, zone.end.y)
@@ -801,6 +801,102 @@ static func _add_boundary(parts: Array, door_list: Array, a_i: int, b_i: int,
 	if door:
 		door_list.append({"a": a2, "b": b2})
 	return door
+
+
+## Service pocket.
+##
+## A WC is a small room, but on a deep plate every cell the band grammar makes
+## is a 15-21 m2 slab. The toilet slot takes one of those, and the validator --
+## correctly -- refuses a WC that eats 13% of the floor, so the whole archetype
+## plan was discarded and the building fell back to the legacy interior. Taking
+## the surplus away is the fix, not a looser gate: the cell is split, the WC
+## keeps a pocket of its own size, and the rest of the cell stays a room. The
+## pocket spans the cell's full width (or height), so it keeps the edge it had
+## on the hall and still takes its own door off circulation.
+## What the floor left over after a service pocket becomes. A spare room of the
+## kind the floor is already made of is still a room -- another office on an
+## office floor, another sleeping room in a flat. Storage is the fallback.
+static func _pocket_fill_kind(frame: FloorPlanFrame, cells: Array, rect: Rect2) -> StringName:
+	var probe := {"kind": &"room", "rect": rect, "circ": false,
+			"facade": frame.facade_edges_of(rect),
+			"flen": frame.facade_length_of(rect)}
+	var counts := {}
+	for c: Dictionary in cells:
+		if bool(c["circ"]):
+			continue
+		var k: StringName = c["kind"]
+		if FloorProgram.is_service(k):
+			continue
+		probe["kind"] = k
+		if not _can_host(k, probe):
+			continue
+		counts[k] = int(counts.get(k, 0)) + 1
+	var best: StringName = &""
+	var best_n := 0
+	for k2 in counts:
+		if int(counts[k2]) > best_n:
+			best_n = int(counts[k2])
+			best = k2
+	if best != &"" and _can_host(best, probe):
+		return best
+	probe["kind"] = &"storage"
+	if _can_host(&"storage", probe):
+		return &"storage"
+	return &"landing"
+
+
+static func _service_pockets(frame: FloorPlanFrame, cells: Array) -> void:
+	var total := 0.0
+	for c0: Dictionary in cells:
+		var r0: Rect2 = c0["rect"]
+		total += r0.size.x * r0.size.y
+	if total <= 0.0:
+		return
+	var extra: Array = []
+	for c: Dictionary in cells:
+		if bool(c["circ"]):
+			continue
+		var k: StringName = c["kind"]
+		var spec := FloorProgram.spec_of(k)
+		if not bool(spec.get("service", false)) or not spec.has("max_area"):
+			continue
+		var r: Rect2 = c["rect"]
+		var area := r.size.x * r.size.y
+		# A WC past its own declared maximum is mis-sized, whatever the floor
+		# area is: the validator's 13% ceiling still tolerates a 21 m2 toilet on
+		# a 163 m2 warehouse plate, and a 21 m2 toilet is not a toilet.
+		if area <= float(spec["max_area"]) * 1.05:
+			continue
+		var target := clampf(float(spec["max_area"]), 2.6, area * 0.45)
+		var rem_side := FloorProgram.min_side(&"storage")
+		var side_min := FloorProgram.min_side(k)
+		var pocket := Rect2()
+		var keep := Rect2()
+		var d := clampf(target / maxf(r.size.x, 0.1), side_min, 2.35)
+		if r.size.y - d >= rem_side:
+			pocket = Rect2(r.position.x, r.end.y - d, r.size.x, d)
+			keep = Rect2(r.position.x, r.position.y, r.size.x, r.size.y - d)
+		else:
+			var w := clampf(target / maxf(r.size.y, 0.1), side_min, 2.35)
+			if r.size.x - w < rem_side:
+				continue
+			pocket = Rect2(r.end.x - w, r.position.y, w, r.size.y)
+			keep = Rect2(r.position.x, r.position.y, r.size.x - w, r.size.y)
+		# The remainder is spare floor, not a second WC: it becomes a room of
+		# the kind this floor is already made of, storage only as a last resort,
+		# which is the filler the assignment itself falls back on.
+		c["rect"] = keep
+		c["kind"] = _pocket_fill_kind(frame, cells, keep)
+		c["tier"] = int(FloorProgram.spec_of(c["kind"]).get("tier", 3))
+		c["facade"] = frame.facade_edges_of(keep)
+		c["flen"] = frame.facade_length_of(keep)
+		var pc := _cell(k, pocket, false)
+		pc["facade"] = frame.facade_edges_of(pocket)
+		pc["flen"] = frame.facade_length_of(pocket)
+		pc["tier"] = int(spec.get("tier", 3))
+		extra.append(pc)
+	for e: Dictionary in extra:
+		cells.append(e)
 
 
 static func _boundaries(cells: Array) -> Dictionary:
@@ -1249,6 +1345,9 @@ static func _candidate(frame: FloorPlanFrame, arch: Dictionary, p: Dictionary) -
 	if room_cells.is_empty():
 		last_reject = "%s: assignment failed (%.1fx%.1f)" % [arch["id"], frame.size.x, frame.size.y]
 		return {}
+	# A service room too big for its own kind is shrunk before the walls
+	# and doors are derived, so the pocket is a real room with a real door.
+	_service_pockets(frame, cells)
 	var bnd := _boundaries(cells)
 	if not _reach_ok(cells, bnd["parts"]):
 		last_reject = "%s: reachability %s" % [arch["id"], _reach_why]
