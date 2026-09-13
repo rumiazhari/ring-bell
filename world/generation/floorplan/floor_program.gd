@@ -122,6 +122,58 @@ static func min_side(kind: StringName) -> float:
 	return float(spec_of(kind).get("min_side", 1.2))
 
 
+## Priority order used when a plate cannot host the whole programme.
+##
+## Trimming by position produced kitchenless dwellings: the middle of the
+## residential list is a repeated bedroom, so the slot that should have gone to
+## the kitchen went to a second sleeper while the toilet tail was protected
+## regardless. Essentials outrank repeats; a dwelling with one bedroom and a
+## kitchen is a smaller dwelling, not a broken one.
+const CORE := {
+	"residential": [&"living", &"kitchen", &"sleeping"],
+	"caretaker": [&"living", &"kitchen"],
+	"retail": [&"sales", &"store_room"],
+	"tavern": [&"taproom", &"kitchen", &"store_room"],
+	"office": [&"reception", &"office"],
+	"government": [&"reception", &"council"],
+	"police": [&"reception", &"office"],
+	"hospital": [&"reception", &"ward"],
+	"workshop": [&"machine_shop", &"craft"],
+	"storage": [&"warehouse", &"loading"],
+}
+
+
+## Append kinds from `src` (in order, respecting its multiplicities) until
+## `out` reaches `target`.
+## The rooms that make a floor what it is: without them the programme is
+## not trimmed, it is broken. A dwelling with one bedroom and a kitchen is a
+## smaller dwelling; a dwelling with a bedroom and no WC is not a dwelling.
+static func is_essential(use: String, fi: int, kind: Variant) -> bool:
+	var base: Array = GROUND.get(use, GROUND["residential"]) if fi == 0 else \
+			UPPER.get(use, UPPER["residential"])
+	if base.is_empty():
+		return false
+	if kind == base[base.size() - 1]:
+		return true
+	return CORE.get(use, []).has(kind)
+
+
+static func _fill(out: Array, src: Array, target: int) -> Array:
+	var used := {}
+	for x: Variant in out:
+		used[x] = int(used.get(x, 0)) + 1
+	for k: Variant in src:
+		if out.size() >= target:
+			break
+		var want := 0
+		for y: Variant in src:
+			if y == k:
+				want += 1
+		if int(used.get(k, 0)) < want:
+			out.append(k)
+			used[k] = int(used.get(k, 0)) + 1
+	return out
+
 ## Programme for one floor, trimmed/padded to `cells` rooms.
 static func slots(use: String, fi: int, cells: int) -> Array:
 	var base: Array = GROUND.get(use, GROUND["residential"]) if fi == 0 else \
@@ -130,29 +182,39 @@ static func slots(use: String, fi: int, cells: int) -> Array:
 		base = UPPER["residential"]
 	var out: Array = []
 	var n := maxi(cells, 1)
+	var extra: StringName = EXTRA.get(use, &"storage")
 	if n <= base.size():
-		# Always keep the principal room and the tail (toilet/store) and drop
-		# from the middle when the footprint cannot host the whole programme.
+		# Principal room, then this use's essentials in priority order (the
+		# service tail excepted -- it is added last and never dropped), then
+		# whatever the base programme repeats, then the tail.
 		out.append(base[0])
-		var middle := base.slice(1, base.size() - 1)
-		var tail: Array = [base[base.size() - 1]]
-		var want := n - out.size() - (1 if n >= 2 else 0)
-		for i in range(maxi(want, 0)):
-			if i < middle.size():
-				out.append(middle[i])
-		if n >= 2:
-			out.append_array(tail)
+		var tail: Variant = base[base.size() - 1]
+		var target := maxi(n - 1, 1)
+		for k: StringName in CORE.get(use, []):
+			if out.size() >= target:
+				break
+			if k != tail and not out.has(k) and base.has(k):
+				out.append(k)
+		out = _fill(out, base.slice(1, base.size() - 1), target)
+		out = _fill(out, base, target)
+		if n >= 2 and not out.has(tail):
+			out.append(tail)
 	else:
 		out.append_array(base)
-		var extra: StringName = EXTRA.get(use, &"storage")
-		while out.size() < n:
-			out.append(extra)
+	while out.size() < n:
+		out.append(extra)
+	if out.size() > n:
+		out.resize(n)
 	return out
 
 
 ## Aggregate programme check used by the many-seed statistics: does the floor
 ## carry the rooms its use implies at this depth?
-static func required_kinds(use: String, fi: int) -> Array:
+static func required_kinds(use: String, fi: int, cells: int = -1) -> Array:
+	# With a cell count this is the contract the planner must satisfy, not a
+	# description: the validator rejects a floor that quietly lost a room.
+	if cells > 0:
+		return slots(use, fi, cells)
 	var base: Array = GROUND.get(use, GROUND["residential"]) if fi == 0 else \
 			UPPER.get(use, UPPER["residential"])
 	var out: Array = [base[0]]

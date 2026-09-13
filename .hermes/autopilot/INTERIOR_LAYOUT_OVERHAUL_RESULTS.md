@@ -156,3 +156,64 @@ path rather than a dedicated minimal-plate archetype; adding one is the obvious
 next quality step, not a defect.
 
 
+
+## Audit pass: programme completeness (2026-09-13, run 29)
+
+The audit of the interior system found that its metrics measured *structure*
+and never asked whether a dwelling was a dwelling. This pass fixed the
+generator and made the missing measurement explicit.
+
+### Root cause found
+`FloorProgram.slots()` trimmed a floor's room programme by **position**: it
+kept `base[0]` (living) plus the service tail (toilet) and took the rest from
+the middle, so on a three-room floor the third slot went to a second bedroom
+and the **kitchen was dropped** while the WC was never dropped. `required_kinds()`
+-- the function that would have caught this -- was **dead code, called from
+nowhere**, and the probe aggregated room kinds globally, so no number in any
+previous report could have shown it.
+
+### Changes
+- `slots()` trims by **priority**, not position: principal room, then the
+  use's essential rooms (CORE), then repeats, then the service tail. A kitchen
+  now outranks a second bedroom, which is the architectural ordering.
+- `is_essential()` + an essential-room rescue in `_assign`: when no cell passes
+  the host test, an essential room gets a second search with a slightly relaxed
+  test (0.95x min_side / 0.85x min_area -- deliberately *inside* the validator's
+  own 0.92x / 0.80x sliver tolerances, so a rescue can never manufacture a
+  sliver) before the downgrade path may fire and rename the room.
+- Service rooms take the **smallest adequate cell** (`_serv_fit`), consulting
+  the declared `max_area` that previously existed but was never consulted.
+- Candidate starvation fixed: selection stopped at 3 candidates while each
+  archetype contributes two mirrorings, so everything declared after the first
+  applicable archetype was never constructed. Cap raised to 8 plus a
+  per-archetype `priority` term, so specialised archetypes win over generic
+  fallbacks. `reject_log` records per-candidate reasons (cleared per floor) and
+  `last_reject` no longer reports only the last candidate's verdict.
+
+### Measured effect (108 buildings / 312 floors, 6 seeds)
+| metric | before | after |
+| --- | --- | --- |
+| kitchen rooms per living room | 58% | **104%** |
+| toilet rooms per living room | 227% | 171% |
+| sleeping per living | 2.20 | 1.68 |
+| floors planned through an archetype | 96.2% | 59.9% |
+
+### Known limitation introduced by this pass (honest)
+Coverage fell to 59.9%. The cause is precise: on deep spine plates the cell
+subdivision produces no *small* cell, so the WC -- now correctly kept as a WC
+instead of being silently downgraded to storage -- occupies a 13-17 m2 cell and
+trips the pre-existing `toilet_area` gate (34 of 108 buildings). The real fix is
+to carve a small service pocket in the circulation-band grammar so a WC has a
+cell of its own size; that is a design change to the band grammar, not a
+threshold change, and is the next step. Relaxing the gate further was rejected:
+the gate is right that a 15 m2 WC is wrong.
+
+### New checks (`.hermes/tools/floorplan_gate.py`)
+Run 24 printed `floorplan probe finished with 0 failure(s)` while planning
+**zero** floors through archetypes. The probe's exit code does not cover
+programme completeness, coverage or archetype liveness, so the gate asserts
+them separately: coverage >= 90%, kitchen presence >= 70% of residential
+floors, no more than 2 never-selected archetypes, structural invariants
+unchanged. Known limitation: it currently reads the suite summary line, which a
+concurrent track's broken `core/autoload/item_db.gd` invalidates; it must be
+pointed at the `ARCHETYPE_ONLY` line.

@@ -45,62 +45,62 @@ const SEALED := Rect2(0.0, 0.0, 0.0, 0.0)
 ## hard applicability conditions, not scoring hints. Order = preference.
 const ARCHETYPES := [
 	{  # 1 - narrow Prague house: one-room-wide, deep, rooms stacked front->back
-		"id": "prague_narrow_townhouse", "roles": [&"residential"],
+		"id": "prague_narrow_townhouse", "priority": 1, "roles": [&"residential"],
 		"max_w": 7.2, "spine_frac": 0.15, "spine_max": 1.15, "front_frac": 0.20,
 		"row_depth": 3.6, "max_rows": 4, "front_split": true, "back_split": false,
 	},
 	{  # 2 - classic side-spine flat: corridor down one side, rooms off it
-		"id": "prague_side_spine_flat", "roles": [&"residential"],
+		"id": "prague_side_spine_flat", "priority": 0, "roles": [&"residential"],
 		"spine_frac": 0.16, "spine_max": 1.40, "front_frac": 0.22,
 		"row_depth": 4.3, "max_rows": 3, "front_split": true, "back_split": true,
 	},
 	{  # 3 - deep tenement: two room rows per column, wider spine
-		"id": "prague_deep_tenement", "roles": [&"residential"],
+		"id": "prague_deep_tenement", "priority": 1, "roles": [&"residential"],
 		"min_w": 8.6, "min_d": 11.0, "spine_frac": 0.17, "spine_max": 1.50,
 		"front_frac": 0.20, "row_depth": 4.6, "max_rows": 3,
 		"front_split": true, "back_split": true,
 	},
 	{  # 4 - tiny flat: no front room, everything doubles off the hall
-		"id": "prague_compact_flat", "roles": [&"residential"],
+		"id": "prague_compact_flat", "priority": 2, "roles": [&"residential"],
 		"max_area": 62.0, "spine_frac": 0.15, "spine_max": 1.10, "front_frac": 0.30,
 		"row_depth": 4.0, "max_rows": 2, "front_split": false, "back_split": false,
 	},
 	{  # 5 - open on two sides: principal room takes the best facade. A courtyard
 	   # plot is deep by definition; on a shallow plate this archetype only
 	   # produces a street strip too narrow to hang a door on.
-		"id": "courtyard_double_front", "roles": [&"residential"],
+		"id": "courtyard_double_front", "priority": 2, "roles": [&"residential"],
 		"min_open_sides": 2, "min_w": 7.6, "min_d": 7.4,
 		"spine_frac": 0.16, "spine_max": 1.30,
 		"front_frac": 0.22, "row_depth": 4.2, "max_rows": 3,
 		"front_split": true, "back_split": true,
 	},
 	{  # 6 - shopfront + rear service
-		"id": "shopfront_rear_service", "roles": [&"commercial"],
+		"id": "shopfront_rear_service", "priority": 0, "roles": [&"commercial"],
 		"spine_frac": 0.16, "spine_max": 1.35, "front_frac": 0.24,
 		"row_depth": 4.4, "max_rows": 2, "big_front": true, "back_split": false,
 	},
 	{  # 7 - tavern: big taproom front, kitchen/store behind
-		"id": "tavern_taproom_ground", "roles": [&"commercial"],
+		"id": "tavern_taproom_ground", "priority": 1, "roles": [&"commercial"],
 		"min_w": 7.0, "spine_frac": 0.16, "spine_max": 1.40, "front_frac": 0.26,
 		"row_depth": 4.6, "max_rows": 2, "big_front": true, "back_split": true,
 	},
 	{  # 8 - office suite off a corridor
-		"id": "office_corridor_suite", "roles": [&"civic"],
+		"id": "office_corridor_suite", "priority": 1, "roles": [&"civic"],
 		"spine_frac": 0.15, "spine_max": 1.40, "front_frac": 0.22,
 		"row_depth": 3.8, "max_rows": 4, "front_split": true, "back_split": true,
 	},
 	{  # 9 - civic reception hall
-		"id": "civic_reception_hall", "roles": [&"civic"],
+		"id": "civic_reception_hall", "priority": 0, "roles": [&"civic"],
 		"spine_frac": 0.16, "spine_max": 1.35, "front_frac": 0.24,
 		"row_depth": 4.4, "max_rows": 2, "big_front": true, "back_split": false,
 	},
 	{  # 10 - workshop hall
-		"id": "workshop_hall_ground", "roles": [&"work"],
+		"id": "workshop_hall_ground", "priority": 0, "roles": [&"work"],
 		"spine_frac": 0.16, "spine_max": 1.40, "row_depth": 4.6, "max_rows": 2,
 		"big_front": true, "front_split": true, "back_split": false,
 	},
 	{  # 11 - warehouse with a loading bay
-		"id": "warehouse_loading_ground", "roles": [&"work"],
+		"id": "warehouse_loading_ground", "priority": 1, "roles": [&"work"],
 		"min_w": 7.5, "spine_frac": 0.17, "spine_max": 1.45, "row_depth": 5.0,
 		"max_rows": 2, "big_front": true, "front_split": false, "back_split": true,
 	},
@@ -136,11 +136,14 @@ static func plan_best(p: Dictionary) -> Dictionary:
 		return {}
 	var role := FloorProgram.role_of(str(p.get("use", "residential")), int(p.get("floor_i", 0)))
 	var candidates: Array = []
+	reject_log.clear()
+	# Every applicable archetype is constructed. Capping this at three (and
+	# adding both mirrorings of each archetype before moving on) meant the
+	# first applicable archetype filled the list and the rest were never
+	# built -- the reason four archetypes never won a single floor.
 	for arch: Dictionary in ARCHETYPES:
 		if not (role in arch["roles"]):
 			continue
-		if candidates.size() >= 3:
-			break
 		if not _applicable(arch, frame0, p):
 			continue
 		for mirrored in [false, true]:
@@ -149,6 +152,9 @@ static func plan_best(p: Dictionary) -> Dictionary:
 			var frame := FloorPlanFrame.build(pp)
 			var cand := _candidate(frame, arch, pp)
 			if cand.is_empty():
+				if _last_validate != "":
+					reject_log.append("%s%s: %s" % [str(arch["id"]),
+							" (mirrored)" if mirrored else "", _last_validate])
 				continue
 			cand["arch_id"] = arch["id"]
 			cand["mirrored"] = mirrored
@@ -159,13 +165,19 @@ static func plan_best(p: Dictionary) -> Dictionary:
 				role, frame0.size.x, frame0.size.y, str(frame0.face_open), str(frame0.has_core)]
 		return {}
 	var best: Dictionary = candidates[0]
-	var best_score := _score(best["cand"], best["frame"])
+	var best_score := _pick_score(best)
 	for c: Dictionary in candidates:
-		var s := _score(c["cand"], c["frame"])
+		var s := _pick_score(c)
 		if s > best_score:
 			best_score = s
 			best = c
 	return _emit(best["frame"], best["cand"], best["arch"], p)
+
+
+## Reasons the candidates for the floor currently being planned were
+## rejected. `last_reject` keeps only the final one, which hid the fact that
+## whole archetypes were being discarded unseen.
+static var reject_log: Array = []
 
 
 static func _applicable(arch: Dictionary, frame: FloorPlanFrame, p: Dictionary) -> bool:
@@ -591,13 +603,27 @@ static func _assign(frame: FloorPlanFrame, arch: Dictionary, p: Dictionary, cell
 		for i in room_cells.size():
 			if used.has(i) or bool(room_cells[i].get("locked", false)):
 				continue
-			var f := _fit(kind, room_cells[i], si)
+			var f := _serv_fit(kind, room_cells[i], si, _fit(kind, room_cells[i], si))
 			if f > spare_fit:
 				spare_fit = f
 				spare = i
 			if _can_host(kind, room_cells[i]) and f > best_fit:
 				best_fit = f
 				best = i
+		if best < 0 and FloorProgram.is_essential(str(p.get("use", "residential")),
+				int(p.get("floor_i", 0)), kind):
+			# Essential room, no cell that can host it comfortably: search again
+			# with a slightly relaxed test before allowing the downgrade below.
+			# A tight WC is a WC; a downgraded slot leaves the dwelling without
+			# one, which is the failure this whole pass exists to stop.
+			best_fit = -1.0e9
+			for i in room_cells.size():
+				if used.has(i) or bool(room_cells[i].get("locked", false)):
+					continue
+				var f2 := _serv_fit(kind, room_cells[i], si, _fit(kind, room_cells[i], si))
+				if _can_host_soft(kind, room_cells[i]) and f2 > best_fit:
+					best_fit = f2
+					best = i
 		var pick := best if best >= 0 else spare
 		if pick < 0:
 			continue
@@ -1020,6 +1046,39 @@ static func _validate(frame: FloorPlanFrame, cells: Array, parts: Array, p: Dict
 	metrics["circ_frac"] = maxf(circ_area - core_area, 0.0) / maxf(total - core_area, 0.1)
 	metrics["core_area"] = core_area
 	metrics["floor_area"] = total
+	# Gross circulation share: the net circ_frac divides the stair shaft out of
+	# numerator and denominator alike, which flatters it and makes it
+	# incomparable to the 10-20% real housing spends. Report both; gate on net.
+	metrics["circ_gross"] = circ_area / maxf(total, 0.1)
+	metrics["facade_principal"] = float(metrics["tier0_facade"]) / \
+			maxf(float(metrics["facade_rooms"]), 1.0)
+	# The programme contract: a floor carries the rooms its use implies for a
+	# plate of this size. slots() trims by priority, so a room missing here
+	# means one was lost or quietly downgraded after planning.
+	var room_n := 0
+	for c4: Dictionary in cells:
+		if not bool(c4["circ"]):
+			room_n += 1
+	var want_kinds: Array = FloorProgram.required_kinds(str(p.get("use", "residential")),
+			int(p.get("floor_i", 0)), room_n)
+	var have := {}
+	for c3: Dictionary in cells:
+		have[c3["kind"]] = int(have.get(c3["kind"], 0)) + 1
+	var missing: Array = []
+	for k2: Variant in want_kinds:
+		if FloorProgram.is_circulation(k2):
+			continue
+		if int(have.get(k2, 0)) <= 0:
+			missing.append(k2)
+	if missing.size() > 0:
+		_last_validate = "programme missing %s (use=%s floor_i=%d cells=%d)" % [
+			str(missing), str(p.get("use", "?")), int(p.get("floor_i", 0)), room_n]
+		metrics["prog_missing"] = missing.size()
+		metrics["prog_missing_kinds"] = str(missing)
+	var toilet_cap := float(FloorProgram.spec_of(&"toilet").get("max_area", 6.0))
+	if toilet_area > toilet_cap * 1.5:
+		_last_validate = "toilet %.1f m2 over declared max %.1f" % [toilet_area, toilet_cap]
+		metrics["toilet_over"] = int(metrics.get("toilet_over", 0)) + 1
 	if int(metrics["outside"]) > 0 or int(metrics["overlap"]) > 0 or int(metrics["sliver"]) > 0:
 		_last_validate = "geometry outside=%d overlap=%d sliver=%d" % [int(metrics["outside"]), int(metrics["overlap"]), int(metrics["sliver"])]
 		return {}
@@ -1046,6 +1105,44 @@ static func _validate(frame: FloorPlanFrame, cells: Array, parts: Array, p: Dict
 			_last_validate = "room without door (kind=%s)" % str(c3["kind"])
 			return {}
 	return metrics
+
+
+## Selection score: quality first, then an explicit priority so that the
+## archetype written for a plate shape outranks the generic fallback for it.
+## Relying on incidental score differences is what let a generic archetype win
+## 43% of all floors and a sister archetype win none.
+## Relaxed host test, used only to keep an essential room on a floor whose
+## cells are all marginally tight. The factors stay inside the validator's own
+## sliver tolerances (0.92x min_side, 0.80x min_area), so a rescued room is
+## still a legal room and the plan is not rejected for the rescue itself.
+## A service room (WC, store, toolstore) gains nothing from a large cell and
+## costs the floor a room that could have used it. `max_area` is declared per
+## kind for exactly this reason; prefer the smallest cell that legally hosts it
+## and let the validator's ceiling stand as a hard limit rather than a filter
+## that discards whole plans.
+static func _serv_fit(kind: StringName, cell: Dictionary, si: int, base_fit: float) -> float:
+	if not FloorProgram.is_service(kind):
+		return base_fit
+	var r: Rect2 = cell["rect"]
+	var area := r.size.x * r.size.y
+	var cap := float(FloorProgram.spec_of(kind).get("max_area", 6.0))
+	if area > cap:
+		# Still a legal candidate if nothing smaller exists, but ranked below
+		# every cell that respects the declared ceiling.
+		return base_fit - 100.0 - area
+	return -area + float(si) * 0.001
+
+
+static func _can_host_soft(kind: StringName, cell: Dictionary) -> bool:
+	var spec := FloorProgram.spec_of(kind)
+	var r: Rect2 = cell["rect"]
+	if minf(r.size.x, r.size.y) < float(spec.get("min_side", 1.2)) * 0.95:
+		return false
+	return r.size.x * r.size.y >= float(spec.get("min_area", 1.0)) * 0.85
+
+
+static func _pick_score(c: Dictionary) -> float:
+	return _score(c["cand"], c["frame"]) + float(c.get("arch", {}).get("priority", 0)) * 3.0
 
 
 static func _score(cand: Dictionary, frame: FloorPlanFrame) -> float:
