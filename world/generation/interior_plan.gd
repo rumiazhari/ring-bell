@@ -1,6 +1,6 @@
 class_name InteriorPlan
 extends RefCounted
-const HistoricInterior = preload("res://world/generation/historic_interior_plan.gd")
+const OpenFloorLayout = preload("res://world/generation/open_floor_layout.gd")
 
 const ROOM_PROGRAMS := {
 	"residential": [&"living", &"kitchen", &"sleeping", &"toilet"],
@@ -31,578 +31,50 @@ const WALL_T_INTERIOR: float = 0.18 # == WorldConstants.CITY_INTERIOR_WALL_T
 const OPEN_W: float = WorldConstants.CITY_INTERIOR_OPEN_W # one authority for interior leaf/aperture
 const OPEN_H: float = WorldConstants.CITY_INTERIOR_OPEN_H
 
-# ---------------------------------------------------------------------------
-# Archetype floor plans (design doc: .hermes/autopilot/INTERIOR_LAYOUT_OVERHAUL.md)
-# Rooms drive geometry: FloorPlanPlanner chooses a building-type / floor-role
-# archetype, places the circulation core and room programme with explicit
-# adjacency rules, fits it to the footprint and validates it. Only then are
-# partitions, openings, doors and solid walls derived from the room graph. The
-# legacy subdivision paths below stay reachable as fallbacks for footprints no
-# archetype can serve, and for historic compounds.
-# ---------------------------------------------------------------------------
+## Compatibility hook for an older builder: circulation must always be checked.
+static func uses_archetype_plan(_spec: Dictionary, _floor_i: int) -> bool:
+	return false
 
-## "building_id|floor_i" -> "archetype" | "legacy". BuildingBuilder reads this
-## so the legacy "clear a route through the floor and clip whatever blocks it"
-## pass cannot edit a floor plan that already planned its own circulation.
-static var _plan_kind: Dictionary = {}
-
-static func uses_archetype_plan(spec: Dictionary, floor_i: int) -> bool:
-	var key := "%s|%d" % [str(spec.get("id", "b")), floor_i]
-	if _plan_kind.has(key):
-		return str(_plan_kind[key]) == "archetype"
-	return _archetype_eligible(spec, floor_i)
-
-static func _record_plan_kind(bid: String, fi: int, kind: String) -> void:
-	if _plan_kind.size() > 4096:
-		_plan_kind.clear()
-	_plan_kind["%s|%d" % [bid, fi]] = kind
-
-## Facade availability per BUILDING face for the planner, which wants one bool
-## per plan edge. Historic wings publish real adjacency in `open_faces` (either
-## four bools or a list of open face indices, raw edge order N, E, S, W).
-## Ordinary buildings in a dense block get the setting default instead: the
-## street face the door sits on and the opposite courtyard face are open, the
-## two party-wall sides are not. Without this the planner was told that nothing
-## anywhere had a facade, so facade-aware placement and its scoring never ran.
-static func _open_by_plan_edge(spec: Dictionary) -> Array:
-	var raw: Variant = spec.get("open_faces", null)
-	var out: Array = [false, false, false, false]
-	if raw is Array and (raw as Array).size() == 4 and (raw as Array)[0] is bool:
-		return raw
-	if raw is Array and not (raw as Array).is_empty():
-		for f: Variant in (raw as Array):
-			var i := int(f)
-			if i >= 0 and i < 4:
-				out[i] = true
-		return out
-	var de := int(spec.get("door_edge", 0)) % 4
-	out[de] = true
-	out[(de + 2) % 4] = true
-	return out
-
-## Conservative mirror of the eligibility test used by build_for_building().
-static func _archetype_eligible(spec: Dictionary, floor_i: int) -> bool:
-	if spec.has("compound_id"):
-		return false
-	if floor_i < 0 or floor_i >= int(spec.get("floors", 1)):
-		return false
-	var rect: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
-	var inner := Rect2(rect.position + Vector2(WALL_T + 0.02, WALL_T + 0.02),
-			rect.size - Vector2(WALL_T * 2.0 + 0.04, WALL_T * 2.0 + 0.04))
-	return inner.size.x >= FloorPlanPlanner.MIN_INNER and inner.size.y >= FloorPlanPlanner.MIN_INNER
-
-## The stair shaft this floor's risers are actually cut into. Resolved through
-## load() because BuildingBuilder already refers to InteriorPlan by class name;
-## a parse-time dependency in the other direction would be cyclic.
-static var _bb_script: Variant = null
-
-static func _stair_zone_plan(spec: Dictionary, fh: float) -> Rect2:
-	if _bb_script == null:
-		_bb_script = load("res://world/generation/building_builder.gd")
-	if _bb_script == null:
-		return Rect2()
-	var fp: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
-	if not bool(_bb_script.has_stairs_for(fp.size, fh, int(spec.get("floors", 1)))):
-		return Rect2()
-	return _bb_script.stair_zone_world(spec)
-
-static func _archetype_floor(bid: String, fi: int, use_val: String, spec: Dictionary, fh: float) -> Dictionary:
-	var fp: Rect2 = spec.get("rect", Rect2(0, 0, 10, 10))
-	var plan := FloorPlanPlanner.plan_best({
-		"building_id": bid,
-		"rect": fp,
-		"door_edge": int(spec.get("door_edge", 0)),
-		"yaw": float(spec.get("yaw", 0.0)),
-		"use": use_val,
-		"floor_i": fi,
-		"floors": int(spec.get("floors", 1)),
-		"floor_h": fh,
-		"seed_used": int(spec.get("seed_used", 0)),
-		"open_by_plan_edge": _open_by_plan_edge(spec),
-		"core": _stair_zone_plan(spec, fh),
-	})
-	if plan.is_empty():
-		return {}
-	var rooms: Array = plan["rooms"]
-	if not _ensure_program_rooms(rooms):
-		return {}
-	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", 0)), "interior", [str(bid).hash(), fi])
-	var parts: Array = []
-	var doors: Array = []
-	var solids: Array = []
-	for i in (plan["boundaries"] as Array).size():
-		var b: Dictionary = plan["boundaries"][i]
-		var wall: Rect2 = b["wall"]
-		if not bool(b["door"]):
-			# Sealed room-to-room edges are plain walls, not partitions: the
-			# manifest contract is "every partition carries a real opening".
-			solids.append(wall)
-			continue
-		var opening: Rect2 = b["opening"]
-		var a_id := str(b["a"])
-		var b_id := str(b["b"])
-		parts.append({"id": "%s_f%d_p%d" % [bid, fi, parts.size()], "a": a_id, "b": b_id,
-				"rect": wall, "opening": opening, "planned_clearance": true})
-		var dm: Dictionary = _door_for_partition(bid, fi, doors.size(), opening, wall, a_id, b_id, fh, rng)
-		dm["width"] = opening.size.y if wall.size.x <= wall.size.y else opening.size.x
-		doors.append(dm)
-	return {
-		"floor_i": fi,
-		"rooms": rooms,
-		"partitions": parts,
-		"doors": doors,
-		"solid_walls": solids,
-		"topology": "lobby" if fi == 0 else "archetype",
-		"archetype": plan["archetype"],
-		"circulation": plan["circulation"],
-		"core_rect": plan["core_rect"],
-		"mirrored": plan["mirrored"],
-		"plan_metrics": plan["metrics"],
-	}
-
-## validate() requires a service room and a toilet on every floor. The planner
-## already programmes both; this only repairs a plan that lost one to a size
-## downgrade, and refuses the plan (caller falls back) when nothing can host.
-static func _ensure_program_rooms(rooms: Array) -> bool:
-	var has_toilet := false
-	var has_service := false
-	for r: Dictionary in rooms:
-		if r["kind"] == &"toilet":
-			has_toilet = true
-		if FloorProgram.is_service(r["kind"]):
-			has_service = true
-	if not has_toilet:
-		var wc := _smallest_host(rooms, 1.15)
-		if not wc.is_empty():
-			wc["kind"] = &"toilet"
-			wc["service"] = true
-			wc["tier"] = 2
-			has_toilet = true
-	if not has_service:
-		var st := _smallest_host(rooms, 1.15)
-		if not st.is_empty():
-			st["kind"] = &"storage"
-			st["service"] = true
-			st["tier"] = 3
-			has_service = true
-	return has_toilet and has_service
-
-## Smallest room that can host a service function; internal (windowless) rooms
-## are preferred, which is where a toilet or store belongs.
-static func _smallest_host(rooms: Array, min_side: float) -> Dictionary:
-	var pick: Dictionary = {}
-	var pick_area := 1.0e9
-	var pick_internal := false
-	for r: Dictionary in rooms:
-		if bool(r["circulation"]) or r["kind"] == &"toilet":
-			continue
-		var rect: Rect2 = r["rect"]
-		if minf(rect.size.x, rect.size.y) < min_side:
-			continue
-		var area := rect.size.x * rect.size.y
-		var internal := (r["facade_edges"] as Array).is_empty()
-		if pick.is_empty() or (internal and not pick_internal) \
-				or (internal == pick_internal and area < pick_area):
-			pick = r
-			pick_area = area
-			pick_internal = internal
-	return pick
 
 static func build_for_building(spec: Dictionary) -> Dictionary:
-	var bid: String = str(spec.get("id", "b"))
-	var floors: int = int(spec.get("floors", 1))
-	var fh: float = float(spec.get("floor_h", 3.0))
-	var rect: Rect2 = spec.get("rect", Rect2(0,0,10,10))
-	var style: Dictionary = spec.get("style", {})
-	var legacy_rt: String = str(style.get("room_type", "residential"))
-	var use_val: String = str(spec.get("use", legacy_rt))
+	var bid := str(spec.get("id", "b"))
+	var use_val := str(spec.get("use", spec.get("style", {}).get("room_type", "residential")))
 	if not ROOM_PROGRAMS.has(use_val):
-		use_val = legacy_rt if legacy_rt == "retail" else "residential"
-	var inset := WALL_T + 0.02
-	var inner := Rect2(rect.position + Vector2(inset, inset), rect.size - Vector2(inset*2, inset*2))
-	var small := inner.size.x < 4.5 or inner.size.y < 4.5
-	var manifest := {
-		"version": 1,
-		"building_id": bid,
-		"use": use_val,
-		"floors": [],
-	}
-	for fi in floors:
-		var floor_dict: Dictionary = {}
-		# The archetype planner is the primary path for every building this
-		# system can plan, compounds included: a historic wing is still a
-		# rectangle with a street front and a stair core. The old planners stay
-		# as fallbacks for the footprints the archetypes cannot serve.
-		floor_dict = _archetype_floor(bid, fi, use_val, spec, fh)
-		if not floor_dict.is_empty():
-			_record_plan_kind(bid, fi, "archetype")
-		else:
-			if spec.has("compound_id"):
-				floor_dict = HistoricInterior.floor_plan(spec, fi)
-			elif rect.size.x >= 9.0 and rect.size.y >= 12.0:
-				floor_dict = _corridor_floor(bid, fi, use_val, inner, spec, fh)
-			else:
-				floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
-			if floor_dict.is_empty():
-				# A partially-described building must never leave the manifest
-				# with an empty floor: that empty dict is what crashed the
-				# furniture pass and reported "floor -1, no rooms" in the probe.
-				floor_dict = _floor_manifest(bid, fi, use_val, inner, rect, spec, small, fh)
-			_record_plan_kind(bid, fi, "legacy")
-		floor_dict["furniture"] = _room_furniture(floor_dict, spec)
-		floor_dict["stations"] = []
-		for item: Dictionary in floor_dict["furniture"]:
-			if item["kind"] == "bed" or item["kind"] == "counter":
-				floor_dict["stations"].append({"id": item["id"] + "_station", "room_id": item["room_id"], "kind": item["kind"], "position": item["position"], "yaw": 0.0, "visual": false, "loot": &"canned_food"})
-		manifest["floors"].append(floor_dict)
+		use_val = "residential"
+	var manifest := {"version": 1, "building_id": bid, "use": use_val, "floors": []}
+	var floor_count := int(spec.get("floors", 1))
+	for fi in floor_count:
+		var fl := OpenFloorLayout.build(spec, fi,
+				_program_for_floor(ROOM_PROGRAMS[use_val], fi, floor_count))
+		var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", 0)), "interior", [WorldSeed.str_hash(bid), fi])
+		fl["doors"] = []
+		for part: Dictionary in fl["partitions"]:
+			if bool(part.get("sealed", false)):
+				continue
+			fl["doors"].append(_door_for_partition(bid, fi, fl["doors"].size(), part["opening"], part["rect"], part["a"], part["b"], float(spec.get("floor_h", 3.0)), rng))
+		fl["furniture"] = _room_furniture(fl, spec)
+		fl["stations"] = []
+		for item: Dictionary in fl["furniture"]:
+			if item["kind"] in ["bed", "counter"]:
+				fl["stations"].append({"id": item["id"] + "_station", "room_id": item["room_id"], "kind": item["kind"], "position": item["position"], "yaw": 0.0, "visual": false, "loot": &"canned_food"})
+		manifest["floors"].append(fl)
 	return manifest
 
-## Corridor floors: ground floor is a LOBBY (G10 requirement) with a toilet
-## cell; upper floors stream the use's rooms off a 4 m hall. Two deterministic
-## topologies for variation: A = single row against the divider, B = staggered
-## two-column grid. Every shared edge carries a partition WITH a door leaf, so
-## no room can end up sealed and door swings stay inside planned clearances.
-## Walls never cross stairs (hall side holds the stair zone on every edge).
-static func _corridor_floor(bid: String, fi: int, use_val: String, inner: Rect2, spec: Dictionary, fh: float) -> Dictionary:
-	var fp: Rect2 = spec["rect"]
-	var east_hall := int(spec.get("door_edge", 0)) == 3
-	var hall_width := 4.0
-	var divider := inner.end.x - hall_width if east_hall else inner.position.x + hall_width
-	var hall := Rect2(divider if east_hall else inner.position.x, inner.position.y, hall_width, inner.size.y)
-	var hall_id := "%s_f%d_hall" % [bid, fi]
-	var rooms: Array = [{"id": hall_id, "kind": &"hall", "rect": hall, "entry": fi == 0, "service": false}]
-	var parts: Array = []
-	var solid_walls: Array = []
-	var doors: Array = []
-	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior", [WorldSeed.str_hash(bid), fi])
-	# ---- Ground floor: one big LOBBY (the whole inner minus a toilet strip) —
-	# "mainly lobby" per G10 steering. The toilet strip sits at the end
-	# OPPOSITE the stairwell zone so it never overlaps stairs/risers:
-	#   N entrance (0) -> zone SOUTH -> toilet NORTH   S (2) -> toilet SOUTH
-	#   E entrance (1) -> zone WEST  -> toilet EAST    W (3) -> toilet WEST
-	if fi == 0:
-		var toilet_t := 3.2
-		var lobby_rect: Rect2
-		var toilet_rect: Rect2
-		var horiz_sep := true   # separator wall is horizontal (N/S toilet strip)
-		var edge := int(spec.get("door_edge", 0))
-		match edge:
-			1:   # toilet strip on EAST wall (vertical strip)
-				lobby_rect = Rect2(inner.position, Vector2(inner.size.x - toilet_t, inner.size.y))
-				toilet_rect = Rect2(Vector2(lobby_rect.end.x, inner.position.y), Vector2(toilet_t, inner.size.y))
-				horiz_sep = false
-			3:   # toilet strip on WEST wall
-				toilet_rect = Rect2(inner.position, Vector2(toilet_t, inner.size.y))
-				lobby_rect = Rect2(Vector2(inner.position.x + toilet_t, inner.position.y), Vector2(inner.size.x - toilet_t, inner.size.y))
-				horiz_sep = false
-			2:   # south entrance -> stair zone north -> toilet SOUTH (original behavior)
-				lobby_rect = Rect2(inner.position, Vector2(inner.size.x, inner.size.y - toilet_t))
-				toilet_rect = Rect2(Vector2(inner.position.x, inner.end.y - toilet_t), Vector2(inner.size.x, toilet_t))
-			_:   # north entrance (default) -> stair zone south -> toilet NORTH
-				toilet_rect = Rect2(inner.position, Vector2(inner.size.x, toilet_t))
-				lobby_rect = Rect2(Vector2(inner.position.x, inner.position.y + toilet_t), Vector2(inner.size.x, inner.size.y - toilet_t))
-		var lobby_id := "%s_f0_lobby_1" % bid
-		# Ground floor payload: Toilet + Lobby ONLY (the former hall band is
-		# dissolved into the lobby). Partition `a`/`b` are the two rooms it
-		# actually separates; the entry door serves the lobby via the facade.
-		rooms.clear()
-		parts.clear()
-		rooms.append({"id": lobby_id, "kind": &"lobby", "rect": lobby_rect, "entry": fi == 0, "service": false})
-		rooms.append({"id": "%s_f0_toilet_2" % bid, "kind": &"toilet", "rect": toilet_rect, "entry": false, "service": true})
-		# Separator between toilet and lobby: 0.18 thick, aperture 1.3 x 1.0,
-		# centered on the shared edge with 0.3 m standoffs from the side walls.
-		# planned_clearance: frame is contract-owned; this wall never crosses
-		# the stair zone (opposite end) or entry aisles (facade midpoint).
-		var wall: Rect2
-		var topen: Rect2
-		if horiz_sep:
-			var wx0 := lobby_rect.position.x + 0.3
-			var wx1 := lobby_rect.end.x - 0.3
-			var wy := toilet_rect.position.y if edge == 2 else lobby_rect.position.y - 0.09
-			wall = Rect2(wx0, wy, wx1 - wx0, 0.18)
-			var wcx := wall.get_center().x
-			topen = Rect2(wcx - OPEN_W * 0.5, wall.position.y - 0.5 + 0.09, OPEN_W, 1.0)
-		else:
-			var wy0 := lobby_rect.position.y + 0.3
-			var wy1 := lobby_rect.end.y - 0.3
-			var wx := lobby_rect.end.x - 0.09 if edge == 1 else lobby_rect.position.x
-			wall = Rect2(wx, wy0, 0.18, wy1 - wy0)
-			var wcy := wall.get_center().y
-			topen = Rect2(wall.position.x - 0.5 + 0.09, wcy - OPEN_W * 0.5, 1.0, OPEN_W)
-		parts.append({"id": "%s_f0_p0" % bid, "a": lobby_id, "b": "%s_f0_toilet_2" % bid, "rect": wall, "opening": topen, "planned_clearance": true})
-		var tdm := _door_for_partition(bid, 0, doors.size(), topen, wall, lobby_id, "%s_f0_toilet_2" % bid, fh, rng)
-		# Leaf span equals the aperture span along the wall.
-		tdm["width"] = topen.size.x if horiz_sep else topen.size.y
-		doors.append(tdm)
-		# Lobby dressing: per-use Victorian program replaces the generic hall
-		# furniture list; keep the room id in sync so blocked/sweep keepouts hit.
-		return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors, "stations": [], "corridor_layout": true, "solid_walls": [], "topology": "lobby",
-			"lobby_use": use_val}
-	# ---- Upper floors: three depth profiles (see comment below) + room row
-	# with a door on every hall edge. Pantry dropped from generic middle rooms.
-	var kinds: Array = ROOM_PROGRAMS[use_val]
-	var prof := int(WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior_topo", [WorldSeed.str_hash(bid)]).randf_range(0, 3.0))
-	var inner_y: float = inner.size.y
-	var cut1: float
-	var cut2: float
-	var cut3: float
-	match prof:
-		1:   # deep-rear: front rooms tighter
-			cut1 = maxf(inner.position.y + inner_y * 0.15, inner.position.y + 2.9)
-			cut2 = maxf(cut1 + inner_y * 0.15, cut1 + 2.9)
-			cut3 = maxf(cut2 + inner_y * 0.35, cut2 + 2.8)
-		2:   # deep-front: public front rooms roomier
-			cut1 = maxf(inner.position.y + inner_y * 0.25, inner.position.y + 2.9)
-			cut2 = maxf(cut1 + inner_y * 0.25, cut1 + 2.9)
-			cut3 = maxf(cut2 + inner_y * 0.25, cut2 + 2.8)
-		_:   # balanced (original shape)
-			cut1 = maxf(inner.position.y + inner_y * 0.20, inner.position.y + 2.9)
-			cut2 = maxf(cut1 + inner_y * 0.20, cut1 + 2.9)
-			cut3 = maxf(cut2 + inner_y * 0.30, cut2 + 2.8)
-	var cuts: Array[float] = [inner.position.y, cut1, cut2, minf(cut3, inner.end.y - 2.0), inner.end.y]
-	for i in 4:
-		var room := Rect2(inner.position.x if east_hall else divider, cuts[i], divider - inner.position.x if east_hall else inner.end.x - divider, cuts[i + 1] - cuts[i])
-		var room_id := "%s_f%d_%s_%d" % [bid, fi, kinds[i], i]
-		rooms.append({"id": room_id, "kind": kinds[i], "rect": room, "entry": false, "service": kinds[i] == &"toilet"})
-		var door_y := room.get_center().y
-		if i == 0:
-			door_y = fp.position.y + 1.4
-		elif i == 3:
-			door_y = fp.end.y - 1.4
-		elif i == 2:
-			door_y = fp.get_center().y
-		var wall := Rect2(divider - 0.09, room.position.y, 0.18, room.size.y)
-		var opening := Rect2(divider - 0.5, door_y - OPEN_W * 0.5, 1.0, OPEN_W)
-		parts.append({"id": "%s_f%d_p%d" % [bid, fi, parts.size()], "a": hall_id, "b": room_id, "rect": wall, "opening": opening, "planned_clearance": true})
-		var dm := _door_for_partition(bid, fi, doors.size(), opening, wall, hall_id, room_id, fh, rng)
-		# Leaf span must equal the aperture span along the wall (OPEN_W here):
-		# derive it from the opening instead of a re-typed magic constant. This
-		# wall is vertical (size.x=0.18), so the aperture length is size.y.
-		dm["width"] = opening.size.y
-		doors.append(dm)
-		if i > 0:
-			solid_walls.append(Rect2(room.position.x, room.position.y - 0.09, room.size.x, 0.18))
 
-	return {"floor_i": fi, "rooms": rooms, "partitions": parts, "doors": doors, "stations": [], "corridor_layout": true, "solid_walls": solid_walls}
-
-static func _floor_manifest(bid: String, fi: int, use_val: String, inner: Rect2, lot: Rect2, spec: Dictionary, small: bool, fh: float) -> Dictionary:
-	var rng := WorldSeed.rng_for_seed(int(spec.get("seed_used", WorldSeed.get_world_seed())), "interior", [WorldSeed.str_hash(bid), fi])
-	var rooms: Array = []
-	var partitions: Array = []
-	var doors: Array = []
-	var stations: Array = []
-	if small:
-		# Minimal valid: split inner if possible into 2 rooms so we have a toilet kind.
-		# Fallback to single room with toilet kind if truly tiny.
-		if inner.size.x >= 3.0 and inner.size.y >= 3.0:
-			var half := inner.size.x * 0.5
-			var r0 := Rect2(inner.position, Vector2(half, inner.size.y))
-			var r1 := Rect2(Vector2(inner.position.x+half, inner.position.y), Vector2(inner.size.x-half, inner.size.y))
-			rooms.append({"id": "%s_f%d_entry_0" % [bid, fi], "kind": &"entry", "rect": r0, "entry": fi==0, "service": false})
-			rooms.append({"id": "%s_f%d_toilet_1" % [bid, fi], "kind": &"toilet", "rect": r1, "entry": false, "service": true})
-			var wall_rect := Rect2(inner.position.x+half-0.09, inner.position.y+0.3, 0.18, inner.size.y-0.6)
-			var cy := inner.get_center().y
-			var opening := Rect2(inner.position.x+half-0.5, cy - OPEN_W*0.5, 1.0, OPEN_W)
-			partitions.append({"id": "%s_f%d_p0" % [bid, fi], "a": rooms[0]["id"], "b": rooms[1]["id"], "rect": wall_rect, "opening": opening})
-			doors.append(_door_for_partition(bid, fi, 0, opening, wall_rect, rooms[0]["id"], rooms[1]["id"], fh, rng))
-		else:
-			var rid := "%s_f%d_toilet_0" % [bid, fi]
-			rooms.append({"id": rid, "kind": &"toilet", "rect": inner, "entry": fi==0, "service": true})
-	else:
-		var kinds: Array = ROOM_PROGRAMS.get(use_val, ROOM_PROGRAMS["residential"])
-		var rects := _split_inner(inner, kinds.size(), rng, bid, fi)
-		for idx in rects.size():
-			var k: StringName = kinds[idx] if idx < kinds.size() else kinds.back()
-			var is_entry := fi == 0 and idx == 0
-			rooms.append({"id": "%s_f%d_%s_%d" % [bid, fi, String(k), idx], "kind": k, "rect": rects[idx], "entry": is_entry, "service": k == &"toilet"})
-		# Build partitions: need adjacency-aware chain. Use rect adjacency order.
-		# For 4 rooms grid: connect A-B, A-C, B-D, C-D fails if naive chain includes diagonal B-C.
-		# Instead build spanning tree over adjacent rects.
-		var edges := _adjacent_edges(rooms)
-		var used := {}
-		var graph := {}
-		for r in rooms:
-			graph[str(r["id"])] = []
-		# Kruskal-like: connect disconnected components via closest adjacent edge
-		for e in edges:
-			var a_id: String = e["a"]
-			var b_id: String = e["b"]
-			# check if already connected via partitions
-			var comp_a := _component(graph, a_id)
-			var comp_b := _component(graph, b_id)
-			if comp_a != comp_b:
-				graph[a_id].append(b_id)
-				graph[b_id].append(a_id)
-				var ra: Rect2 = e["ra"]
-				var rb: Rect2 = e["rb"]
-				var wall_rect: Rect2
-				var opening: Rect2
-				if e["vertical"]:
-					var x := ra.end.x if absf(ra.end.x - rb.position.x) < 0.1 else rb.end.x
-					var y0 := maxf(ra.position.y, rb.position.y) + 0.3
-					var y1 := minf(ra.end.y, rb.end.y) - 0.3
-					var cy := (y0 + y1) * 0.5
-					wall_rect = Rect2(x - 0.09, minf(y0,y1), 0.18, maxf(y1 - y0, 0.1))
-					opening = Rect2(x - 0.5, cy - OPEN_W*0.5, 1.0, OPEN_W)
-				else:
-					var y := ra.end.y if absf(ra.end.y - rb.position.y) < 0.1 else rb.end.y
-					var x0 := maxf(ra.position.x, rb.position.x) + 0.3
-					var x1 := minf(ra.end.x, rb.end.x) - 0.3
-					var cx := (x0 + x1) * 0.5
-					wall_rect = Rect2(minf(x0,x1), y - 0.09, maxf(x1 - x0, 0.1), 0.18)
-					opening = Rect2(cx - OPEN_W*0.5, y - 0.5, OPEN_W, 1.0)
-				var pid := "%s_f%d_p%d" % [bid, fi, partitions.size()]
-				partitions.append({"id": pid, "a": a_id, "b": b_id, "rect": wall_rect, "opening": opening})
-				doors.append(_door_for_partition(bid, fi, partitions.size()-1, opening, wall_rect, a_id, b_id, fh, rng))
-				if partitions.size() >= rooms.size() - 1:
-					break
-		# If still disconnected (should not), fall back to chain over adjacent only
-		if partitions.size() < rooms.size() - 1:
-			for p in range(rooms.size() - 1):
-				if partitions.size() >= rooms.size()-1:
-					break
-				var a: Dictionary = rooms[p]
-				var b: Dictionary = rooms[p+1]
-				var ra: Rect2 = a["rect"]
-				var rb: Rect2 = b["rect"]
-				# only if adjacent
-				if not _rects_adjacent(ra, rb):
-					continue
-				var already := false
-				for part in partitions:
-					if (part["a"]==a["id"] and part["b"]==b["id"]) or (part["a"]==b["id"] and part["b"]==a["id"]):
-						already = true
-						break
-				if already:
-					continue
-				var wall_rect: Rect2
-				var opening: Rect2
-				if absf(ra.end.x - rb.position.x) < 0.05 or absf(rb.end.x - ra.position.x) < 0.05:
-					var x := ra.end.x if ra.end.x <= rb.position.x + 0.1 else rb.end.x
-					var y0 := maxf(ra.position.y, rb.position.y) + 0.3
-					var y1 := minf(ra.end.y, rb.end.y) - 0.3
-					var cy := (y0 + y1) * 0.5
-					wall_rect = Rect2(x - 0.09, minf(y0,y1), 0.18, maxf(y1 - y0, 0.1))
-					opening = Rect2(x - 0.5, cy - OPEN_W*0.5, 1.0, OPEN_W)
-				else:
-					var y := ra.end.y if ra.end.y <= rb.position.y + 0.1 else rb.end.y
-					var x0 := maxf(ra.position.x, rb.position.x) + 0.3
-					var x1 := minf(ra.end.x, rb.end.x) - 0.3
-					var cx := (x0 + x1) * 0.5
-					wall_rect = Rect2(minf(x0,x1), y - 0.09, maxf(x1 - x0, 0.1), 0.18)
-					opening = Rect2(cx - OPEN_W*0.5, y - 0.5, OPEN_W, 1.0)
-				var pid2 := "%s_f%d_p%d" % [bid, fi, partitions.size()]
-				partitions.append({"id": pid2, "a": a["id"], "b": b["id"], "rect": wall_rect, "opening": opening})
-				doors.append(_door_for_partition(bid, fi, partitions.size()-1, opening, wall_rect, a["id"], b["id"], fh, rng))
-	# ---- SEAL: every shared room boundary gets a wall ---------------------------
-	# The spanning tree above only guarantees REACHABILITY. It stops the moment
-	# the graph is connected - `if partitions.size() >= rooms.size() - 1: break` -
-	# so every remaining shared edge stays wide open. Measured on the live city
-	# (--q3doorwalleaudit, 2099 buildings): 5351 of 58124 shared room edges
-	# (9.2%) had NO wall at all, and a 7-room floor showed 5 of its 11
-	# boundaries with nothing in them: the player walks through what the plan
-	# calls two rooms as one open space, and the door the tree placed sits in a
-	# wall that the rest of the boundary does not have. Seal the leftovers with
-	# a doorless partition. Doors stay exactly where the tree put them, so
-	# circulation and the reachability guarantee are untouched.
-	# A room the tree left without a door stays open to its neighbour: sealing
-	# that boundary could box it in with no way in. Only seal between rooms that
-	# already have a door of their own.
-	var doored := {}
-	for d: Dictionary in doors:
-		doored[str(d.get("room_a", ""))] = true
-		doored[str(d.get("room_b", ""))] = true
-	for e in _adjacent_edges(rooms):
-		var seal := _seal_wall_rect(e)
-		if seal.size == Vector2.ZERO:
-			continue
-		if not doored.has(str(e["a"])) or not doored.has(str(e["b"])):
-			continue
-		if _boundary_walled(seal, partitions):
-			continue
-		partitions.append({
-			"id": "%s_f%d_seal%d" % [bid, fi, partitions.size()],
-			"a": e["a"], "b": e["b"], "rect": seal, "opening": Rect2(),
-			"sealed": true})
-	# Stations
-	if use_val == "residential":
-		var sleep_room: Dictionary = {}
-		for r in rooms:
-			if String(r["kind"]) == "sleeping":
-				sleep_room = r
-				break
-		if not sleep_room.is_empty():
-			var rr: Rect2 = sleep_room["rect"]
-			var spos := rr.get_center() + Vector2(0.3, 0.3)
-			stations.append({
-				"id": "%s_f%d_station_bed" % [bid, fi],
-				"room_id": str(sleep_room["id"]),
-				"kind": &"bed",
-				"position": Vector3(spos.x, float(fi)*fh, spos.y),
-				"yaw": 0.0,
-				"loot": &"",
-			})
-	else:
-		if fi == 0:
-			var entry_room: Dictionary = {}
-			for r in rooms:
-				if String(r["kind"]) == "entry":
-					entry_room = r
-					break
-			if entry_room.is_empty() and rooms.size()>0:
-				entry_room = rooms[0]
-			if not entry_room.is_empty():
-				var rr2: Rect2 = entry_room["rect"]
-				var spos2 := rr2.get_center()
-				stations.append({
-					"id": "%s_f%d_station_counter" % [bid, fi],
-					"room_id": str(entry_room["id"]),
-					"kind": &"counter",
-					"position": Vector3(spos2.x, float(fi)*fh, spos2.y),
-					"yaw": 0.0,
-					"loot": &"canned_food",
-				})
-	if stations.size() > 1:
-		stations = stations.slice(0,1)
-	return {"floor_i": fi, "rooms": rooms, "partitions": partitions, "doors": doors, "stations": stations}
-
-## Wall rect for one adjacent-room edge: 0.18 m strip on the shared line, inset
-## 0.3 m from the room corners. Same formula the spanning-tree phase uses, so a
-## sealed boundary and a tree boundary are geometrically identical.
-static func _seal_wall_rect(e: Dictionary) -> Rect2:
-	var ra: Rect2 = e["ra"]
-	var rb: Rect2 = e["rb"]
-	if bool(e["vertical"]):
-		var x := ra.end.x if absf(ra.end.x - rb.position.x) < 0.1 else rb.end.x
-		var y0 := maxf(ra.position.y, rb.position.y) + 0.3
-		var y1 := minf(ra.end.y, rb.end.y) - 0.3
-		if y1 - y0 < 0.25:
-			return Rect2()
-		return Rect2(x - 0.09, y0, 0.18, y1 - y0)
-	var y := ra.end.y if absf(ra.end.y - rb.position.y) < 0.1 else rb.end.y
-	var x0 := maxf(ra.position.x, rb.position.x) + 0.3
-	var x1 := minf(ra.end.x, rb.end.x) - 0.3
-	if x1 - x0 < 0.25:
-		return Rect2()
-	return Rect2(x0, y - 0.09, x1 - x0, 0.18)
-
-
-## True when a partition (or solid wall) already runs along this boundary line.
-static func _boundary_walled(wr: Rect2, partitions: Array) -> bool:
-	var vertical := wr.size.x < wr.size.y
-	for p in partitions:
-		var pr: Rect2 = p.get("rect", Rect2())
-		if vertical:
-			if absf(pr.get_center().x - wr.get_center().x) > 0.35:
-				continue
-			if minf(pr.end.y, wr.end.y) - maxf(pr.position.y, wr.position.y) >= 0.5:
-				return true
-		else:
-			if absf(pr.get_center().y - wr.get_center().y) > 0.35:
-				continue
-			if minf(pr.end.x, wr.end.x) - maxf(pr.position.x, wr.position.x) >= 0.5:
-				return true
-	return false
+static func _program_for_floor(full_program: Array, floor_i: int, floor_count: int) -> Array:
+	if floor_count <= 1:
+		return full_program
+	var main_kinds: Array = []
+	for kind: StringName in full_program:
+		if kind != &"toilet":
+			main_kinds.append(kind)
+	var selected: Array = []
+	var upper_half := floor_i % 2 == 1
+	for i in main_kinds.size():
+		if (i > 0) == upper_half:
+			selected.append(main_kinds[i])
+	selected.append(&"toilet")
+	return selected
 
 
 static func _door_for_partition(bid: String, fi: int, idx: int, opening: Rect2, wall_rect: Rect2, a_id: String, b_id: String, fh: float, rng: RandomNumberGenerator) -> Dictionary:
@@ -668,73 +140,6 @@ static func _rects_adjacent(ra: Rect2, rb: Rect2) -> bool:
 		var x1 := minf(ra.end.x, rb.end.x)
 		return x1 - x0 > 0.6
 	return false
-
-static func _adjacent_edges(rooms: Array) -> Array:
-	var edges: Array = []
-	for i in rooms.size():
-		for j in range(i+1, rooms.size()):
-			var ra: Rect2 = rooms[i]["rect"]
-			var rb: Rect2 = rooms[j]["rect"]
-			var vert := false
-			var adj := false
-			if absf(ra.end.x - rb.position.x) < 0.06 or absf(rb.end.x - ra.position.x) < 0.06:
-				var y0 := maxf(ra.position.y, rb.position.y)
-				var y1 := minf(ra.end.y, rb.end.y)
-				if y1 - y0 > 0.6:
-					adj = true
-					vert = true
-			elif absf(ra.end.y - rb.position.y) < 0.06 or absf(rb.end.y - ra.position.y) < 0.06:
-				var x0 := maxf(ra.position.x, rb.position.x)
-				var x1 := minf(ra.end.x, rb.end.x)
-				if x1 - x0 > 0.6:
-					adj = true
-					vert = false
-			if adj:
-				edges.append({"a": str(rooms[i]["id"]), "b": str(rooms[j]["id"]), "ra": ra, "rb": rb, "vertical": vert})
-	return edges
-
-static func _component(graph: Dictionary, start: String) -> String:
-	var visited := {}
-	var stack := [start]
-	visited[start]=true
-	while stack.size()>0:
-		var cur: String = stack.pop_back()
-		for nb in graph.get(cur, []):
-			if not visited.has(nb):
-				visited[nb]=true
-				stack.append(nb)
-	var keys := visited.keys()
-	keys.sort()
-	return ",".join(keys)
-
-static func _split_inner(inner: Rect2, count: int, rng: RandomNumberGenerator, bid: String, fi: int) -> Array[Rect2]:
-	if count <= 1:
-		return [inner]
-	if count == 2:
-		var ratio := rng.randf_range(0.42, 0.58)
-		var w1 := inner.size.x * ratio
-		var r1 := Rect2(inner.position, Vector2(w1, inner.size.y))
-		var r2 := Rect2(Vector2(inner.position.x+w1, inner.position.y), Vector2(inner.size.x - w1, inner.size.y))
-		return [r1, r2]
-	if count == 3:
-		var vr := rng.randf_range(0.45, 0.55)
-		var w1b := inner.size.x * vr
-		var left := Rect2(inner.position, Vector2(w1b, inner.size.y))
-		var right := Rect2(Vector2(inner.position.x+w1b, inner.position.y), Vector2(inner.size.x - w1b, inner.size.y))
-		var hr := rng.randf_range(0.45, 0.55)
-		var h1 := right.size.y * hr
-		var rt := Rect2(right.position, Vector2(right.size.x, h1))
-		var rb := Rect2(Vector2(right.position.x, right.position.y+h1), Vector2(right.size.x, right.size.y - h1))
-		return [left, rt, rb]
-	var vr2 := rng.randf_range(0.45, 0.55)
-	var hr2 := rng.randf_range(0.45, 0.55)
-	var w1c := inner.size.x * vr2
-	var h1c := inner.size.y * hr2
-	var rA := Rect2(inner.position, Vector2(w1c, h1c))
-	var rB := Rect2(Vector2(inner.position.x+w1c, inner.position.y), Vector2(inner.size.x-w1c, h1c))
-	var rC := Rect2(Vector2(inner.position.x, inner.position.y+h1c), Vector2(w1c, inner.size.y - h1c))
-	var rD := Rect2(Vector2(inner.position.x+w1c, inner.position.y+h1c), Vector2(inner.size.x-w1c, inner.size.y - h1c))
-	return [rA, rB, rC, rD]
 
 static func validate(manifest: Dictionary) -> Array[String]:
 	var errs: Array[String] = []
@@ -831,6 +236,10 @@ static func validate(manifest: Dictionary) -> Array[String]:
 				var a := str(p.get("a")); var b2 := str(p.get("b"))
 				if graph.has(a) and graph.has(b2):
 					graph[a].append(b2); graph[b2].append(a)
+			for link: Array in fl.get("open_connections", []):
+				if graph.has(link[0]) and graph.has(link[1]):
+					graph[link[0]].append(link[1])
+					graph[link[1]].append(link[0])
 			var visited := {}
 			var stack := [str(rooms[0].get("id"))]
 			visited[stack[0]] = true
@@ -928,6 +337,7 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 	var fh := float(spec.get("floor_h", 3.0))
 	var fi := int(fl["floor_i"])
 	var blocked: Array[Rect2] = []
+	blocked.append_array(fl.get("circulation", []))
 	if BuildingBuilder.has_stairs_for(fp.size, fh, int(spec.get("floors", 1))):
 		var zone := BuildingBuilder.stair_zone_world(spec)
 		blocked.append(zone.grow(0.15))
@@ -968,7 +378,9 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 			program = ROOM_FURNITURE.get(rkind, ROOM_PROGRAM_FALLBACKS.get(rkind, []))
 		if program.is_empty():
 			continue
+		var room_item_start := items.size()
 		var large := bounds.size.x > 6.0 and bounds.size.y > 6.0
+		var open_plan := str(fl.get("topology", "")) == "open_plan"
 		for kind: String in program:
 			var size: Vector3 = FURNITURE_SIZES[kind]
 			var extent := Vector2(size.x, size.z)
@@ -982,11 +394,11 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 				bounds.end - extent,
 				Vector2(bounds.position.x, bounds.end.y - extent.y),
 			]
-			if large:
-				var step := 2.2
-				var gy := bounds.position.y + 1.1
+			if large or open_plan:
+				var step := 0.45 if open_plan else 2.2
+				var gy := bounds.position.y
 				while gy < bounds.end.y - extent.y:
-					var gx := bounds.position.x + 1.1
+					var gx := bounds.position.x
 					while gx < bounds.end.x - extent.x:
 						candidates.append(Vector2(gx, gy))
 						gx += step
@@ -1015,6 +427,43 @@ static func _room_furniture(fl: Dictionary, spec: Dictionary) -> Array:
 				var to_room := (room["rect"] as Rect2).get_center() - center
 				var yaw := atan2(to_room.x, to_room.y) if to_room.length() > 0.01 else 0.0
 				items.append({"id": "%s_%s_%d" % [room["id"], kind, items.size()], "room_id": room["id"], "kind": kind, "size": size, "rect": occupied, "position": Vector3(center.x, fi * fh, center.y), "yaw": yaw})
-				blocked.append(occupied.grow(0.25))
+				blocked.append(occupied.grow(0.55))
 				break
+		# Small semantic zones still need one gameplay-readable fixture. Choose
+		# the smallest item from that room's own program and fit it tightly
+		# against the perimeter while retaining every circulation exclusion.
+		if open_plan and items.size() == room_item_start:
+			var fallback_kind := ""
+			var fallback_area := INF
+			for candidate_kind: String in program:
+				var candidate_size: Vector3 = FURNITURE_SIZES[candidate_kind]
+				var candidate_area := candidate_size.x * candidate_size.z
+				if candidate_area < fallback_area \
+						and bounds.size.x >= candidate_size.x \
+						and bounds.size.y >= candidate_size.z:
+					fallback_kind = candidate_kind
+					fallback_area = candidate_area
+			if not fallback_kind.is_empty():
+				var fallback_size: Vector3 = FURNITURE_SIZES[fallback_kind]
+				var fallback_extent := Vector2(fallback_size.x, fallback_size.z)
+				var fy := bounds.position.y
+				var placed := false
+				while fy <= bounds.end.y - fallback_extent.y + 0.001 and not placed:
+					var fx := bounds.position.x
+					while fx <= bounds.end.x - fallback_extent.x + 0.001:
+						var occupied := Rect2(Vector2(fx, fy), fallback_extent)
+						var clear := true
+						for obstacle: Rect2 in blocked:
+							if occupied.grow(0.04).intersects(obstacle):
+								clear = false
+								break
+						if clear:
+							var center := occupied.get_center()
+							var toward_room := (room["rect"] as Rect2).get_center() - center
+							items.append({"id": "%s_%s_%d" % [room["id"], fallback_kind, items.size()], "room_id": room["id"], "kind": fallback_kind, "size": fallback_size, "rect": occupied, "position": Vector3(center.x, fi * fh, center.y), "yaw": atan2(toward_room.x, toward_room.y)})
+							blocked.append(occupied.grow(0.55))
+							placed = true
+							break
+						fx += 0.15
+					fy += 0.15
 	return items

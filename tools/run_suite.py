@@ -34,6 +34,8 @@ def main() -> int:
     game_args = sys.argv[3:]
     rendered = "--rendered" in game_args
     game_args = [arg for arg in game_args if arg != "--rendered"]
+    scenes = {"--clothingtest": "res://debug/player_clothing_preview.tscn",
+              "--openplantest": "res://debug/open_plan_test.tscn"}
     outf = SCRIPT_DIR / f"out_{tag}.txt"
     t0 = time.time()
     # Regression saves/logs belong to the checkout, never the player's
@@ -44,7 +46,7 @@ def main() -> int:
     with open(outf, "w", encoding="utf-8", errors="replace") as f:
         try:
             r = subprocess.run(
-                [str(GODOT), *([] if rendered else ["--headless"]), "--path", str(PROJ), *(["res://debug/player_clothing_preview.tscn"] if flag == "--clothingtest" else []), "--", flag, *game_args],
+                [str(GODOT), *([] if rendered else ["--headless"]), "--path", str(PROJ), *([scenes[flag]] if flag in scenes else []), "--", flag, *game_args],
                 stdout=f, stderr=subprocess.STDOUT, timeout=timeout, env=test_env)
             code = r.returncode
         except subprocess.TimeoutExpired:

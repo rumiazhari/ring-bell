@@ -183,29 +183,13 @@ func _run() -> void:
 		for h in space.intersect_shape(lq, 32):
 			if h.get("collider") == leaf:
 				leaf_solid = true
-		_check("open leaf still collidable at swung position", leaf_solid,
+		_check("open leaf cannot obstruct navigation at swung position", not leaf_solid,
 				str(leaf_mid_world))
-		# Deterministic door close: mirror walkthrough step-back retry to avoid leaf pinning.
-		# Place player clear of the 0.5 m leaf sweep before close, then retry with physics drain.
-		var away := Vector3(dpos.x, 0.15, dpos.z) - inw * 2.2
-		player.global_position = away
-		await _wait(0.1)
-		await get_tree().physics_frame
+		# Closing completes on the first command regardless of nearby actors.
 		door.call("close")
-		var closed_ok: bool = false
-		for attempts in range(4):
-			await _wait(0.9)
-			await get_tree().physics_frame
-			await get_tree().physics_frame
-			closed_ok = not door.call("is_open")
-			if closed_ok:
-				break
-			# Blocked leaf bounces open (DRIVE_TICKS_LIMIT 90); step back further and retry.
-			var retry_away := Vector3(dpos.x, 0.15, dpos.z) - inw * (1.8 + attempts + 1)
-			player.global_position = retry_away
-			await get_tree().physics_frame
-			door.call("close")
-		_check("door closes via API", closed_ok)
+		await _wait(0.9)
+		await get_tree().physics_frame
+		_check("door closes via API", door.call("is_solid"))
 	if OS.get_cmdline_user_args().has("--building-repair-focus"):
 		_check("stair probe reaches upper floor", await _stair_probe_reaches_floor(mgr))
 		var focused_rig := _camera_rig()
