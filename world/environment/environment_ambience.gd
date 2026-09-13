@@ -40,6 +40,8 @@ var _generated := false
 ## One stream per call, rain first: synthesis is ~250k filtered samples plus an s16
 ## encode pass per loop, which used to land as a single stall inside world build.
 var _gen_queue: Array[String] = ["rain", "wind", "thunder"]
+## Seed the generated beds came from; a different-seed load regenerates them.
+var _synth_seed := 0
 ## Measured synthesis cost, reported through state(): the "does this stall world
 ## build?" question answered with a number instead of an estimate.
 var _synth_ms := 0.0
@@ -85,8 +87,25 @@ func is_enabled() -> bool:
 	return _enabled
 
 
+## Points the generated beds at a world seed, rebuilding them if it changed.
+func set_seed(value: int) -> void:
+	if value == _synth_seed:
+		return
+	_synth_seed = value
+	_generated = false
+	_gen_queue = ["rain", "wind", "thunder"]
+	_streams.clear()
+	_synth_steps = 0
+	_synth_ms = 0.0
+
+
 func _generate() -> void:
 	if _generated:
+		return
+	if not _audio_ok:
+		# No audio driver (headless/dummy): synthesising ~250k filtered samples buys
+		# nothing, so the beds are skipped rather than paid for and never played.
+		_generated = true
 		return
 	if _gen_queue.is_empty():
 		_generated = true

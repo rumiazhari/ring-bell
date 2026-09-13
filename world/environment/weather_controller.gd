@@ -33,6 +33,10 @@ var strikes_fired := 0
 
 var _sample_accum := 0.0
 var _last_total_minutes := 0.0
+## Sub-cell game time not yet integrated (see _integrate_wetness).
+var _wetness_backlog := 0.0
+## Lattice anchor for the parameter refresh (see tick).
+var _next_sample_total := -1.0
 var _last_state := -1
 var _next_strike: Dictionary = {}
 var _real_clock := 0.0
@@ -67,6 +71,8 @@ func _ensure_ready() -> void:
 		params["day"] = 1
 		params["minute_of_day"] = 0.0
 	_last_total_minutes = GameClock.total_minutes
+	_wetness_backlog = 0.0
+	_next_strike = {}
 	_refresh(GameClock.total_minutes, true)
 
 
@@ -91,6 +97,8 @@ func reseed(new_seed: int) -> void:
 func resample() -> void:
 	_ensure_ready()
 	_last_total_minutes = GameClock.total_minutes
+	_wetness_backlog = 0.0
+	_next_strike = {}
 	_refresh(GameClock.total_minutes, true)
 
 
@@ -100,18 +108,22 @@ func tick(delta: float) -> void:
 	_real_clock += delta
 
 	var now_total := GameClock.total_minutes
-	_sample_accum += delta
-	if _sample_accum >= SAMPLE_INTERVAL:
-		_sample_accum = 0.0
+	# Refresh on an absolute game-minute lattice instead of a frame-count accumulator: the
+	# accumulator's phase depended on frame sizes, so two runs could expose different
+	# weather bookkeeping at the same world minute.
+	var sample_interval := maxf(SAMPLE_INTERVAL * maxf(GameClock.time_scale, 0.001), 0.0001)
+	if _next_sample_total < 0.0 or now_total < _last_total_minutes \
+			or now_total >= _next_sample_total:
 		_refresh(now_total, false)
+		_next_sample_total = (floorf(now_total / sample_interval) + 1.0) * sample_interval
 
 	_integrate_wetness(now_total - _last_total_minutes)
 	_last_total_minutes = now_total
 
-	if absf(delta) < 1.0:      # a huge delta means a scene/step jump: resync only
-		_update_lightning(now_total)
-	else:
-		_next_strike = {}
+	# A pending strike that has come due is ALWAYS fired, however large this frame was:
+	# discarding it made the number of strikes depend on frame rate instead of on the
+	# deterministic schedule (a hitch or a fast-forward silently lost strikes).
+	_update_lightning(now_total)
 
 
 # ------------------------------------------------------------------ getters
@@ -268,19 +280,23 @@ func _integrate_wetness(game_delta: float) -> void:
 				minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
 						* float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS)))
 		return
-	# One frame integrates at most WETNESS_MAX_SUBSTEPS * WETNESS_MAX_JUMP_MINUTES of game
-	# time (60 minutes): enough for a hitch or a fast-forward, bounded so a debug time
-	# skip cannot dry or soak the whole city in a single frame.
-	var budget := minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
+	# Whole fixed cells anchored to the game-minute lattice: the sequence of cells is then
+	# the same however the elapsed time was split into frames, and the leftover fraction
+	# waits in `_wetness_backlog` for the next frame (the old per-frame step integrated a
+	# different precipitation sample depending on where the frame boundaries fell).  Each
+	# cell is sampled at its midpoint.  One frame integrates at most WETNESS_MAX_SUBSTEPS
+	# cells (60 game minutes), so a debug time skip still cannot soak or dry the city.
+	_wetness_backlog += minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
 			* float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS))
-	var steps := clampi(int(ceilf(budget / EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES)),
-			1, EnvironmentConfig.WETNESS_MAX_SUBSTEPS)
-	var step := budget / float(steps)
+	var cell := EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
 	var at := _last_total_minutes
-	for i in steps:
-		at += step
-		WeatherModel.sample(seed_used, at, _wetness_scratch)
-		_apply_wetness_step(float(_wetness_scratch.get("precipitation", 0.0)), step)
+	var guard := 0
+	while _wetness_backlog >= cell and guard < EnvironmentConfig.WETNESS_MAX_SUBSTEPS * 4:
+		guard += 1
+		at += cell
+		WeatherModel.sample(seed_used, at - cell * 0.5, _wetness_scratch)
+		_apply_wetness_step(float(_wetness_scratch.get("precipitation", 0.0)), cell)
+		_wetness_backlog -= cell
 
 
 ## One wetness substep: `minutes` of game time at a constant precipitation rate.
@@ -298,13 +314,11 @@ func _apply_wetness_step(precip: float, minutes: float) -> void:
 func _update_lightning(now_total: float) -> void:
 	if not lightning_enabled or storm_intensity() < 0.5:
 		return
-	if _next_strike.is_empty() or float(_next_strike.get("abs_minute", -1.0)) < now_total - 0.5:
+	if _next_strike.is_empty():
 		_next_strike = WeatherModel.next_strike(seed_used, now_total)
+		if _next_strike.is_empty():
+			_next_strike = _synthetic_strike(now_total)
 	if _next_strike.is_empty():
-		_next_strike = _synthetic_strike(now_total)
-	if _next_strike.is_empty():
-		return
-	if now_total < float(_next_strike["abs_minute"]):
 		return
 
 	# Anti-strobe valve: whatever the time scale, never flash more often than
@@ -314,15 +328,38 @@ func _update_lightning(now_total: float) -> void:
 	# from strobing without making the strikes frame-clock dependent.
 	var min_gap := maxf(EnvironmentConfig.LIGHTNING_STRIKE_MIN_GAP,
 			EnvironmentConfig.LIGHTNING_MIN_REAL_GAP * maxf(GameClock.time_scale, 0.001))
-	if now_total - _last_strike_total < min_gap:
-		var skip_from := maxf(float(_next_strike["abs_minute"]), now_total) + 0.001
-		_next_strike = WeatherModel.next_strike(seed_used, skip_from)
-		if _next_strike.is_empty():
-			_next_strike = _synthetic_strike(now_total)
-		return
 
-	_fire(_next_strike)
-	_next_strike = {}
+	# Fire EVERY strike the schedule has already passed, scheduling each successor from
+	# its own minute: the strike count is then a function of game time instead of frame
+	# size.  A frame that carried the clock past a pending strike used to discard it, so
+	# coarse frames saw fewer strikes than fine ones over the same interval.  The
+	# catch-up is capped, because several flashes inside one frame collapse into one
+	# visible flash anyway - beyond the cap the schedule is skipped forward instead.
+	var fired := 0
+	while not _next_strike.is_empty() and now_total >= float(_next_strike["abs_minute"]):
+		if fired >= EnvironmentConfig.LIGHTNING_MAX_CATCHUP:
+			_next_strike = WeatherModel.next_strike(seed_used, now_total)
+			if _next_strike.is_empty():
+				_next_strike = _synthetic_strike(now_total)
+			return
+		if _last_strike_total >= 0.0 \
+				and float(_next_strike["abs_minute"]) - _last_strike_total < min_gap:
+			_next_strike = WeatherModel.next_strike(seed_used, maxf(
+					float(_next_strike["abs_minute"]), now_total) + 0.001)
+			if _next_strike.is_empty():
+				_next_strike = _synthetic_strike(now_total)
+			return
+		var strike := _next_strike
+		_fire(strike)
+		fired += 1
+		_next_strike = WeatherModel.next_strike(seed_used, float(strike["abs_minute"]))
+		if _next_strike.is_empty():
+			_next_strike = _synthetic_strike(float(strike["abs_minute"]))
+
+
+## Absolute game minute of the next scheduled strike, or -1 when none is pending.
+func pending_strike_minute() -> float:
+	return -1.0 if _next_strike.is_empty() else float(_next_strike.get("abs_minute", -1.0))
 
 
 func _synthetic_strike(now_total: float) -> Dictionary:
@@ -344,7 +381,9 @@ func _synthetic_strike(now_total: float) -> Dictionary:
 func _fire(strike: Dictionary) -> void:
 	strikes_fired += 1
 	_last_strike_real = _real_clock
-	_last_strike_total = GameClock.total_minutes
+	# The strike's own minute, so a catch-up burst is spaced by the schedule rather
+	# than by whatever time the frame happened to arrive at.
+	_last_strike_total = float(strike.get("abs_minute", GameClock.total_minutes))
 	var gate := clampf(storm_intensity() / 0.6, 0.0, 1.0)
 	if bool(strike.get("forced", false)):
 		gate = 1.0
@@ -367,13 +406,17 @@ func save_state() -> Dictionary:
 		"wind_direction_override": _wind_dir_override,
 		"lightning_enabled": lightning_enabled,
 		"strikes_fired": strikes_fired,
+		"last_strike_total": _last_strike_total,
+		"next_strike": _next_strike.duplicate(),
 	}
 
 
 func load_state(data: Dictionary) -> void:
 	if data.is_empty():
 		return
-	seed_used = int(data.get("seed_used", seed_used))
+	# A partial/older block has no seed: follow the world that was actually loaded
+	# instead of keeping the previous one (weather would diverge from the layout).
+	seed_used = int(data.get("seed_used", WorldSeed.get_world_seed()))
 	if seed_used == 0:
 		seed_used = WorldSeed.get_world_seed()
 	wetness = clampf(float(data.get("wetness", 0.0)), 0.0, 1.0)
@@ -383,7 +426,22 @@ func load_state(data: Dictionary) -> void:
 	lightning_enabled = bool(data.get("lightning_enabled", true))
 	strikes_fired = int(data.get("strikes_fired", 0))
 	_last_total_minutes = GameClock.total_minutes
+	_wetness_backlog = 0.0
 	_next_strike = {}
+	_next_sample_total = -1.0
 	_last_strike_real = _real_clock
-	_last_strike_total = GameClock.total_minutes
+	_last_strike_total = float(data.get("last_strike_total", GameClock.total_minutes))
+	# Restore a pending strike so thunder timing survives a save; JSON turns the
+	# numeric fields into floats, so coerce them back.
+	var raw_strike: Dictionary = data.get("next_strike", {})
+	if raw_strike.is_empty():
+		_next_strike = {}
+	else:
+		_next_strike = {
+			"abs_minute": float(raw_strike.get("abs_minute", 0.0)),
+			"intensity": float(raw_strike.get("intensity", 0.5)),
+			"distance": float(raw_strike.get("distance", 1000.0)),
+			"stages": int(raw_strike.get("stages", 2)),
+			"thunder_delay": float(raw_strike.get("thunder_delay", 1.0)),
+		}
 	_refresh(GameClock.total_minutes, true)

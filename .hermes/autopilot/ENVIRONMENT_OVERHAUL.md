@@ -457,6 +457,44 @@ The worktree is kept (not deleted) so the environment subsystem can be re-verifi
 interior track is mid-overhaul; the two fast gates in §15.4 need no world at all and run in
 the shared tree.
 
+### 15.6 Second pass: the adversarial reviewers' findings
+
+Three delegated adversarial reviewers (determinism/transitions, rain/wind/wetness/exposure,
+integration/lifecycle/API/perf) read the pre-fix tree and found items the first audit
+missed.  They were fixed in a second commit; the four that mattered:
+
+| Finding | Fix | Gate |
+| --- | --- | --- |
+| A frame that carried the clock past a scheduled strike **discarded** it (`_next_strike = {}`), so coarse frames fired fewer strikes than fine ones over the same interval. | Strikes fire as the schedule passes them, each successor scheduled from **its own** minute; `LIGHTNING_MAX_CATCHUP` bounds a burst and the anti-strobe valve compares *schedule* minutes. | `ET`: "a frame that crosses a scheduled strike fires it instead of dropping it" |
+| Wetness integration sampled once per frame partition, so the same seed + start + end could wet differently at different frame sizes. | Whole fixed **cells** anchored to the game-minute lattice, with the sub-cell remainder carried in a backlog for the next frame. | `WM`: "wetness does not depend on frame length" (now exact: 0.2244 vs 0.2244) |
+| The 0.25 s sample accumulator made the refresh **phase** frame-size dependent. | Refreshes land on an absolute game-minute lattice. | `WM` mirrors / `ET` |
+| `apply_cli_options()` ran *before* `_resync(true)`, which wipes forced weather/wind/wetness — so `--envweather`, `--envwind` and `--envwetness` reported an override the reseed had already erased, and `--envlightning` fired before `_last_origin` existed (bolt at the world origin). | The reseed runs first; overrides are applied after one zero-delta tick, so `_last_origin` exists. | `ET` forced-weather checks |
+| `focus` kept a stale reference after a load/respawn freed the player, and the bare null test never looked again — the probe silently used the camera boom for shelter. | Focus is validated (`is_instance_valid` + `is_inside_tree`) and re-resolved periodically. | `ET` shelter checks |
+
+Also fixed in this pass: lamps — the live world no longer instantiates the legacy
+`DayNightController`, which used to toggle group `streetlamp` and `window_glow`, so a lamp
+materialised at noon stayed **dark at midnight**; the manager now re-asserts their
+visibility on every phase change and every 5 s (chunks keep arriving with spawn-time
+state; the legacy flicker-energy modulation is not reproduced).  Plus: `load_state()`
+validates the block version, warns when the save carries a different world seed, clears a
+previous world's pending thunder and debug shelter override, and restores the pending
+strike schedule; `force_time()` can no longer roll into the next day; clock time scale is
+guarded for zero; the unreachable `Phase.PRE_DAWN` member is gone; `--envnonight` and
+`--envdump` are actually parsed now (both were documented but ignored); the lightning
+bearing is wrapped; `debug/environment_perf.gd` exits non-zero when its duplicate-node
+row fails; ambience synthesis is skipped when there is no audio driver and regenerates
+when the world seed changes.
+
+**Reported, not fixed (other tracks' files, isolation mandate honoured):**
+`chunk_manager`/`main.gd` loading a save with a different seed leaves `world_plan` and the
+worker snapshot pools on the old seed; `core/autoload/debug_overlay.gd` fires its hotkeys
+at the main menu and is instantiated in release builds.
+
+**Accepted, with rationale (reviewer nits not patched):** the per-refresh cache key
+(`"%d:%d"`) and the six global-parameter writes per tick are ~4 small string formats and
+6 RenderingServer calls per frame — below the noise floor of the perf table in §14, so
+they are documented rather than made stateful.
+
 ## 16. Known limitations
 
 1. Rain streaks are thin geometry: they read clearly in motion and in the storm

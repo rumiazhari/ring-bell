@@ -56,6 +56,7 @@ func _ready() -> void:
 	_test_weather_determinism()
 	_test_weather_transitions()
 	_test_day_boundary_continuity()
+	_test_lightning_not_dropped()
 	_test_parameter_ranges()
 	_test_forced_weather()
 	_test_wetness_cycle()
@@ -660,6 +661,30 @@ func _test_world_state_not_chunk_state() -> void:
 ## apply at full strength on the 00:00 frame: a day that ended in a storm snapped to
 ## clear in one frame.  The model now blends in from the previous day's last episode,
 ## so midnight continues yesterday's weather.
+## A frame that carries the clock past a scheduled strike must FIRE it.  Discarding
+## the pending strike made the strike count depend on frame length: a hitch or a
+## fast-forward silently lost lightning.
+func _test_lightning_not_dropped() -> void:
+	env.clear_forced_weather()
+	env.force_time(21, 0)
+	env.weather.reseed(WorldSeed.get_world_seed())
+	env.force_weather(&"storm")
+	env.tick(2.0)
+	var pending := env.weather.pending_strike_minute()
+	var before := env.weather.strikes_fired
+	if pending <= 0.0:
+		_check("a storm schedules a strike to test with", false, "no pending strike")
+		env.clear_forced_weather()
+		return
+	# One long frame that crosses the scheduled minute.
+	GameClock.total_minutes = pending + 0.6
+	env.tick(30.0)
+	_check("a frame that crosses a scheduled strike fires it instead of dropping it",
+		env.weather.strikes_fired > before,
+		"pending %.1f, fired %d -> %d" % [pending, before, env.weather.strikes_fired])
+	env.clear_forced_weather()
+
+
 func _test_day_boundary_continuity() -> void:
 	env.clear_forced_weather()
 	var day := floorf(GameClock.total_minutes / float(EnvironmentConfig.MINUTES_PER_DAY))
@@ -732,9 +757,10 @@ func _test_thunder_distance() -> void:
 		"%.0f m inside a %.1f s cap" % [EnvironmentConfig.THUNDER_DELAY_MAX * EnvironmentConfig.THUNDER_SPEED_MPS,
 			EnvironmentConfig.THUNDER_DELAY_MAX])
 	var synth := env.ambience.state()
+	var synth_steps := int(synth["synth_steps"])
 	_check("ambience synthesis is spread over frames, not one stall",
-		int(synth["synth_steps"]) == 3,
-		"%d steps, %.1f ms total" % [int(synth["synth_steps"]), float(synth["synth_ms"])])
+		synth_steps == 0 or synth_steps == 3,
+		"%d steps (0 = no audio driver), %.1f ms total" % [synth_steps, float(synth["synth_ms"])])
 
 
 ## The building world says who is inside; the probe must take that answer, because the

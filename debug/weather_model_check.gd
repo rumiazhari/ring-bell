@@ -117,17 +117,22 @@ func _test_wetness_math() -> void:
 ## be checked without a clock.
 func _wetness_after(precip: float, frame_minutes: Array, start := 0.0) -> float:
 	var wet := start
+	# Mirrors WeatherController._integrate_wetness: whole cells anchored to the lattice,
+	# with the sub-cell remainder carried in a backlog across frames.
+	var cell := EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
+	var backlog := 0.0
+	var guard_total := 0
 	for frame: float in frame_minutes:
-		var budget := minf(frame, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
-				* float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS))
-		var steps := clampi(int(ceilf(budget / EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES)),
-				1, EnvironmentConfig.WETNESS_MAX_SUBSTEPS)
-		var step := budget / float(steps)
-		for i in steps:
+		backlog += minf(frame, cell * float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS))
+		var guard := 0
+		while backlog >= cell and guard < EnvironmentConfig.WETNESS_MAX_SUBSTEPS * 4:
+			guard += 1
+			guard_total += 1
 			if precip > EnvironmentConfig.WETNESS_PRECIP_THRESHOLD:
-				wet = minf(1.0, wet + EnvironmentConfig.WETNESS_GAIN_PER_GAME_MINUTE * precip * step)
+				wet = minf(1.0, wet + EnvironmentConfig.WETNESS_GAIN_PER_GAME_MINUTE * precip * cell)
 			else:
-				wet = maxf(0.0, wet - EnvironmentConfig.WETNESS_DRY_PER_GAME_MINUTE * step)
+				wet = maxf(0.0, wet - EnvironmentConfig.WETNESS_DRY_PER_GAME_MINUTE * cell)
+			backlog -= cell
 	return wet
 
 

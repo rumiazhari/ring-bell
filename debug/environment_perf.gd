@@ -195,9 +195,11 @@ func _finish() -> void:
 			dupes.append("%s %d->%d" % [key, int(before.get(key, 0)), int(after[key])])
 	if dupes.is_empty():
 		print("[EnvPerf] ok   no duplicate environment nodes after 3 weather transitions")
+		get_tree().quit(0)
 	else:
 		print("[EnvPerf] FAIL duplicate environment nodes: %s" % ", ".join(dupes))
-	get_tree().quit(0)
+		# A failing row must not exit 0: an automated run reads the exit status.
+		get_tree().quit(1)
 
 
 func _count(klass: String) -> int:

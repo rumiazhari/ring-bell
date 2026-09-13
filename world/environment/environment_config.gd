@@ -52,6 +52,8 @@ const GUST_FREQUENCY := 0.09        # cycles per game minute
 const GUST_AMPLITUDE := 0.22        # +/- fraction of base speed
 
 # ---------------------------------------------------------------- lightning
+## Strikes replayed within one frame; beyond this the schedule skips forward.
+const LIGHTNING_MAX_CATCHUP := 4
 const LIGHTNING_MIN_REAL_GAP := 2.0       # real seconds (anti-strobe valve)
 const LIGHTNING_STRIKE_MIN_GAP := 2.6     # game minutes between strikes
 const LIGHTNING_STRIKE_MAX_GAP := 11.0    # game minutes
@@ -260,4 +262,6 @@ static func time_scale_for_day_length(seconds: float) -> float:
 
 
 static func day_length_seconds(time_scale: float) -> float:
-	return float(MINUTES_PER_DAY) / maxf(time_scale, 0.001)
+	# |scale| so a negative scale (which the clock cannot honour anyway) still reports
+	# a real duration instead of a huge positive one.
+	return float(MINUTES_PER_DAY) / maxf(absf(time_scale), 0.001)

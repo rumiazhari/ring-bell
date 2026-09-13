@@ -12,10 +12,12 @@ extends RefCounted
 ## zenith at 13:00.  Tuned so sunrise lands on 06:00 and sunset on 20:00, which
 ## is the contract GameClock.is_night() and the streetlamps already use.
 
-enum Phase { MIDNIGHT, PRE_DAWN, DAWN, MORNING, NOON, AFTERNOON, SUNSET, EVENING }
+## No PRE_DAWN member: phase_of() never returned it and nothing consumed it, so it was
+## an unreachable value (midnight covers 00:00-05:00 as a single phase).
+enum Phase { MIDNIGHT, DAWN, MORNING, NOON, AFTERNOON, SUNSET, EVENING }
 
 const PHASE_NAMES: Array[StringName] = [
-	&"midnight", &"pre_dawn", &"dawn", &"morning",
+	&"midnight", &"dawn", &"morning",
 	&"noon", &"afternoon", &"sunset", &"evening",
 ]
 

@@ -29,6 +29,13 @@ signal ready_state()
 const GROUP := &"environment_manager"
 const DEFAULT_QUALITY := EnvironmentConfig.Quality.MEDIUM
 const FOCUS_GROUP := &"player"
+## Focus is re-checked this often once bring-up is over (0.5 s at 60 fps).
+const FOCUS_RECHECK_FRAMES := 30
+## Frames between slow re-asserts of lamp/glow visibility (5 s at 60 fps).
+const LIGHT_REASSERT_FRAMES := 300
+var _light_reassert := 0
+## Debug override for the night factor (-1 = follow the clock); see --envnonight.
+var night_override := -1.0
 ## ~3 s at 60 fps: how long the environment keeps looking for the player node before
 ## settling for the camera.
 const FOCUS_RESOLVE_FRAMES := 180
@@ -110,18 +117,39 @@ func _ready() -> void:
 	_build_children()
 	var settings_quality := _quality_from_settings()
 	set_quality(settings_quality)
-	apply_cli_options(OS.get_cmdline_user_args(), OS.get_cmdline_args())
 	debug_panel = EnvironmentDebug.new()
 	debug_panel.name = "Debug"
 	add_child(debug_panel)
+	# Order matters: the full reseed wipes forced weather, wind overrides and wetness, so
+	# it has to run BEFORE the CLI/debug overrides.  Applied first, --envweather,
+	# --envwind and --envwetness reported an override the reseed had already erased.
 	_resync(true)
 	ready_done = true
+	# One zero-delta tick so `_last_origin` exists before a startup --envlightning fires
+	# its bolt (it used to strike at the world origin).
+	tick(0.0)
+	apply_cli_options(OS.get_cmdline_user_args(), OS.get_cmdline_args())
 	ready_state.emit()
 
 
 func _exit_tree() -> void:
 	if _shared == self:
 		_shared = null
+		# Global shader parameters are process-wide and outlive this node, so reset them:
+		# a scene left without a manager must not inherit the last world's values.
+		_publish_neutral_global_params()
+
+
+## Neutral defaults for the process-global shader parameters.
+func _publish_neutral_global_params() -> void:
+	if not _globals_ready:
+		return
+	RenderingServer.global_shader_parameter_set(GP_WETNESS, 0.0)
+	RenderingServer.global_shader_parameter_set(GP_RAIN, 0.0)
+	RenderingServer.global_shader_parameter_set(GP_STORM, 0.0)
+	RenderingServer.global_shader_parameter_set(GP_WIND, Vector3.ZERO)
+	RenderingServer.global_shader_parameter_set(GP_NIGHT, 0.0)
+	RenderingServer.global_shader_parameter_set(GP_HOUR, 12.0)
 
 
 func _build_children() -> void:
@@ -146,8 +174,11 @@ func tick(delta: float) -> void:
 		return
 	frames += 1
 	# Bring-up order is not ours: the player may be built after the environment, so keep
-	# looking for a focus for the first few seconds (the probe falls back to the camera).
-	if focus == null and frames < FOCUS_RESOLVE_FRAMES:
+	# looking for a focus during bring-up and then re-check periodically.  The periodic
+	# re-check matters after a load or respawn frees the old player: `focus` then holds a
+	# stale reference, and a bare null test would never look again (the probe would keep
+	# silently using the camera boom for shelter).
+	if not _focus_ok() and (frames < FOCUS_RESOLVE_FRAMES or frames % FOCUS_RECHECK_FRAMES == 0):
 		resolve_default_focus()
 	var camera := _resolve_camera()
 	var origin := _probe_origin(camera)
@@ -182,6 +213,8 @@ func _build_frame() -> void:
 	var day := TimeOfDay.day_of(GameClock.total_minutes)
 	var daylight := TimeOfDay.daylight_factor(minute)
 	var night := TimeOfDay.night_factor(minute)
+	if night_override >= 0.0:
+		night = night_override      # --envnonight: keep a capture out of the dark
 	var dusk := TimeOfDay.dusk_warmth(minute)
 	var moon_vis := TimeOfDay.moon_visibility(minute, day)
 
@@ -244,8 +277,36 @@ func _emit_phase_if_changed() -> void:
 	var phase := TimeOfDay.phase_of(TimeOfDay.minute_of_day_of(GameClock.total_minutes))
 	if phase != _last_phase:
 		_last_phase = phase
+		_apply_world_light_state()
 		time_phase_changed.emit(phase, TimeOfDay.phase_name(
 				TimeOfDay.minute_of_day_of(GameClock.total_minutes)))
+	# Lamps and window glows are materialised with a spawn-time visibility and chunks keep
+	# arriving, so re-assert the whole set on a slow timer as well.
+	_light_reassert += 1
+	if _light_reassert >= LIGHT_REASSERT_FRAMES:
+		_light_reassert = 0
+		_apply_world_light_state()
+
+
+## The live world no longer instantiates the legacy DayNightController, which used to
+## toggle group "streetlamp" and group "window_glow"; unowned, a lamp materialised at
+## noon stayed dark at midnight and one spawned at night never turned off.  Visibility
+## is the functional contract here (the legacy flicker-energy modulation is not
+## reproduced).
+func _apply_world_light_state() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var night := GameClock.is_night()
+	for node: Node in tree.get_nodes_in_group(&"streetlamp"):
+		var lamp := node as Node3D
+		if lamp == null:
+			continue
+		lamp.visible = false if lamp.has_meta(&"dead_lamp") else night
+	for node: Node in tree.get_nodes_in_group(&"window_glow"):
+		var glow := node as Node3D
+		if glow != null:
+			glow.visible = night
 
 
 # ---------------------------------------------------------------- lightning
@@ -253,7 +314,7 @@ func _on_lightning_struck(intensity: float, distance_m: float, delay: float,
 		stages: int, wind_dir: float) -> void:
 	lightning_events += 1
 	atmosphere.trigger_flash(intensity, stages)
-	var bearing := wind_dir + PI
+	var bearing := fposmod(wind_dir + PI, TAU)
 	atmosphere.trigger_bolt(_last_origin, bearing, distance_m)
 	var wait := clampf(delay, EnvironmentConfig.THUNDER_DELAY_MIN, EnvironmentConfig.THUNDER_DELAY_MAX)
 	lightning_event.emit(intensity, distance_m, wait)
@@ -410,13 +471,22 @@ func save_state() -> Dictionary:
 		"weather": weather.save_state(),
 		"ambience_enabled": ambience.is_enabled(),
 		"precipitation_enabled": precipitation.is_enabled(),
-		"focus_note": "derived from the player node after load",
+		"focus_note": ("focus: " + str(focus.name)) if _focus_ok() else "focus: none (probe falls back to the camera)",
 	}
 
 
 func load_state(data: Dictionary) -> void:
 	if data.is_empty():
 		return
+	var version := int(data.get("version", 0))
+	if version < 2:
+		push_warning("[Environment] environment block is version %d (current 2); missing keys fall back to defaults" % version)
+	# A load replaces the world: drop what the previous one left in flight, or a
+	# same-process load keeps a debug shelter override the save never contained and
+	# plays thunder belonging to the old city.
+	_thunder_queue.clear()
+	exposure.force(-1.0)
+	exposure.set_interior_claim(false)
 	set_quality(int(data.get("quality", quality)))
 	if data.has("ambience_enabled"):
 		ambience.set_enabled(bool(data["ambience_enabled"]))
@@ -429,7 +499,13 @@ func load_state(data: Dictionary) -> void:
 	GameClock.paused = bool(data.get("time_paused", false))
 	if data.has("clock_minutes"):
 		GameClock.total_minutes = maxf(0.0, float(data["clock_minutes"]))
-	weather.load_state(data.get("weather", {}))
+	var weather_block: Dictionary = data.get("weather", {})
+	var saved_seed := int(weather_block.get("seed_used", 0))
+	if saved_seed != 0 and saved_seed != WorldSeed.get_world_seed():
+		push_warning("[Environment] this save carries world seed %d but the world is %d; weather and layout will disagree" % [saved_seed, WorldSeed.get_world_seed()])
+	weather.load_state(weather_block)
+	# The beds are synthesised from a seed, so a different-seed load needs fresh ones.
+	ambience.set_seed(weather.seed_used)
 	# A forced state (--envweather / --envwind, or a debug key) is serialised with the
 	# save, so say so rather than silently forcing the weather for the rest of the run.
 	if weather.forced_state >= 0:
@@ -466,7 +542,10 @@ func resync(full_reseed: bool = false) -> void:
 # ---------------------------------------------------------------- debug / CLI
 func force_time(hour: float, minute: float = 0.0) -> void:
 	var day := TimeOfDay.day_of(GameClock.total_minutes)
-	var m := clampf(hour, 0.0, 23.99) * 60.0 + clampf(minute, 0.0, 59.0)
+	# Clamped inside the day: 23.99 + 59 minutes used to roll into the next day and
+	# silently change the weather day.
+	var m := minf(clampf(hour, 0.0, 23.0) * 60.0 + clampf(minute, 0.0, 59.0),
+			float(EnvironmentConfig.MINUTES_PER_DAY) - 1.0)
 	GameClock.total_minutes = float(day - 1) * float(EnvironmentConfig.MINUTES_PER_DAY) + m
 	resync()
 
@@ -563,6 +642,15 @@ func apply_cli_options(user_args: PackedStringArray, engine_args: PackedStringAr
 		freeze_time(true)
 		applied.append("freeze")
 
+	if _has_flag(args, "--envnonight"):
+		night_override = 0.0
+		applied.append("nonight")
+
+	if _has_flag(args, "--envdump"):
+		print("[Environment] dumped at %s: %s" % [TimeOfDay.clock_string(
+				TimeOfDay.minute_of_day_of(GameClock.total_minutes)), str(state())])
+		applied.append("dump")
+
 	var dl := _arg_value(args, "--envdaylength")
 	if not dl.is_empty():
 		var seconds := set_day_length(float(dl))
@@ -639,6 +727,11 @@ func _quality_from_settings() -> int:
 
 # ------------------------------------------------------------------ plumbing
 ## The camera rig, when the scene has one: the parent of the active camera.
+## True when `focus` still points at a live node inside the tree.
+func _focus_ok() -> bool:
+	return focus != null and is_instance_valid(focus) and focus.is_inside_tree()
+
+
 func _camera_rig() -> Node:
 	var cam := _resolve_camera()
 	return cam.get_parent() if cam != null else null
@@ -681,8 +774,9 @@ func adopt_focus(node: Node3D) -> void:
 
 
 func resolve_default_focus() -> void:
-	if focus != null and is_instance_valid(focus):
+	if _focus_ok():
 		return
+	focus = null      # a respawn/load frees the old player and leaves a stale reference
 	var node := get_tree().get_first_node_in_group(FOCUS_GROUP)
 	if node == null:
 		# Nothing claims the focus group, so ask the camera rig who it follows: the player
