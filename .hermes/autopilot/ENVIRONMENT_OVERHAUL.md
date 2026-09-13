@@ -538,6 +538,10 @@ the shared tree.
   multi-frame lightning peak sampling in `--envcapture`, CPU+GPU particle counting and
   type-based node counts in `--envperf`, `.hermes/autopilot/ENVIRONMENT_OVERHAUL.md`.
 
+- **`bfdd562`** (2026-09-13) — the audit-remediation pass (§15): the six HIGH, six MEDIUM
+  and LOW fixes above, plus the new fast gates `debug/weather_model_check.gd` and
+  `debug/environment_shader_check.gd`, and the city shaders' wetness consumption.
+
 Branch: **`copilot/worldgen-fix`**, pushed to `origin` (never merged or fast-forwarded
 into master).
 
