@@ -37,6 +37,13 @@ var _streams: Dictionary = {}
 var _enabled := true
 var _audio_ok := true
 var _generated := false
+## One stream per call, rain first: synthesis is ~250k filtered samples plus an s16
+## encode pass per loop, which used to land as a single stall inside world build.
+var _gen_queue: Array[String] = ["rain", "wind", "thunder"]
+## Measured synthesis cost, reported through state(): the "does this stall world
+## build?" question answered with a number instead of an estimate.
+var _synth_ms := 0.0
+var _synth_steps := 0
 
 
 func _init() -> void:
@@ -81,20 +88,40 @@ func is_enabled() -> bool:
 func _generate() -> void:
 	if _generated:
 		return
-	_generated = true
-	var slot_rain := String(STREAM_SLOTS.get("rain", ""))
-	var slot_wind := String(STREAM_SLOTS.get("wind", ""))
-	var slot_thunder := String(STREAM_SLOTS.get("thunder", ""))
-	_streams["rain"] = _load_or_make(slot_rain, func() -> AudioStream:
-		return _make_loop("rain", EnvironmentConfig.AMBIENCE_RAIN_LOOP_SECONDS, 0.34, 0.30, 1.7, 0.35, 0.0))
-	_streams["wind"] = _load_or_make(slot_wind, func() -> AudioStream:
-		return _make_loop("wind", EnvironmentConfig.AMBIENCE_WIND_LOOP_SECONDS, 0.055, 0.42, 0.28, 0.55, 0.0))
-	_streams["thunder"] = _load_or_make(slot_thunder, func() -> AudioStream:
-		return _make_thunder())
-	if _rain != null:
-		_rain.stream = _streams["rain"]
-		_wind.stream = _streams["wind"]
-		_thunder.stream = _streams["thunder"]
+	if _gen_queue.is_empty():
+		_generated = true
+		return
+	var kind: String = _gen_queue[0]
+	_gen_queue.remove_at(0)
+	_build_stream(kind)
+	if _gen_queue.is_empty():
+		_generated = true
+
+
+## Builds one bed and attaches it to its player, timing the work.
+func _build_stream(kind: String) -> void:
+	var started := Time.get_ticks_usec()
+	match kind:
+		"rain":
+			_streams["rain"] = _load_or_make(String(STREAM_SLOTS.get("rain", "")),
+					func() -> AudioStream:
+						return _make_loop("rain", EnvironmentConfig.AMBIENCE_RAIN_LOOP_SECONDS, 0.34, 0.30, 1.7, 0.35, 0.0))
+			if _rain != null:
+				_rain.stream = _streams["rain"]
+		"wind":
+			_streams["wind"] = _load_or_make(String(STREAM_SLOTS.get("wind", "")),
+					func() -> AudioStream:
+						return _make_loop("wind", EnvironmentConfig.AMBIENCE_WIND_LOOP_SECONDS, 0.055, 0.42, 0.28, 0.55, 0.0))
+			if _wind != null:
+				_wind.stream = _streams["wind"]
+		"thunder":
+			_streams["thunder"] = _load_or_make(String(STREAM_SLOTS.get("thunder", "")),
+					func() -> AudioStream:
+						return _make_thunder())
+			if _thunder != null:
+				_thunder.stream = _streams["thunder"]
+	_synth_ms += float(Time.get_ticks_usec() - started) / 1000.0
+	_synth_steps += 1
 
 
 func _load_or_make(path: String, fallback: Callable) -> AudioStream:
@@ -207,16 +234,28 @@ func _set_loop(player: AudioStreamPlayer, level: float, db_max: float) -> void:
 ## only cares about how loud and how far away it sounded.
 func play_thunder(intensity: float, distance_m: float) -> void:
 	thunder_plays += 1
-	if not _enabled or not _generated:
+	if not _enabled:
 		return
-	var atten := clampf(distance_m / 1400.0, 0.0, 1.0)
-	var db := EnvironmentConfig.AMBIENCE_THUNDER_DB_MAX - atten * 26.0 \
+	if _streams.get("thunder") == null:
+		# The bed can still be a synthesis step away; the next strike will play.
+		_generate()
+		return
+	# Distance reads as duration as well as volume: a 5 km strike arrives as a long low
+	# roll, not the same crack turned down.  Full volume inside THUNDER_FULL_M, silent at
+	# THUNDER_SILENT_M, instead of everything past 1.4 km sounding identical.
+	var atten := clampf((distance_m - EnvironmentConfig.THUNDER_FULL_M)
+			/ maxf(EnvironmentConfig.THUNDER_SILENT_M - EnvironmentConfig.THUNDER_FULL_M, 1.0),
+			0.0, 1.0)
+	var db := EnvironmentConfig.AMBIENCE_THUNDER_DB_MAX - atten * EnvironmentConfig.THUNDER_DB_FALLOFF \
 			+ clampf(intensity, 0.0, 1.0) * 4.0
 	_thunder_db = db
 	if _audio_ok and _thunder != null:
 		_thunder.stop()
 		_thunder.volume_db = db
-		_thunder.pitch_scale = 0.86 + clampf(intensity, 0.0, 1.0) * 0.24
+		# Distance reads as duration too: a far strike is a longer, lower roll.
+		_thunder.pitch_scale = lerpf(EnvironmentConfig.THUNDER_PITCH_NEAR,
+				EnvironmentConfig.THUNDER_PITCH_FAR, atten) \
+				+ clampf(intensity, 0.0, 1.0) * 0.10
 		_thunder.play()
 
 
@@ -247,4 +286,7 @@ func state() -> Dictionary:
 		"rain_level": snappedf(rain_level, 0.001),
 		"wind_level": snappedf(wind_level, 0.001),
 		"thunder_plays": thunder_plays,
+		"thunder_db": snappedf(_thunder_db, 0.1),
+		"synth_steps": _synth_steps,
+		"synth_ms": snappedf(_synth_ms, 0.1),
 	}

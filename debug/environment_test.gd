@@ -55,12 +55,16 @@ func _ready() -> void:
 	_test_phase_smoothness()
 	_test_weather_determinism()
 	_test_weather_transitions()
+	_test_day_boundary_continuity()
 	_test_parameter_ranges()
 	_test_forced_weather()
 	_test_wetness_cycle()
+	_test_wetness_frame_independence()
 	_test_wind_state()
 	_test_lightning_thunder()
+	_test_thunder_distance()
 	_test_shelter_hook()
+	_test_interior_claim()
 	await _test_save_load()
 	_test_debug_surface()
 	await _test_singleton()
@@ -503,6 +507,17 @@ func _test_shelter_hook() -> void:
 		"exposure %.2f" % float(inside["exposure"]))
 	_check("rain is reduced indoors", int(inside["rain_particles"]) < int(outside["rain_particles"]),
 		"%d -> %d particles" % [int(outside["rain_particles"]), int(inside["rain_particles"])])
+	_check("rain stops outright under a real ceiling", int(inside["rain_particles"]) == 0,
+		"%d particles" % int(inside["rain_particles"]))
+	# One of three roof rays is an awning or a doorway: partial cover, NOT indoors, and
+	# it must not mute the ambience or cut the rain (it used to read 0.67 >= threshold).
+	env.force_shelter(0.3333)
+	env.tick(1.0)
+	env.tick(1.0)
+	var partial := env.state()
+	_check("one roof ray is partial cover, not indoors",
+		not bool(partial["indoors"]) and int(partial["rain_particles"]) > 0,
+		"exposure %.2f, %d particles" % [float(partial["exposure"]), int(partial["rain_particles"])])
 	env.force_shelter(-1.0)
 	env.tick(1.0)
 	_check("the probe returns to automatic when released",
@@ -639,6 +654,112 @@ func _test_world_state_not_chunk_state() -> void:
 	WeatherModel.sample(env.weather.seed_used, GameClock.total_minutes, model)
 	_check("the live weather equals the pure (seed, minute) function",
 		int(model.get("target_state", -1)) == env.weather.target_state())
+
+
+## The first episode of a game day has no earlier episode to blend from, so it used to
+## apply at full strength on the 00:00 frame: a day that ended in a storm snapped to
+## clear in one frame.  The model now blends in from the previous day's last episode,
+## so midnight continues yesterday's weather.
+func _test_day_boundary_continuity() -> void:
+	env.clear_forced_weather()
+	var day := floorf(GameClock.total_minutes / float(EnvironmentConfig.MINUTES_PER_DAY))
+	var midnight := (day + 1.0) * float(EnvironmentConfig.MINUTES_PER_DAY)
+	var before := _model_at(midnight - 1.0)
+	var at_midnight := _model_at(midnight)
+	_check("the weather model reports a state id every minute",
+		int(before.get("state", -1)) >= 0 and int(at_midnight.get("state", -1)) >= 0,
+		"%s -> %s" % [str(before.get("state", -2)), str(at_midnight.get("state", -2))])
+	_check("00:00 keeps the state it had one minute earlier",
+		int(at_midnight.get("state", -1)) == int(before.get("state", -1)),
+		"state %d -> %d" % [int(before.get("state", -1)), int(at_midnight.get("state", -1))])
+	var worst := 0.0
+	var worst_at := midnight
+	var prev := before
+	for i in 90:
+		var minute := midnight + float(i)
+		var cur := _model_at(minute)
+		var step: float = maxf(absf(float(cur["precipitation"]) - float(prev["precipitation"])),
+				absf(float(cur["fog"]) - float(prev["fog"])))
+		if step > worst:
+			worst = step
+			worst_at = minute
+		prev = cur
+	_check("no weather discontinuity across the day boundary",
+		worst < 0.06, "worst step %.4f at minute %.0f" % [worst, worst_at])
+
+
+## What the deterministic model gives at an absolute game minute, sampled out of band so
+## the check cannot disturb the clock or the environment's own state.
+func _model_at(minute: float) -> Dictionary:
+	var out := {}
+	WeatherModel.sample(env.weather.seed_used, minute, out)
+	return out
+
+
+## Wetness is a function of game time, not of frame length: the same 12 game minutes must
+## wet the road the same whether they arrived as one long frame or twelve short ones (the
+## old per-frame clamp truncated the long frame to 5 minutes and lost the rest).
+func _test_wetness_frame_independence() -> void:
+	env.clear_forced_weather()
+	env.force_weather(&"light_rain")
+	env.set_wetness(0.0)
+	env.tick(0.0)
+	GameClock.advance(12.0)
+	env.tick(10.0)
+	var one_frame := float(env.state()["wetness"])
+	env.set_wetness(0.0)
+	env.tick(0.0)
+	for i in 12:
+		GameClock.advance(1.0)
+		env.tick(1.0)
+	var twelve := float(env.state()["wetness"])
+	_check("wetness does not depend on frame length",
+		absf(one_frame - twelve) < 0.06, "one frame %.4f vs twelve %.4f" % [one_frame, twelve])
+	env.clear_forced_weather()
+
+
+## Distance has to change how thunder sounds, not only how loud it is.
+func _test_thunder_distance() -> void:
+	env.ambience.play_thunder(1.0, 800.0)
+	var near_db := float(env.ambience.state()["thunder_db"])
+	env.ambience.play_thunder(1.0, EnvironmentConfig.THUNDER_SILENT_M)
+	var far_db := float(env.ambience.state()["thunder_db"])
+	_check("thunder fades with distance instead of saturating", far_db < near_db - 6.0,
+		"%.1f dB near vs %.1f dB far" % [near_db, far_db])
+	_check("the thunder delay band covers the audible distance",
+		EnvironmentConfig.THUNDER_DELAY_MAX * EnvironmentConfig.THUNDER_SPEED_MPS
+			>= EnvironmentConfig.THUNDER_SILENT_M - 500.0,
+		"%.0f m inside a %.1f s cap" % [EnvironmentConfig.THUNDER_DELAY_MAX * EnvironmentConfig.THUNDER_SPEED_MPS,
+			EnvironmentConfig.THUNDER_DELAY_MAX])
+	var synth := env.ambience.state()
+	_check("ambience synthesis is spread over frames, not one stall",
+		int(synth["synth_steps"]) == 3,
+		"%d steps, %.1f ms total" % [int(synth["synth_steps"]), float(synth["synth_ms"])])
+
+
+## The building world says who is inside; the probe must take that answer, because the
+## interior ceiling caps are presentation-only geometry that a ray cannot see.
+func _test_interior_claim() -> void:
+	env.force_shelter(-1.0)
+	env.clear_forced_weather()
+	env.exposure.set_interior_claim(true)
+	env.tick(1.0)
+	env.tick(1.0)
+	_check("an interior claim alone makes the probe report indoors",
+		env.exposure.is_sheltered() and float(env.state()["exposure"]) > 0.9,
+		"exposure %.2f" % float(env.state()["exposure"]))
+	env.force_weather(&"heavy_rain")
+	env.tick(1.0)
+	env.tick(1.0)
+	_check("and it stops the rain the way a real ceiling does",
+		int(env.state()["rain_particles"]) == 0,
+		"%d particles" % int(env.state()["rain_particles"]))
+	env.exposure.set_interior_claim(false)
+	env.clear_forced_weather()
+	_check("the rain cutoff sits above partial cover",
+		EnvironmentConfig.SHELTER_RAIN_CUTOFF > EnvironmentConfig.SHELTER_INDOOR_THRESHOLD)
+	_check("wetness starts on the frame the first streaks appear",
+		is_equal_approx(EnvironmentConfig.WETNESS_PRECIP_THRESHOLD, EnvironmentConfig.RAIN_MIN_PRECIPITATION))
 
 
 func _has_edge(from: int, to: int) -> bool:

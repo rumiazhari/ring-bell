@@ -73,6 +73,9 @@ var _flash_seq: Array[Vector2] = []
 var _flash_index := 0
 var _flash_time := 0.0
 var _flash_level := 0.0
+## Camera far plane, pushed in by the manager each frame: the bolt is depth-tested
+## now, so it has to be drawn inside the view distance the player actually has.
+var _camera_far := 4000.0
 
 # lightning bolt mesh (rebuilt per strike)
 var _bolt: MeshInstance3D
@@ -119,7 +122,10 @@ func _build_environment() -> void:
 
 	_build_sky()
 
-	_env.fog_enabled = true
+	# Glow / distance fog / volumetric fog are the player's settings, and GameSettings
+	# only re-applies them when the pause menu is opened - so read the same keys here
+	# or a cold start contradicts them until the player opens a menu.
+	_env.fog_enabled = bool(GameSettings.graphics("distance_fog"))
 	_env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	_env.fog_sky_affect = 0.35
 	_env.fog_light_color = Color(0.55, 0.62, 0.78)
@@ -127,7 +133,7 @@ func _build_environment() -> void:
 	_env.fog_density = 0.003
 
 	# Phase V (kept): bloom halo around every bright lamp / window point.
-	_env.glow_enabled = true
+	_env.glow_enabled = bool(GameSettings.graphics("glow"))
 	_env.glow_intensity = EnvironmentConfig.GLOW_DAY
 	_env.glow_strength = EnvironmentConfig.GLOW_STRENGTH
 	_env.glow_bloom = EnvironmentConfig.GLOW_BLOOM
@@ -137,7 +143,8 @@ func _build_environment() -> void:
 	_env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 
 	# Phase V (kept): faint volumetric ground fog that catches lamp spill.
-	_env.volumetric_fog_enabled = _quality != EnvironmentConfig.Quality.LOW
+	_env.volumetric_fog_enabled = bool(GameSettings.graphics("volumetric_fog")) \
+			and _quality != EnvironmentConfig.Quality.LOW
 	_env.volumetric_fog_density = EnvironmentConfig.VOL_FOG_DENSITY_DAY
 	_env.volumetric_fog_albedo = EnvironmentConfig.VOL_FOG_ALBEDO_DAY
 	_env.volumetric_fog_emission = EnvironmentConfig.VOL_FOG_EMISSION
@@ -246,10 +253,17 @@ func apply(frame: Dictionary) -> void:
 	_moon.visible = moon_energy > 0.002
 	_face(_moon, frame.get("moon_dir", Vector3.DOWN))
 
-	var ambient_energy := float(frame.get("ambient_energy", 0.0))
+	# A strike has to light the *street*, not just the sky: the sky shader already
+	# takes `flash`, and these two are what make geometry read it.  Bounded, so a
+	# night storm flashes instead of blowing the frame out.
+	_camera_far = maxf(400.0, float(frame.get("camera_far", _camera_far)))
+	var ambient_energy := float(frame.get("ambient_energy", 0.0)) \
+			+ _flash_level * EnvironmentConfig.FLASH_AMBIENT_GAIN
 	_env.ambient_light_energy = ambient_energy
 	var ambient_color := AMBIENT_NIGHT.lerp(AMBIENT_DAY, daylight)
 	ambient_color = ambient_color.lerp(ambient_color.lerp(STORM_GREY_DAY, 0.55), dim)
+	ambient_color = ambient_color.lerp(FLASH_COLOR,
+			_flash_level * EnvironmentConfig.FLASH_AMBIENT_TINT)
 	_env.ambient_light_color = _floor_luma(ambient_color, EnvironmentConfig.MIN_AMBIENT_LUMA)
 
 	# ------------------------------------------------------------------- sky
@@ -425,7 +439,9 @@ func _build_bolt() -> void:
 	_bolt_material.emission_enabled = true
 	_bolt_material.emission = FLASH_COLOR
 	_bolt_material.emission_energy_multiplier = 6.0
-	_bolt_material.no_depth_test = true
+	# Depth-tested: a building must hide a bolt behind it (it used to draw straight
+	# through walls).  The drawn distance is clamped into the far plane below.
+	_bolt_material.no_depth_test = false
 	_bolt_material.disable_receive_shadows = true
 	_bolt = MeshInstance3D.new()
 	_bolt.name = BOLT_NODE_NAME
@@ -443,7 +459,11 @@ func trigger_bolt(origin: Vector3, bearing_rad: float, distance: float) -> void:
 		_build_bolt()
 		if _bolt == null:
 			return
-	var d := maxf(distance, BOLT_MIN_DISTANCE)
+	# Drawn inside the camera's far plane so depth testing cannot clip it away when the
+	# player lowers the view distance; the rumble distance is untouched (see ambience).
+	var d := clampf(distance, BOLT_MIN_DISTANCE,
+			minf(EnvironmentConfig.BOLT_MAX_DRAWN_DISTANCE,
+					maxf(BOLT_MIN_DISTANCE, _camera_far * 0.92)))
 	var offset := Vector3(sin(bearing_rad), 0.0, -cos(bearing_rad)) * d
 	var rng := WorldSeed.rng_for("environment_bolt",
 			[int(origin.x), int(origin.z), int(origin.y), _frames])

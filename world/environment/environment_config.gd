@@ -38,8 +38,14 @@ const MOON_MIN_VISIBILITY := 0.45
 ## slower, so a shower leaves the streets looking wet for a while afterwards.
 const WETNESS_GAIN_PER_GAME_MINUTE := 0.055
 const WETNESS_DRY_PER_GAME_MINUTE := 0.0042
-const WETNESS_PRECIP_THRESHOLD := 0.03
-const WETNESS_MAX_JUMP_MINUTES := 5.0   # clamp after load/time skips
+## Same value as RAIN_MIN_PRECIPITATION: the road starts to darken on the frame
+## the first streaks appear, instead of a band where it rains and nothing wets.
+const WETNESS_PRECIP_THRESHOLD := 0.02
+const WETNESS_MAX_JUMP_MINUTES := 5.0   # wetness integration substep (game minutes)
+## One frame integrates at most WETNESS_MAX_SUBSTEPS substeps (60 game minutes),
+## so a hitch inside that window lands exactly and only a bigger jump (a debug
+## time skip) truncates.  Deterministic in game time, not in frame count.
+const WETNESS_MAX_SUBSTEPS := 12
 
 # --------------------------------------------------------------------- wind
 const GUST_FREQUENCY := 0.09        # cycles per game minute
@@ -51,9 +57,25 @@ const LIGHTNING_STRIKE_MIN_GAP := 2.6     # game minutes between strikes
 const LIGHTNING_STRIKE_MAX_GAP := 11.0    # game minutes
 const LIGHTNING_MAX_STRIKES_PER_EPISODE := 64
 const LIGHTNING_STORM_BUILD_MINUTES := 10.0
+## The bolt mesh is depth-tested against the city (so buildings hide bolts behind
+## them), which means it must stay inside the camera's far plane or a low
+## view-distance setting would clip it away entirely.
+const BOLT_MAX_DRAWN_DISTANCE := 3600.0
+## A strike lights the street, not just the sky: the ambient light takes this gain
+## while a flash is up, and leans this far towards FLASH_COLOR.
+const FLASH_AMBIENT_GAIN := 1.35
+const FLASH_AMBIENT_TINT := 0.45
 const THUNDER_SPEED_MPS := 343.0
 const THUNDER_DELAY_MIN := 0.35
-const THUNDER_DELAY_MAX := 11.0
+const THUNDER_DELAY_MAX := 18.2   # covers THUNDER_SILENT_M at THUNDER_SPEED_MPS
+## Thunder distance: full volume inside THUNDER_FULL_M, silent at
+## THUNDER_SILENT_M, fading over THUNDER_DB_FALLOFF and pitched down with
+## distance so a far strike reads as a longer, lower roll, not the same crack.
+const THUNDER_FULL_M := 1400.0
+const THUNDER_SILENT_M := 6200.0
+const THUNDER_DB_FALLOFF := 30.0
+const THUNDER_PITCH_NEAR := 0.90
+const THUNDER_PITCH_FAR := 0.60
 
 # ------------------------------------------------------- weather episodes
 const EPISODE_MIN_MINUTES := 60.0
@@ -156,12 +178,20 @@ const RAIN_LIFETIME := 1.55
 const RAIN_COLOR := Color(0.74, 0.80, 0.92, 0.50)
 const RAIN_COLOR_STORM := Color(0.66, 0.73, 0.88, 0.62)
 ## How much of the wind vector bends the fall (0 == straight down).
-const RAIN_WIND_FACTOR := 3.0
+## Lateral share of the wind that slants the fall.  The slant now goes into the
+## streaks' velocity, so it no longer has to be extreme to be visible: 3.0 at
+## storm wind walked most of the budget out of the camera-local box.
+const RAIN_WIND_FACTOR := 1.1
+const RAIN_GRAVITY_FACTOR := 0.35   # residual fall accel; the rest is birth velocity
+const RAIN_SPREAD_DEG := 4.0        # degrees of velocity jitter around the slant
 
 # ------------------------------------------------------------------- shelter
 const SHELTER_PROBE_INTERVAL := 0.25   # real seconds between roof raycasts
 const SHELTER_PROBE_DISTANCE := 9.0
 const SHELTER_RAIN_REDUCTION := 0.92   # rain cut when fully indoors
+## Under a real ceiling the rain stops outright: a proportional 0.92 cut leaves
+## one whole particle-budget step (350 streaks) falling inside every room.
+const SHELTER_RAIN_CUTOFF := 0.95
 const SHELTER_INDOOR_THRESHOLD := 0.60
 const SHELTER_SMOOTHING := 3.0         # per-second blend towards the probe result
 

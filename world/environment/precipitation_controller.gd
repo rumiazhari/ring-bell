@@ -2,7 +2,7 @@ class_name EnvironmentPrecipitation
 extends Node3D
 ## Camera-local precipitation for the Ring Bell environment subsystem.
 ##
-## ONE rain emitter, not a city-wide one: a 44 x 30 x 44 m box that is
+## ONE rain emitter, not a city-wide one: an 11 x 12 x 11 m box that is
 ## recentred on the active camera every frame and emits `budget` streaks, where
 ## the budget is the weather model's precipitation level times a quality-scaled
 ## cap.  `local_coords` is false, so the streaks live in world space and the box
@@ -81,9 +81,12 @@ func _build() -> void:
 			EnvironmentConfig.RAIN_BOX_HEIGHT * 0.5,
 			EnvironmentConfig.RAIN_BOX_METERS * 0.5)
 	_rain.direction = Vector3(0.0, -1.0, 0.0)
-	_rain.spread = 0.0
-	_rain.initial_velocity_min = 0.0
-	_rain.initial_velocity_max = 0.0
+	_rain.spread = EnvironmentConfig.RAIN_SPREAD_DEG
+	# Born moving: a streak at rest has no velocity for `particle_flag_align_y`
+	# to align to, so it draws as a misaligned bar.  update_frame re-aims these
+	# along the wind every frame.
+	_rain.initial_velocity_min = EnvironmentConfig.RAIN_FALL_SPEED * 0.86
+	_rain.initial_velocity_max = EnvironmentConfig.RAIN_FALL_SPEED * 1.04
 	_rain.gravity = Vector3(0.0, -EnvironmentConfig.RAIN_FALL_SPEED, 0.0)
 	# Align each streak with its own velocity: a slanted fall drawn as a vertical
 	# bar still reads as vertical, which is what "rain ignores the wind" looks like.
@@ -130,6 +133,9 @@ func update_frame(delta: float, camera: Camera3D, precipitation: float,
 	_storm = clampf(storm, 0.0, 1.0)
 	_shelter = clampf(shelter, 0.0, 1.0)
 	_effective = _precipitation * (1.0 - _shelter * EnvironmentConfig.SHELTER_RAIN_REDUCTION)
+	if _shelter >= EnvironmentConfig.SHELTER_RAIN_CUTOFF:
+		# A proportional cut still leaves 8% of a storm falling inside a room.
+		_effective = 0.0
 
 	if camera != null and camera.is_inside_tree():
 		_last_camera = camera.global_position
@@ -138,6 +144,15 @@ func update_frame(delta: float, camera: Camera3D, precipitation: float,
 		_rain.global_position = _last_camera + Vector3(0.0, EnvironmentConfig.RAIN_BOX_LIFT, 0.0)
 
 	var want := _effective > EnvironmentConfig.RAIN_MIN_PRECIPITATION
+	var budget := 0
+	if want:
+		# Quantise down so the particle buffer is not reallocated every frame.  A
+		# drizzle thinner than one step quantises to nothing, and that is what it
+		# should draw: the old `maxi(budget, _amount_step)` floor showed a whole
+		# step of rain for a drizzle the model called almost dry.
+		budget = (EnvironmentConfig.rain_particle_budget(_quality, _effective) \
+				/ _amount_step) * _amount_step
+		want = budget > 0
 	if want != _emitting:
 		_emitting = want
 		_rain.emitting = want
@@ -147,19 +162,27 @@ func update_frame(delta: float, camera: Camera3D, precipitation: float,
 			_budget = 0
 			_rain.amount = _amount_step
 		return
-
-	var budget := EnvironmentConfig.rain_particle_budget(_quality, _effective)
-	budget = (budget / _amount_step) * _amount_step
 	if budget != _budget:
 		_budget = budget
-		_rain.amount = maxi(budget, _amount_step)
+		_rain.amount = budget
 
-	# Wind bends the fall; a storm falls harder and reads colder.
+	# Wind slants the fall.  The slant goes into the streak *velocity*, not just its
+	# acceleration: gravity-borne bend alone meant streaks were born at rest, and at
+	# storm wind it walked them out of the camera-local box long before they fell.
 	var bend := EnvironmentConfig.RAIN_WIND_FACTOR
 	var fall := EnvironmentConfig.RAIN_FALL_SPEED * lerpf(0.86, 1.22, _storm)
-	_rain.gravity = Vector3(wind.x * bend, -fall, wind.z * bend)
-	_material.albedo_color = EnvironmentConfig.RAIN_COLOR.lerp(
+	var slant := Vector3(wind.x * bend, -fall, wind.z * bend)
+	var speed := maxf(slant.length(), 0.001)
+	_rain.direction = slant / speed
+	_rain.initial_velocity_min = speed * 0.86
+	_rain.initial_velocity_max = speed * 1.04
+	# A little residual fall acceleration keeps the streaks arcing rather than
+	# travelling dead straight.
+	_rain.gravity = Vector3(0.0, -fall * EnvironmentConfig.RAIN_GRAVITY_FACTOR, 0.0)
+	var storm_color := EnvironmentConfig.RAIN_COLOR.lerp(
 			EnvironmentConfig.RAIN_COLOR_STORM, _storm)
+	if not _material.albedo_color.is_equal_approx(storm_color):
+		_material.albedo_color = storm_color
 
 
 func set_enabled(value: bool) -> void:

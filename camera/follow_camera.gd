@@ -63,6 +63,16 @@ var _boom := DEFAULT_DISTANCE
 var _collide := true               # RB_CAM_COLLIDE=0 disables (A/B capture)
 var _pitch := PITCH_DEG
 var _interior := false
+
+
+## Read-only view of the interior presentation state.  The environment system consumes
+## it as the authoritative "the player is inside a building" signal: CityInteriorState
+## decides it, and a raycast cannot re-derive it because the interior ceiling caps are
+## presentation-only geometry.
+func is_interior_active() -> bool:
+	return _interior
+
+
 ## Footprint band of the building the player is standing in, handed over by the
 ## world (CityInteriorState.shell_of) while interior mode is active: the
 ## plan-space rect, the yaw that rotates it into the world, and the building's

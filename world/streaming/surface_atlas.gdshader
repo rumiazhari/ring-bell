@@ -25,6 +25,8 @@
 // anisotropic filtering those read as a blur no matter how sharp the source.
 
 shader_type spatial;
+// Published by world/environment every frame: 0 dry .. 1 soaked.
+global uniform float environment_wetness;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
 // NO source_color on purpose: the tiles are authored as neutral detail maps
@@ -61,7 +63,8 @@ void fragment() {
 	// normalised to a ~0.92 mean this is a ~8% darkening, and strength 0
 	// reproduces the pre-texture look exactly.
 	detail = mix(vec3(1.0), detail, detail_strength);
-	ALBEDO = detail * COLOR.rgb;
-	ROUGHNESS = surface_roughness;
+	// Wet surfaces darken and lose roughness: the same global the paving shader reads.
+	ALBEDO = detail * COLOR.rgb * mix(1.0, 0.74, clamp(environment_wetness, 0.0, 1.0));
+	ROUGHNESS = mix(surface_roughness, surface_roughness * 0.35, clamp(environment_wetness, 0.0, 1.0));
 	METALLIC = metallic_hint;
 }

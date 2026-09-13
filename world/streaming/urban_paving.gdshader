@@ -1,4 +1,6 @@
 shader_type spatial;
+// Published by world/environment every frame: 0 dry .. 1 soaked.
+global uniform float environment_wetness;
 render_mode diffuse_burley;
 
 uniform vec2 stone_size = vec2(0.32, 0.22);
@@ -19,6 +21,9 @@ void fragment() {
 	float aa = max(fwidth(distance_to_joint), 0.002);
 	float stone = smoothstep(joint_width - aa, joint_width + aa, distance_to_joint);
 	float variation = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-	ALBEDO = COLOR.rgb * mix(0.46, mix(0.86, 1.12, variation), stone);
-	ROUGHNESS = 0.93;
+	// Wet cobbles darken and go glossy.  This global is the only wetness input the
+	// city needs; before it was declared here, wetness only existed in the capture
+	// fixture and the streets never changed.
+	ALBEDO = COLOR.rgb * mix(0.46, mix(0.86, 1.12, variation), stone) * mix(1.0, 0.72, clamp(environment_wetness, 0.0, 1.0));
+	ROUGHNESS = mix(0.93, 0.30, clamp(environment_wetness, 0.0, 1.0));
 }

@@ -40,13 +40,16 @@ var _anchor := -1
 var _weather := -1
 var _shelter_mode := 0        # 0 auto, 1 forced indoors, 2 forced outdoors
 var _log_accum := 0.0
+## `--envkeys=off` drops the F-key bindings but keeps the state publishing.
+var _hotkeys := false
 
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	enabled = OS.is_debug_build() or args.has("--envdebug")
 	verbose = args.has("--envverbose")
-	set_process_unhandled_input(enabled)
+	_hotkeys = enabled and not args.has("--envkeys=off")
+	set_process_unhandled_input(_hotkeys)
 	set_process(enabled)
 	if not enabled:
 		return
@@ -75,7 +78,7 @@ func tick(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not enabled:
+	if not _hotkeys:
 		return
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return

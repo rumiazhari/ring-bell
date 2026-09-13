@@ -18,6 +18,7 @@ var _raw := 0.0
 var _timer := 0.0
 var _enabled := true
 var _forced := -1.0   ## debug override; < 0 == use the physics probe
+var _interior_claim := false   ## the building world says "inside" (see set_interior_claim)
 var _samples := 0
 var _hits := 0
 var _last_origin := Vector3.ZERO
@@ -48,6 +49,13 @@ func force(value: float) -> void:
 		exposure = _raw
 
 
+## The building world's own answer to "am I inside?" - CityInteriorState,
+## surfaced by the camera rig.  Consumed instead of re-derived here, so the
+## environment and the camera agree about which side of a wall the player is on.
+func set_interior_claim(value: bool) -> void:
+	_interior_claim = value
+
+
 func is_sheltered() -> bool:
 	return exposure >= EnvironmentConfig.SHELTER_INDOOR_THRESHOLD
 
@@ -69,7 +77,10 @@ func update_frame(delta: float, origin: Vector3, world: World3D) -> void:
 		var result := _sample(origin, world)
 		_raw = result
 	_samples += 1
-	exposure = lerpf(exposure, _raw, clampf(delta * EnvironmentConfig.SHELTER_SMOOTHING, 0.0, 1.0))
+	# An interior claim outranks the rays: the ceiling caps are presentation
+	# geometry, so a room can read as open sky to a raycast.
+	var target := maxf(_raw, 1.0 if _interior_claim else 0.0)
+	exposure = lerpf(exposure, target, clampf(delta * EnvironmentConfig.SHELTER_SMOOTHING, 0.0, 1.0))
 
 
 func _sample(origin: Vector3, world: World3D) -> float:
@@ -86,9 +97,10 @@ func _sample(origin: Vector3, world: World3D) -> float:
 	if hits <= 0:
 		return 0.0
 	# One hit == partial cover (an awning, a bridge, a doorway); two or more
-	# overlapping hits == a real ceiling.  Clamped, so any of the three rays
-	# already counts as meaningfully sheltered.
-	return clampf(float(hits) / 1.5, 0.0, 1.0)
+	# overlapping hits == a real ceiling.  Dividing by 1.5 made a single hit read as
+	# indoors (0.67 >= SHELTER_INDOOR_THRESHOLD), which muted the ambience and cut
+	# the rain under any narrow overhang.
+	return clampf(float(hits) / float(_RAY_DIRECTIONS.size()), 0.0, 1.0)
 
 
 func _ray(space: PhysicsDirectSpaceState3D, from: Vector3, dir: Vector3) -> bool:
@@ -106,6 +118,7 @@ func state() -> Dictionary:
 		"raw": snappedf(_raw, 0.001),
 		"sheltered": is_sheltered(),
 		"forced": _forced >= 0.0,
+		"interior_claim": _interior_claim,
 		"rays_last_sample": _hits,
 		"origin": _last_origin,
 	}

@@ -121,22 +121,37 @@ committed and pushed (see "Commits" at the end).
 - Streaks: `RAIN_STREAK_LENGTH := 0.95` m × `RAIN_STREAK_WIDTH := 0.065`,
   `RAIN_FALL_SPEED := 19.0` m/s; colour `RAIN_COLOR` (α 0.50) → `RAIN_COLOR_STORM`
   (α 0.62) so rain reads against dark facades.
-- Wind influence: `gravity = (wind.x, -fall_speed, wind.z) * RAIN_WIND_FACTOR`
-  (`RAIN_WIND_FACTOR := 3.0`), and the material uses
-  `BILLBOARD_PARTICLES` with `particle_flag_align_y = true` so each streak is
-  oriented along its own velocity (wind-driven slant) instead of staying vertical.
+- Wind influence: the slant lives in the streak **velocity** —
+  `direction = normalize(wind.x * RAIN_WIND_FACTOR, -fall_speed, wind.z * RAIN_WIND_FACTOR)`
+  with `initial_velocity_min/max` around its magnitude (`RAIN_WIND_FACTOR := 1.1`,
+  `RAIN_GRAVITY_FACTOR := 0.35` for a residual fall arc, `RAIN_SPREAD_DEG := 4.0`).  The
+  material uses `BILLBOARD_PARTICLES` with `particle_flag_align_y = true`, so a streak is
+  oriented along its own velocity.  The slant *must* be in the velocity: bending gravity
+  alone left streaks born at rest (no velocity to align to), and at the old
+  `RAIN_WIND_FACTOR 3.0` the lateral acceleration walked most of the budget out of the
+  camera-local box before a streak had fallen.
 - When dry, the emitter is parked (`amount = _amount_step`, `emitting = false`,
   `visible = false`) because the engine rejects `amount = 0`; `active_particles()`
   reports 0 while parked and `rain_particles()` exposes the live budget.
 - Indoor reduction: the precipitation controller takes the shelter value and
-  suppresses streaks that fall between the camera and the roof (see §7).
+  suppresses streaks that fall between the camera and the roof (see §7): proportional
+  first (`SHELTER_RAIN_REDUCTION := 0.92`), then a **hard cutoff** above
+  `SHELTER_RAIN_CUTOFF := 0.95`, because a proportional cut alone still left 8% of a
+  storm falling inside a room.  A budget that quantises to zero parks the emitter, so a
+  drizzle thinner than one `_amount_step` draws nothing instead of one whole step.
 
 ## 6. Wetness
 
 - Global parameter: `wetness` 0..1, `WETNESS_GAIN_PER_GAME_MINUTE := 0.055` while
-  `precipitation > WETNESS_PRECIP_THRESHOLD` (0.03), drying at
-  `WETNESS_DRY_PER_GAME_MINUTE := 0.0042` (≈ 13× slower than wetting).
-  `WETNESS_MAX_JUMP_MINUTES := 5.0` clamps catches-up after load/time skips.
+  `precipitation > WETNESS_PRECIP_THRESHOLD` (0.02 — the same value as
+  `RAIN_MIN_PRECIPITATION`, so the road starts to darken on the frame the first streaks
+  appear), drying at `WETNESS_DRY_PER_GAME_MINUTE := 0.0042` (≈ 13× slower than wetting).
+- Integration is in **fixed game-minute substeps**: `WETNESS_MAX_JUMP_MINUTES := 5.0` is
+  the substep size, one frame integrates at most
+  `WETNESS_MAX_SUBSTEPS (12) × 5.0 = 60` game minutes, and each substep samples the model
+  at its own minute.  A long frame therefore lands the same as many short ones (the old
+  single clamp truncated a 12-minute frame to 5, making the road depend on frame history),
+  while a debug time skip still cannot soak or dry the whole city in one frame.
 - **Material contract**: six global shader uniforms published by the manager —
   `environment_wetness`, `environment_rain_intensity`, `environment_wind_vector`,
   `environment_night_factor`, `environment_hour`, `environment_storm` — declared in
@@ -144,7 +159,11 @@ committed and pushed (see "Commits" at the end).
   `_check_global_params()` (publishing an undeclared global spams an engine error
   every frame). A material opts in with `global uniform float environment_wetness;`
   and nothing else — no per-material bookkeeping, no per-frame material loops.
-  `shaders/wetness_overlay.gdshader` is the working reference consumer.
+  **Real consumers since the fix pass**: `world/streaming/urban_paving.gdshader` (streets)
+  and `world/streaming/surface_atlas.gdshader` (surfaces and building faces) — both darken
+  albedo and drop roughness with wetness.  Before that, the only consumer was the
+  unreferenced reference shader, so wet roads existed in the capture fixture and nowhere in
+  the game.  `shaders/wetness_overlay.gdshader` stays as the reference consumer.
 - Demonstrated effect: wet surfaces darken in albedo (diffuse) and gain a
   sky-reflecting gloss (highlight percentile up) — both verified in `--envcapture`.
 - Puddles: intentionally not implemented (optional per the brief). The wet-road
@@ -153,8 +172,21 @@ committed and pushed (see "Commits" at the end).
 ## 7. Shelter / indoor-outdoor hook
 
 - `exposure_probe.gd` returns a 0..1 shelter value: roof rays up plus a short
-  horizontal set, **throttled** (not every frame, no per-entity raycasts).
-  `force(value)` overrides it for tests/debug (F12).
+  throttled** (not every frame, no per-entity raycasts).
+  The value is `hits / RAY_COUNT`: **one** ray is partial cover (an awning, a bridge, a
+  doorway) and only two or more overlapping rays pass `SHELTER_INDOOR_THRESHOLD` (0.60).
+  Dividing by 1.5 made a single ray read 0.67 — i.e. "indoors" — which muted the ambience
+  and cut the rain under any narrow overhang.  `force(value)` overrides it for tests (F12).
+- **The building world owns "inside".** `CityInteriorState` decides it (the camera rig
+  carries the answer); the environment consumes that via `set_interior_claim()`, fed from
+  the rig's read-only `is_interior_active()`, and takes the union with its own rays.  The
+  probe cannot re-derive it: the interior ceiling caps are presentation-only geometry, so a
+  ray sees open sky from inside a room.
+- The probe follows the **player**, not the camera: `tick()` retries
+  `resolve_default_focus()` for the first `FOCUS_RESOLVE_FRAMES` (180) frames, and that
+  resolver falls back to the camera rig's public `target` because nothing in this project
+  claims the `player` group.  The camera sits on a boom metres away and can be the only
+  thing under a roof.
 - Consumers: precipitation (rain visible only outside, plus an indoor acoustic-ish
   reduction), ambience (rain/wind beds attenuate indoors), `is_indoors()`,
   `state()["exposure"]`, `state()["indoors"]`.
@@ -168,13 +200,25 @@ committed and pushed (see "Commits" at the end).
   project decides to mute it; scheduling: `LIGHTNING_STRIKE_MIN_GAP` 2.6 … 
   `LIGHTNING_STRIKE_MAX_GAP` 11.0 game minutes, `LIGHTNING_MAX_STRIKES_PER_EPISODE` 64,
   storm build-up `LIGHTNING_STORM_BUILD_MINUTES` 10, and an anti-strobe valve
-  `LIGHTNING_MIN_REAL_GAP := 2.0` **real seconds** — no rapid flicker.
+  `LIGHTNING_MIN_REAL_GAP := 2.0` **real seconds** — applied as the game-minute gap
+  `max(LIGHTNING_STRIKE_MIN_GAP, 2.0 × GameClock.time_scale)`, so it still stops a
+  fast-forwarded storm from flickering while the strike schedule remains a function of game
+  time rather than of the frame clock.
 - A strike is **multi-stage**: 1..N stages per quality
   (`QUALITY_LIGHTNING_STAGES`), a visible bolt mesh (9 segments, `BOLT_VISIBLE_SECONDS`
   0.14, spawned 220 m+ away at 260 m altitude) plus a flash envelope on sky/ambient
   directional energy (`FLASH_COLOR`).
+- The flash lights the **street**, not only the sky: the ambient light takes
+  `FLASH_AMBIENT_GAIN` and leans `FLASH_AMBIENT_TINT` towards `FLASH_COLOR` while a flash
+  is up.  The sky shader already took `flash`, so before this a night strike brightened the
+  sky over an unchanged dark street.
+- The bolt is **depth-tested** (a building hides a bolt behind it) and its drawn distance is
+  clamped inside the camera's far plane (`BOLT_MAX_DRAWN_DISTANCE` and the per-frame
+  `_frame["camera_far"]`), so lowering the view-distance setting cannot clip it away.  It
+  used to draw straight through walls because it had `no_depth_test = true`.
 - Thunder: distance from the bolt, propagation at `THUNDER_SPEED_MPS := 343.0`,
-  delay clamped to `THUNDER_DELAY_MIN` 0.35 … `THUNDER_DELAY_MAX` 11.0 s, delivered on
+  delay clamped to `THUNDER_DELAY_MIN` 0.35 … `THUNDER_DELAY_MAX` 18.2 s (the old 11 s cap
+  clipped the ~16 s delay of a 5.5 km strike), delivered on
   the `lightning_event(intensity, distance_m, delay)` signal and drained by the
   ambience layer. Audio is **synthesised in-engine** (`_make_thunder()`,
   filtered noise + envelope), so thunder works with zero external assets; drop
@@ -185,6 +229,10 @@ committed and pushed (see "Commits" at the end).
 - Beds: wind (LP-filtered noise, gust-modulated), rain (light/heavy), storm, thunder.
   All generated procedurally at 22050 Hz into `AudioStreamWAV` loops — no
   copyrighted downloads, no missing-asset breakage.
+- Synthesis is **spread over frames**: the beds are queued (rain → wind → thunder) and one
+  is built per frame, instead of all three in a single deferred call — which was one
+  main-thread stall inside world construction (~250k filtered samples plus an s16 encode per
+  loop).  `state()["synth_steps"]` and `state()["synth_ms"]` report the measured cost.
 - Mixing is driven by the same parameters as the visuals: `update_frame(precipitation,
   storm, wind_speed, shelter)`; `state()` exposes levels; `last_thunder_db()` and
   `stream_bytes()` exist for tests/assertions.
@@ -238,7 +286,9 @@ All run from the project root; Godot 4.7.2 stable, Forward+/Vulkan.
 
 | Command | Result |
 | --- | --- |
-| `Godot --headless --path . -- --envtest` | **103 checks, 0 failures** |
+| `Godot --headless --path . -- --envtest` | **103 checks, 0 failures** (pre-fix pass); the fix pass re-ran it in an isolated worktree — see §15.5 |
+| `Godot --headless --path . --script debug/weather_model_check.gd` | **16 checks, 0 failures** — model maths with no world: cross-midnight continuity, wetness frame-independence, tuning invariants (~5 s) |
+| `Godot --headless --path . --script debug/environment_shader_check.gd` | **10 checks, 0 failures** — shader compile, published-vs-declared global parameters, wetness consumers (~5 s) |
 | `Godot --path . -- --envcapture` | **13 frames, 0 metric failures** + PNGs |
 | `Godot --path . -- --envperf` | see §14 |
 | `Godot --headless --path . -- --cityruntime` | **streamed city: 0 failures** (chunk ring build, unload/reload, collision, stairs, door-id determinism, camera sectors) — the environment system sits in this boot path, so this is the regression gate for criterion 13 |
@@ -307,14 +357,115 @@ that precedes measurement). It is a dead run, not a baseline -- `envperf5.txt` i
 carries data. Timing runs by file mtime rather than by completion notification is what makes
 this distinguishable.
 
-## 15. Known limitations
+## 15. Audit remediation (the HIGH / MEDIUM / LOW fix pass)
+
+A read-only adversarial audit of the shipped subsystem produced 18 findings; this pass
+fixed all of them.  Evidence keys: **WM** = `debug/weather_model_check.gd` (16 checks,
+~5 s, no world), **SC** = `debug/environment_shader_check.gd` (10 checks, ~5 s), **ET** =
+`--envtest`, **EC** = `--envcapture`.
+
+### 15.0 HIGH
+
+| # | Finding | Fix | Evidence |
+| --- | --- | --- | --- |
+| 1 | Weather popped at 00:00 — a day's first episode had no `prev` to blend from, so a day that ended in a storm snapped `precipitation 1.00 → 0.00` in one frame. | `WeatherModel.sample()` carries in the previous day's last episode as the blend source (`_carry_in`). | WM: worst step across 40 midnights **0.0000**; "a midnight after a storm still reads as a storm (3 of 3)" |
+| 2 | It still rained indoors: the shelter cut was proportional (`× 0.92`) and `maxi(budget, _amount_step)` re-inflated a near-zero budget to a full step (~350 streaks). | `SHELTER_RAIN_CUTOFF := 0.95` stops it outright under a real ceiling; the `maxi` floor is gone and a budget that quantises to zero parks the emitter. | ET: "rain stops outright under a real ceiling (0 particles)" |
+| 3 | Wetness was invisible in the shipped game: the six published globals had no real consumer (only an unreferenced reference shader). | `world/streaming/urban_paving.gdshader` + `surface_atlas.gdshader` (the city's actual street/surface materials) declare and use `global uniform float environment_wetness` — albedo darkening + roughness drop. | SC: both "consumes environment_wetness" checks and the compile checks |
+| 4 | The shelter probe never ran on the player: nothing called `set_focus()`/`resolve_default_focus()` and no node joins group `player`, so the probe used the camera boom. | `tick()` retries `resolve_default_focus()` for `FOCUS_RESOLVE_FRAMES` frames; the resolver falls back to the camera rig's public `target`. | ET probes after adopting the rig target; WM/SC cover the contract |
+| 5 | One roof ray read as "indoors" (`hits / 1.5` → 0.67 ≥ 0.60): any awning muted the ambience and cut the rain. | `hits / RAY_COUNT` — one ray is partial cover (0.33), two is a ceiling (0.67). | WM: "one of three roof rays stays under the indoor threshold"; ET: "one roof ray is partial cover, not indoors" |
+| 6 | A second, disagreeing interior authority: the environment derived inside/outside from rays while `CityInteriorState` (via the camera rig) owns it — and the ceiling caps are presentation-only, so a ray sees open sky from inside a room. | The probe consumes the building world's answer (`set_interior_claim()`, fed from the rig's new read-only `is_interior_active()`) and takes the union with its rays. | ET: "an interior claim alone makes the probe report indoors" + "and it stops the rain the way a real ceiling does" |
+
+### 15.1 MEDIUM
+
+| # | Finding | Fix | Evidence |
+| --- | --- | --- | --- |
+| 7 | Saved glow/distance-fog settings were clobbered on cold start (built with `= true`; `GameSettings` only re-applies on pause-menu open). | The atmosphere reads the same `GameSettings.graphics(...)` keys the applier writes (`distance_fog`, `glow`, `volumetric_fog` — the last also AND-ed with quality). | code; the applier is now a no-op path at build |
+| 8 | Lightning lit only the sky, and bolts drew through buildings. | The flash adds bounded ambient energy (`FLASH_AMBIENT_GAIN`) and tints the ambient colour (`FLASH_AMBIENT_TINT`); the bolt is depth-tested with its drawn distance clamped inside the camera far plane (`BOLT_MAX_DRAWN_DISTANCE`, `_frame["camera_far"]`). | EC readability frame (see §13) |
+| 9 | Storm rain spent most of its budget off-box: the wind bend was *acceleration* (up to ~86 m/s² lateral) and streaks were born at rest with `particle_flag_align_y` on an undefined direction. | The slant moved into `direction` + `initial_velocity_*` (streaks are born moving along the wind), gravity keeps a small residual fall (`RAIN_GRAVITY_FACTOR`), and `RAIN_WIND_FACTOR` 3.0 → 1.1. | WM: "storm rain is slanted, not horizontal (1.62)" + "the wind factor stays at the retuned value (1.10)" |
+| 10 | Rain's minimum was a whole quantisation step: any drizzle above the threshold drew ~350 streaks. | Covered by #2 — a zero budget parks the emitter. | ET: `rain_particles() == 0` below one step |
+| 11 | Thunder distance fidelity: everything past 1.4 km sounded identical, and the 11 s delay cap clipped a 5.5 km strike (~16 s). | Distance curve `THUNDER_FULL_M 1400 → THUNDER_SILENT_M 6200` with `THUNDER_DB_FALLOFF 30`, pitch `0.90 → 0.60`, delay cap 18.2 s (covers 6243 m). | WM: "the thunder delay band covers THUNDER_SILENT_M (6243 m at the 18.2 s cap)" |
+| 12 | Ambience synthesis was one main-thread stall at world build (~250k filtered samples + s16 encode). | Generation is queued rain → wind → thunder, one stream per frame; the measured cost is exposed as `state()["synth_ms"]`/`["synth_steps"]`. | ET: "ambience synthesis is spread over frames, not one stall" + the reported ms |
+
+### 15.2 LOW
+
+- **Determinism.** Wetness integrates in fixed game-minute substeps bounded to
+  `WETNESS_MAX_SUBSTEPS × WETNESS_MAX_JUMP_MINUTES` per frame, so a frame hitch lands the
+  same as many short frames; the lightning anti-strobe valve is now a game-minute predicate
+  scaled by `GameClock.time_scale`.  Evidence: WM "wetness does not depend on frame length
+  (0.2244 vs 0.2244)", "a time skip cannot dry the world out in one frame (0.2480)".
+- **Debug overrides in saves.** `load_state()` warns when a restored save carries a forced
+  weather state instead of silently forcing the weather for the rest of the run.
+- **Doc drift.** The `precipitation_controller.gd` header box (44×30×44 → 11×12×11), the
+  shelter comment and the wind comment now match the shipped values.
+- **Threshold split.** `WETNESS_PRECIP_THRESHOLD` 0.03 → 0.02 = `RAIN_MIN_PRECIPITATION`.
+- **Magic numbers.** `1440.0` → `EnvironmentConfig.MINUTES_PER_DAY` in `weather_model.gd`.
+- **Per-frame material write.** `_material.albedo_color` is change-gated.
+- **Debug hotkeys.** `--envkeys=off` drops the F-key bindings while keeping the state
+  publishing (`--envdebug` still gates the panel itself).
+
+### 15.3 Audit corrections (findings that were wrong)
+
+- "Dead config constants `VOL_FOG_ALBEDO_NIGHT` / `VOL_FOG_EMISSION_TINT_NIGHT`" — **wrong**:
+  both are live in the night volumetric-fog branch.  Nothing was removed.
+- "Unused `dust` constant" — **wrong**: a grep artefact (`industrial_corridor` matched
+  "dust").  No such constant exists in the subsystem.
+- The published globals are `environment_rain_intensity`, `environment_storm`,
+  `environment_night_factor`, `environment_hour` — not `environment_rain`,
+  `environment_cloud_cover`, `environment_night`.  The first draft of the new shader gate
+  used the wrong names and the renderer rejected the writes, which is how the mistake
+  surfaced; the gate now compares the manager's `GLOBAL_PARAMS` against `project.godot`.
+
+### 15.4 New fast gates (run these before the slow suites)
+
+| Command | Result | Scope |
+| --- | --- | --- |
+| `Godot --headless --path . --script debug/weather_model_check.gd` | **16 checks, 0 failures** | model maths, no world: cross-midnight continuity, wetness frame-independence/bounds, tuning invariants |
+| `Godot --headless --path . --script debug/environment_shader_check.gd` | **10 checks, 0 failures** | shader compile + published-vs-declared global parameters (names *and* types) + wetness consumers |
+
+Both gates were verified with negative controls: injecting a shader syntax error makes the
+shader gate fail (`SHADER ERROR: Invalid assignment of 'void' to 'float'`), and the model
+gate caught a real bug in this very pass (a substep clamp that bounded the *count* but left
+the integrated *duration* unbounded) before the slow suite ever ran.
+
+### 15.5 Verifying while another track is mid-overhaul
+
+The shared tree could not run any harness for part of this pass, for two reasons that are
+**not** the environment subsystem:
+
+1. **Stale global class cache (fixed).** `world/main.gd` failed to compile —
+   `Identifier "MeleeCombos" not declared` — because `.godot/global_script_class_cache.cfg`
+   (01:45) predated the merge that brought in `actors/weapons/melee_combos.gd`.  That makes
+   *every* harness die before it starts (the engine cannot load `main.gd`).  Fixed with
+   `Godot --headless --path . --import` (build cache only — no source file was touched).
+   Symptom to remember: a run whose log contains no harness banner at all.
+2. **Interior planner error loop (reported, not touched).** Chunk materialization then hits
+   `ERROR: Internal bug ... CowData was modified during destruction` from
+   `world/generation/floorplan/floor_plan_planner.gd:1080` (`_validate` ← `_candidate` ←
+   `plan_best` ← `interior_plan.gd:111`), so `--envtest` / `--cityruntime` never reach their
+   assertions in this tree.  That code belongs to the interior/room-placement track.
+
+Because of (2), the fix pass was verified in an **isolated git worktree** at the last green
+environment commit with only the changed environment files copied in:
+
+```
+git worktree add --detach "C:/Vibe Code project/junk/rb-envverify" eda4eb1
+# copy world/environment/*, the two city shaders, camera/follow_camera.gd, the debug tools
+Godot --headless --path . --envtest        # run from the worktree
+```
+
+The worktree is kept (not deleted) so the environment subsystem can be re-verified while the
+interior track is mid-overhaul; the two fast gates in §15.4 need no world at all and run in
+the shared tree.
+
+## 16. Known limitations
 
 1. Rain streaks are thin geometry: they read clearly in motion and in the storm
    frames, but a *single still frame* under-counts apparent density. Wind slant is
    present in the particle velocity and the streak orientation; in a still frame
    down a straight alley it reads subtler than it does in play.
-2. Thunder is synthesised noise; it is convincing as "distant rumble" but a real
-   recording sample (documented slot) would improve near-strike punch.
+2. Thunder is synthesised noise; the fix pass made distance read as volume *and*
+   duration (30 dB falloff over 1.4–6.2 km, pitch 0.90 → 0.60), but a real recording
+   sample (documented slot) would still improve near-strike punch.
 3. Volumetric fog is quality-gated; LOW falls back to depth fog only.
 4. Puddles are not implemented (optional per the brief); wet roads are handled by
    the wetness parameter.
@@ -343,8 +494,28 @@ this distinguishable.
    figures (light 1330 / heavy 2394 / storm 3192). Both are the same code path at
    different quality/intensity inputs; neither is a world-wide particle count, since
    the emitter follows the camera in an 11 m box.
+   9. **Residual storm-rain drift (reduced, not fixed).** The slant is now in the streak
+    velocity and `RAIN_WIND_FACTOR` came down 3.0 → 1.1, but at storm wind the lateral speed
+    is still ~1.62× the fall speed: a streak needs ~0.63 s to fall the 12 m box height and
+    travels ~19 m sideways in that time, so it leaves the 11 m camera-local emission box
+    before it finishes falling.  The visible effect is a slight thinning on the upwind side
+    in a storm; the gross part (born-at-rest streaks and 86 m/s² lateral acceleration) is
+    gone.
+   10. **A drizzle thinner than one budget step draws no rain at all** — the quantised budget
+    parks the emitter.  Deliberate (it replaces "one whole step of streaks for almost-dry
+    air"), but the lowest few percent of precipitation are now visually dry.
+   11. **Wetness on the real streets is verified by declaration, compilation and publication,
+    not yet by a street-level frame.** Both city shaders declare and consume the global, it
+    is declared in `project.godot`, published every frame, and both shaders compile; the
+    visual confirmation on real city pavement still needs a windowed run of the streamed
+    city (see §15.5).
+   12. **The interior claim depends on the camera rig** (`is_interior_active()`).  If a later
+    refactor renames or drops it, the probe silently falls back to its rays (no error, no
+    warning) and a room whose ceiling caps have no collision reads as outdoors again.
+   13. **A long thunder delay can outlive its storm**: the delay band now runs to 18.2 s, so a
+    strike late in an episode can still rumble after the weather has cleared.
 
-## 16. Future hooks
+## 17. Future hooks
 
 - Street lamps / point lights can read `night_factor()` and `daylight_factor()`.
 - Character cloth/vegetation can read `wind_vector()` and gust amplitude.
@@ -354,7 +525,7 @@ this distinguishable.
 
 ---
 
-## 17. Commit history (environment subsystem)
+## 18. Commit history (environment subsystem)
 
 - **`9f572cf`** (2026-09-13) — the subsystem's first landing: every
   `world/environment/*` file, both shaders, and the three debug tools. Its subject line

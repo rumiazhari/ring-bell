@@ -29,6 +29,9 @@ signal ready_state()
 const GROUP := &"environment_manager"
 const DEFAULT_QUALITY := EnvironmentConfig.Quality.MEDIUM
 const FOCUS_GROUP := &"player"
+## ~3 s at 60 fps: how long the environment keeps looking for the player node before
+## settling for the camera.
+const FOCUS_RESOLVE_FRAMES := 180
 
 ## Global shader parameters the subsystem publishes for materials/shaders.
 ## Declare `global uniform float environment_wetness;` etc. in any shader to
@@ -142,11 +145,19 @@ func tick(delta: float) -> void:
 	if not ready_done:
 		return
 	frames += 1
+	# Bring-up order is not ours: the player may be built after the environment, so keep
+	# looking for a focus for the first few seconds (the probe falls back to the camera).
+	if focus == null and frames < FOCUS_RESOLVE_FRAMES:
+		resolve_default_focus()
 	var camera := _resolve_camera()
 	var origin := _probe_origin(camera)
 	_last_origin = origin
 
 	weather.tick(delta)
+	# The building world's own answer to "am I inside?" (CityInteriorState, surfaced by
+	# the camera rig) outranks the raycast: the interior ceiling caps are presentation
+	# geometry, so a room can read as open sky to a ray alone.
+	exposure.set_interior_claim(_interior_claim(camera))
 	exposure.update_frame(delta, origin, get_world_3d())
 
 	_build_frame()
@@ -223,6 +234,10 @@ func _build_frame() -> void:
 	_frame["moon_visibility"] = moon_vis
 	_frame["wind_speed"] = weather.wind_speed_gusted()
 	_frame["wetness"] = weather.wetness
+	# The bolt is depth-tested against the city, so it must stay inside the view
+	# distance the player actually has (the setting scales the camera far plane).
+	var far_cam := _resolve_camera()
+	_frame["camera_far"] = far_cam.far if far_cam != null else 4000.0
 
 
 func _emit_phase_if_changed() -> void:
@@ -415,6 +430,10 @@ func load_state(data: Dictionary) -> void:
 	if data.has("clock_minutes"):
 		GameClock.total_minutes = maxf(0.0, float(data["clock_minutes"]))
 	weather.load_state(data.get("weather", {}))
+	# A forced state (--envweather / --envwind, or a debug key) is serialised with the
+	# save, so say so rather than silently forcing the weather for the rest of the run.
+	if weather.forced_state >= 0:
+		push_warning("[Environment] restored save carries a forced weather state (%d); clear it before judging the weather" % weather.forced_state)
 	# The save restores the clock *and* the environment; the clock may land after
 	# us in the load order, so re-read it once the whole save has been applied.
 	call_deferred("_resync_after_load")
@@ -619,6 +638,23 @@ func _quality_from_settings() -> int:
 
 
 # ------------------------------------------------------------------ plumbing
+## The camera rig, when the scene has one: the parent of the active camera.
+func _camera_rig() -> Node:
+	var cam := _resolve_camera()
+	return cam.get_parent() if cam != null else null
+
+
+## Reads the rig's interior mode when it offers one.  Deliberately dynamic: the
+## environment has to keep working over a plain Camera3D and in the test harness.
+func _interior_claim(camera: Camera3D) -> bool:
+	if camera == null:
+		return false
+	var rig := camera.get_parent()
+	if rig != null and rig.has_method(&"is_interior_active"):
+		return bool(rig.call(&"is_interior_active"))
+	return false
+
+
 func _resolve_camera() -> Camera3D:
 	if focus != null and is_instance_valid(focus):
 		var cam := focus.get_viewport().get_camera_3d() if focus.is_inside_tree() else null
@@ -648,6 +684,13 @@ func resolve_default_focus() -> void:
 	if focus != null and is_instance_valid(focus):
 		return
 	var node := get_tree().get_first_node_in_group(FOCUS_GROUP)
+	if node == null:
+		# Nothing claims the focus group, so ask the camera rig who it follows: the player
+		# node is the origin the shelter probe wants (the camera sits on a boom metres away
+		# and can be the only thing under cover).
+		var rig := _camera_rig()
+		if rig != null and "target" in rig:
+			node = rig.get("target")
 	if node is Node3D:
 		focus = node
 	elif not _focus_warned:

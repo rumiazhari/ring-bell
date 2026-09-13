@@ -143,6 +143,19 @@ static func episodes_for_day(seed_used: int, day: int) -> Array:
 	return out
 
 
+## The state the previous day ended on.  Without it the first episode of a day
+## blended from itself, so at 00:00 the weather applied at full strength in one
+## frame: a day that ended in storm snapped to clear on the midnight frame.  Day
+## 1 has nothing to carry in from, so it keeps blending from its own opener.
+static func _carry_in(seed_used: int, day: int, fallback: Dictionary) -> Dictionary:
+	if day <= 1:
+		return fallback
+	var prev_eps := episodes_for_day(seed_used, day - 1)
+	if prev_eps.is_empty():
+		return fallback
+	return prev_eps[prev_eps.size() - 1]
+
+
 ## Fills `out` (mutated in place, no allocation) with the blended parameter
 ## vector for an absolute game minute.  See PARAM_KEYS for the contract, plus:
 ##   state, target_state, blend 0..1, progress 0..1, wind_direction (rad),
@@ -153,7 +166,7 @@ static func sample(seed_used: int, total_minutes: float, out: Dictionary) -> voi
 	var eps := episodes_for_day(seed_used, day)
 	var idx := _episode_index(eps, mod_min)
 	var cur: Dictionary = eps[idx]
-	var prev: Dictionary = eps[idx - 1] if idx > 0 else cur
+	var prev: Dictionary = eps[idx - 1] if idx > 0 else _carry_in(seed_used, day, cur)
 
 	var span := maxf(float(cur["end"]) - float(cur["start"]), 1.0)
 	var window := minf(EnvironmentConfig.TRANSITION_MINUTES, span * 0.5)
@@ -224,7 +237,8 @@ static func next_strike(seed_used: int, total_minutes: float) -> Dictionary:
 	var day := TimeOfDay.day_of(total_minutes)
 	for d in [day, day + 1]:
 		for strike: Dictionary in lightning_strikes_for_day(seed_used, d):
-			var abs_minute := float(d - 1) * 1440.0 + float(strike["minute"])
+			var abs_minute := float(d - 1) * float(EnvironmentConfig.MINUTES_PER_DAY) \
+				+ float(strike["minute"])
 			if abs_minute > total_minutes + 0.0001:
 				var info := strike.duplicate()
 				info["abs_minute"] = abs_minute
@@ -239,7 +253,7 @@ static func storm_share_of_day(seed_used: int, day: int) -> float:
 	for ep: Dictionary in episodes_for_day(seed_used, day):
 		if int(ep["state"]) == State.STORM:
 			total += float(ep["end"]) - float(ep["start"])
-	return total / 1440.0
+	return total / float(EnvironmentConfig.MINUTES_PER_DAY)
 
 
 static func _episode_index(eps: Array, minute: float) -> int:

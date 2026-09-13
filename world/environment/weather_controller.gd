@@ -25,6 +25,7 @@ var seed_used := 0
 var params: Dictionary = {}
 ## 0..1 surface wetness.  Rises while it rains, dries slowly afterwards.
 var wetness := 0.0
+var _wetness_scratch: Dictionary = {}   ## reused sample target for the wetness substeps
 ## -1 == follow the deterministic schedule, otherwise a WeatherModel.State.
 var forced_state := -1
 var lightning_enabled := true
@@ -36,6 +37,9 @@ var _last_state := -1
 var _next_strike: Dictionary = {}
 var _real_clock := 0.0
 var _last_strike_real := -1e9
+## Game minute of the last strike: the anti-strobe valve is a game-time predicate so
+## the same seed and clock always produce the same strikes.
+var _last_strike_total := -1e9
 var _wind_speed_override := -1.0
 var _wind_dir_override := -1.0
 var _initialised := false
@@ -254,10 +258,35 @@ func _refresh(now_total: float, snap: bool) -> void:
 func _integrate_wetness(game_delta: float) -> void:
 	if game_delta <= 0.0:
 		return
-	var minutes := minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES)
-	var precip := precipitation()
+	# Fixed game-minute substeps: wetness is a function of game time, so a long frame
+	# lands the same as many short ones.  The old single-step clamp truncated a hitch
+	# (a 12-minute frame wet the world for 5), which made the road depend on frame
+	# history rather than on the rain that actually fell; WETNESS_MAX_SUBSTEPS still
+	# bounds one frame, so a debug time skip cannot wet the city instantly.
 	if forced_state >= 0:
-		precip = float(WeatherModel.PARAMS[forced_state]["precipitation"])
+		_apply_wetness_step(float(WeatherModel.PARAMS[forced_state]["precipitation"]),
+				minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
+						* float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS)))
+		return
+	# One frame integrates at most WETNESS_MAX_SUBSTEPS * WETNESS_MAX_JUMP_MINUTES of game
+	# time (60 minutes): enough for a hitch or a fast-forward, bounded so a debug time
+	# skip cannot dry or soak the whole city in a single frame.
+	var budget := minf(game_delta, EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES
+			* float(EnvironmentConfig.WETNESS_MAX_SUBSTEPS))
+	var steps := clampi(int(ceilf(budget / EnvironmentConfig.WETNESS_MAX_JUMP_MINUTES)),
+			1, EnvironmentConfig.WETNESS_MAX_SUBSTEPS)
+	var step := budget / float(steps)
+	var at := _last_total_minutes
+	for i in steps:
+		at += step
+		WeatherModel.sample(seed_used, at, _wetness_scratch)
+		_apply_wetness_step(float(_wetness_scratch.get("precipitation", 0.0)), step)
+
+
+## One wetness substep: `minutes` of game time at a constant precipitation rate.
+func _apply_wetness_step(precip: float, minutes: float) -> void:
+	if minutes <= 0.0:
+		return
 	if precip > EnvironmentConfig.WETNESS_PRECIP_THRESHOLD:
 		wetness = minf(1.0,
 			wetness + EnvironmentConfig.WETNESS_GAIN_PER_GAME_MINUTE * precip * minutes)
@@ -279,8 +308,13 @@ func _update_lightning(now_total: float) -> void:
 		return
 
 	# Anti-strobe valve: whatever the time scale, never flash more often than
-	# LIGHTNING_MIN_REAL_GAP in real seconds (requirement 20).
-	if _real_clock - _last_strike_real < EnvironmentConfig.LIGHTNING_MIN_REAL_GAP:
+	# LIGHTNING_MIN_REAL_GAP in real seconds (requirement 20).  Expressed in game
+	# minutes so the strike schedule stays a function of game time: 2 real seconds
+	# at 1x, 8 game minutes at 240x, which is what stops a fast-forwarded storm
+	# from strobing without making the strikes frame-clock dependent.
+	var min_gap := maxf(EnvironmentConfig.LIGHTNING_STRIKE_MIN_GAP,
+			EnvironmentConfig.LIGHTNING_MIN_REAL_GAP * maxf(GameClock.time_scale, 0.001))
+	if now_total - _last_strike_total < min_gap:
 		var skip_from := maxf(float(_next_strike["abs_minute"]), now_total) + 0.001
 		_next_strike = WeatherModel.next_strike(seed_used, skip_from)
 		if _next_strike.is_empty():
@@ -310,6 +344,7 @@ func _synthetic_strike(now_total: float) -> Dictionary:
 func _fire(strike: Dictionary) -> void:
 	strikes_fired += 1
 	_last_strike_real = _real_clock
+	_last_strike_total = GameClock.total_minutes
 	var gate := clampf(storm_intensity() / 0.6, 0.0, 1.0)
 	if bool(strike.get("forced", false)):
 		gate = 1.0
@@ -350,4 +385,5 @@ func load_state(data: Dictionary) -> void:
 	_last_total_minutes = GameClock.total_minutes
 	_next_strike = {}
 	_last_strike_real = _real_clock
+	_last_strike_total = GameClock.total_minutes
 	_refresh(GameClock.total_minutes, true)
