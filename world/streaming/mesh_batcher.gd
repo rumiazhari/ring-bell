@@ -552,16 +552,29 @@ func queue_asset_wall(pos: Vector3, size: Vector3, color: Color, res_path: Strin
 static func reveal_layer_hidden(layer_key: String, tag: String,
 		max_floor: int, faded: Array, roof_floor: int = -1,
 		sight_from: Vector2 = Vector2.INF, sight_to: Vector2 = Vector2.INF) -> bool:
+	# RETIRED FROM PRESENTATION (user rule 2026-09-13: "when inside building
+	# interior with dollhouse camera, the ceiling should not be visible ... fix
+	# then check for all buildings and floors").
+	#
+	# Ceiling caps used to be interior occluders: one thin, VISUAL-ONLY (no
+	# collider, so the player walks straight through one) box per room per floor
+	# whose only job was to stop a steep camera reading the room next door over a
+	# 2.6 m partition. The gate drew every room's cap EXCEPT the one the player
+	# stood in, so the player's own room was open while each neighbouring room
+	# kept a grey slab over it - the ceiling the user still saw indoors. The cap
+	# is now never drawn: hidden while the building's presentation is open
+	# (player inside), and hidden with no gate at all, so no row of planes can
+	# hang over a room or float clear of the shell in the street either. The
+	# geometry keeps its SHADOWS_ONLY cast (locked decision 3), so a storey is
+	# lit exactly as if it still carried a ceiling. The retired per-room rule
+	# survives as ceiling_cut_hidden, which --q3capprobe keeps as the before/after
+	# reference.
+	if layer_key.find(":" + CEIL_CUT_PREFIX) >= 0:
+		return true
 	if max_floor < 0 or tag == "" or not layer_key.begins_with(tag + ":"):
-		# Ceiling caps are interior occluders: one thin, VISUAL-ONLY (no collider,
-		# so the player walks straight through one) box per room per floor, whose
-		# only job is to stop a steep camera reading the room next door over a
-		# 2.6 m partition. That trade only makes sense while this building's own
-		# interior presentation is open. With no gate for it - the player outdoors,
-		# or inside a different building - they must not be drawn at all, or the
-		# exterior view shows one grey plane per room per floor, floating clear of
-		# the shell (measured by --q3capprobe: 3017 of 3017 caps drawn ungated).
-		return layer_key.find(":" + CEIL_CUT_PREFIX) >= 0
+		# No gate for this building (player outdoors, or inside another one):
+		# nothing of it is hidden except its caps, handled above.
+		return false
 	var suffix := layer_key.substr(tag.length() + 1)
 	if suffix.begins_with("roof"):
 		if roof_floor < 0:
@@ -586,8 +599,11 @@ static func reveal_layer_hidden(layer_key: String, tag: String,
 		return false
 	if facade_name.begins_with(WALL_CUT_PREFIX):
 		return wall_cut_hidden(facade_name.substr(WALL_CUT_PREFIX.length()), sight_from, sight_to)
-	if facade_name.begins_with(CEIL_CUT_PREFIX):
-		return ceiling_cut_hidden(facade_name.substr(CEIL_CUT_PREFIX.length()), sight_to)
+	# No CEIL_CUT_PREFIX case here any more: every cap layer is answered by the
+	# retirement clause at the top of this function, so this line would be dead
+	# code. ceiling_cut_hidden stays as the retired per-room rule, and
+	# --q3capprobe calls it directly to quantify what the old rule would have
+	# drawn indoors (legacy_drawn_inside).
 	return facade_name == "cutaway" or faded.has(facade_name)
 
 

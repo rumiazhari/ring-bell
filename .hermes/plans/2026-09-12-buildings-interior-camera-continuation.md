@@ -339,3 +339,24 @@ They are binding for THIS task and must not be re-litigated:
    roof, parapets, bulkhead and props. **`floor_i == n` means ROOF/EXTERIOR, not
    interior.**
 5. Commit and push each task as it completes.
+
+## LOCKED DECISIONS (user, 2026-09-13) — ceilings while indoors
+
+6. **No ceiling is ever visible from inside.** Verbatim: "when inside building
+   interior with dollhouse camera, the ceiling should not be visible. please fix
+   then check for all buildings and floors for similar issues and fix
+   immediately." This extends decision 4 from the top storey to **every storey of
+   every building**: while the player is inside (the building's interior
+   presentation is open, whatever floor they stand on), no ceiling cap may be
+   drawn anywhere in that building.
+   Implemented by retiring the cap from presentation altogether in
+   `MeshBatcher.reveal_layer_hidden` — a `<tag>:f<n>:ceilcut:` layer is hidden
+   both while gated and while ungated. The cap geometry is still emitted and still
+   casts SHADOWS_ONLY, so a storey stays lit exactly as if it carried a ceiling
+   (decision 3: hidden-from-camera structure keeps its shadow). The old per-room
+   rule survives as `MeshBatcher.ceiling_cut_hidden`, which `--q3capprobe` calls
+   directly as the before/after reference (`legacy_inside`).
+   The audit that enforces it is `RB_TAG=<tag> python tools/run_suite.py
+   --q3capprobe <secs>`: `drawn_inside` is the count of caps still drawn while
+   the player stands inside, per building and per floor, and it must be **0**; the
+   probe fails the run when it is not.

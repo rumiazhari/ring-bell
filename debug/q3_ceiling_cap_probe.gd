@@ -20,7 +20,17 @@ extends Node
 ##   outside_own     caps whose centre is > AABB_SLACK_M outside their building
 ##   drawn_outdoors  caps the layer gate still draws with NO active gate
 ##                   (player outdoors, or inside another building)
-## Both outside_own and drawn_outdoors must be 0. A/B it:
+##   drawn_inside    caps the gate draws while the player IS inside that building
+##                   (gate active, player standing at the footprint centre of the
+##                   cap's own storey). This is the ceiling the player sees from
+##                   the dollhouse camera, and it must be 0 for every building and
+##                   every floor - user rule 2026-09-13.
+##   legacy_inside   what the RETIRED per-room rule would have drawn in the same
+##                   state (every room but the one the player stands in). Kept
+##                   only as the before/after reference: it is the count of grey
+##                   slabs the indoors dollhouse view used to show.
+## outside_own, drawn_outdoors and drawn_inside must all be 0; legacy_inside is
+## reported, never asserted. A/B it:
 ##   RB_TAG=caps_before python tools/run_suite.py --q3capprobe 240
 ##   RB_TAG=caps_after  python tools/run_suite.py --q3capprobe 240
 ## Add --rendered to also write vantage.png (a high, angled view over the block,
@@ -39,6 +49,10 @@ var _render := false
 var _holder: Node3D = null
 var _camera: Camera3D = null
 var _audited := {}
+## Building specs by id: the indoors audit needs each building's storey count and
+## its footprint rect to stand the player on the right floor.
+var _specs_by_id := {}
+var inside_sample := ""
 
 
 func _ready() -> void:
@@ -56,6 +70,8 @@ func run() -> void:
 	DisplayServer.window_set_size(Vector2i(1600, 900))
 	var plan := CityPlan.new(WorldSeed.get_world_seed())
 	var world := WorldPlan.new(WorldSeed.get_world_seed())
+	for spec: Dictionary in plan.city_buildings():
+		_specs_by_id[str(spec.get("id", ""))] = spec
 	_holder = Node3D.new()
 	_holder.name = "CapWorld"
 	add_child(_holder)
@@ -63,23 +79,46 @@ func run() -> void:
 		_setup_light()
 
 	var core := _core_chunk(plan)
+	var ring := RING
+	var ring_env := OS.get_environment("RB_RING")
+	if ring_env != "":
+		ring = int(ring_env)
 	var caps := 0
 	var outside := 0
 	var drawn := 0
+	var inside := 0
+	var legacy := 0
+	var plates := 0
+	var plates_in := 0
+	var plate_samples := ""
 	var worst := 0.0
 	var sample := ""
-	for x in range(core.x - RING, core.x + RING + 1):
-		for z in range(core.y - RING, core.y + RING + 1):
+	for x in range(core.x - ring, core.x + ring + 1):
+		for z in range(core.y - ring, core.y + ring + 1):
 			var stats: Dictionary = await _audit_chunk(plan, world, Vector2i(x, z))
 			caps += int(stats["caps"])
 			outside += int(stats["outside"])
 			drawn += int(stats["drawn"])
+			inside += int(stats["inside"])
+			legacy += int(stats["legacy"])
+			plates += int(stats["plate_total"])
+			plates_in += int(stats["plates"])
+			if plate_samples == "" and str(stats["plate_samples"]) != "":
+				plate_samples = str(stats["plate_samples"])
 			if float(stats["worst"]) > worst:
 				worst = float(stats["worst"])
 				sample = str(stats["sample"])
-	print("[CapProbe] tag=%s seed=%d chunks=%d caps=%d outside_own=%d worst_m=%.2f drawn_outdoors=%d" % [
+	print("[CapProbe] tag=%s seed=%d chunks=%d caps=%d outside_own=%d worst_m=%.2f drawn_outdoors=%d drawn_inside=%d legacy_inside=%d" % [
 		OS.get_environment("RB_TAG"), WorldSeed.get_world_seed(), _audited.size(),
-		caps, outside, worst, drawn])
+		caps, outside, worst, drawn, inside, legacy])
+	print("[CapProbe] plates=%d drawn_over_rooms=%d" % [plates, plates_in])
+	if inside > 0:
+		failures += 1
+		print("[CapProbe] FAIL: %d cap(s) still drawn while the player is inside; sample=%s" % [inside, inside_sample])
+	if plates_in > 0:
+		failures += 1
+		print("[CapProbe] FAIL: %d slab(s) still drawn over a storey the player stands on" % plates_in)
+		print("[CapProbe] plates_sample: %s" % plate_samples.replace(" || ", "\n[CapProbe]   "))
 	if sample != "":
 		print("[CapProbe] worst_cap=%s" % sample)
 
@@ -119,6 +158,8 @@ func _audit_chunk(plan: CityPlan, world: WorldPlan, coord: Vector2i) -> Dictiona
 
 	var aabb: Dictionary = {}
 	var caps: Array = []
+	var plates: Array = []
+	var cap_y := {}
 	for entry: Dictionary in _specs_of(coord):
 		var layer := str(entry.get("layer", ""))
 		var tag := layer.get_slice(":", 0)
@@ -127,8 +168,19 @@ func _audit_chunk(plan: CityPlan, world: WorldPlan, coord: Vector2i) -> Dictiona
 		var lo := Vector2(pos.x - size.x * 0.5, pos.z - size.z * 0.5)
 		var hi := Vector2(pos.x + size.x * 0.5, pos.z + size.z * 0.5)
 		if layer.contains(":" + MeshBatcherScript.CEIL_CUT_PREFIX):
+			var cfl := _cap_floor(layer, tag)
 			caps.append({"tag": tag, "c": Vector2(pos.x, pos.z), "y": pos.y,
-					"size": size, "layer": layer})
+					"size": size, "layer": layer,
+					"floor": cfl,
+					"rect": _cap_rect_key(layer)})
+			# Reference height: a cap's centre is the storey's ceiling plane, so a
+			# plate at the same height roofs that storey, and one a storey lower is
+			# that storey's own floor slab (harmless).
+			cap_y["%s|%d" % [tag, cfl]] = pos.y
+		elif _is_wide_slab(tag, size, pos):
+			plates.append({"tag": tag, "c": Vector2(pos.x, pos.z), "y": pos.y,
+					"size": size, "layer": layer,
+					"col": _col_of(entry), "roof": bool(entry.get("roof", false))})
 		else:
 			var e: Dictionary = aabb.get(tag, {"lo": lo, "hi": hi})
 			e["lo"] = Vector2(minf(e["lo"].x, lo.x), minf(e["lo"].y, lo.y))
@@ -137,6 +189,8 @@ func _audit_chunk(plan: CityPlan, world: WorldPlan, coord: Vector2i) -> Dictiona
 
 	var out_n := 0
 	var drawn := 0
+	var ins := 0
+	var leg := 0
 	var worst := 0.0
 	var sample := ""
 	for cap: Dictionary in caps:
@@ -153,8 +207,129 @@ func _audit_chunk(plan: CityPlan, world: WorldPlan, coord: Vector2i) -> Dictiona
 		# An outdoor state has no gate for this building: the gate must hide it.
 		if not MeshBatcherScript.reveal_layer_hidden(cap["layer"], "", -1, []):
 			drawn += 1
-	return {"caps": caps.size(), "outside": out_n, "drawn": drawn,
-			"worst": worst, "sample": sample}
+		# INDOORS state (user rule 2026-09-13): the gate is active for this cap's
+		# own building and the player stands on the cap's own storey, at the
+		# footprint centre - the vantage the dollhouse camera looks down from. No
+		# ceiling may be drawn anywhere: every building, every floor.
+		var spec: Dictionary = _specs_by_id.get(cap["tag"], {})
+		if spec.is_empty():
+			continue
+		var fl_i := int(cap["floor"])
+		var n_floors := int(spec.get("floors", 1))
+		var fp: Rect2 = spec["rect"]
+		var centre_local: Vector2 = fp.size * 0.5
+		if not MeshBatcherScript.reveal_layer_hidden(cap["layer"], cap["tag"], fl_i, [],
+				n_floors, Vector2.INF, centre_local):
+			ins += 1
+			if inside_sample == "":
+				inside_sample = "tag=%s floor=%d pos=(%.1f,%.1f) size=(%.1f,%.1f) layer=%s" % [
+					cap["tag"], fl_i, cap["c"].x, cap["c"].y,
+					cap["size"].x, cap["size"].z, cap["layer"]]
+		# What the RETIRED per-room rule would have drawn in that same state:
+		# every room on the player's storey but the one the player stands in.
+		if not MeshBatcherScript.ceiling_cut_hidden(str(cap["rect"]), centre_local):
+			leg += 1
+
+	# PLATES: any wide thin slab sitting on the ceiling plane of a storey, in a
+	# layer the gate still DRAWS while the player stands on that storey. This is
+	# the general form of the user's rule - it names every emitter that roofs an
+	# interior, not just the ceiling caps retired above.
+	var pl_in := 0
+	var plate_samples: Array = []
+	for plate: Dictionary in plates:
+		var pspec: Dictionary = _specs_by_id.get(plate["tag"], {})
+		if pspec.is_empty():
+			continue
+		var pfp: Rect2 = pspec["rect"]
+		var p_centre: Vector2 = pfp.size * 0.5
+		var p_n := int(pspec.get("floors", 1))
+		var top: float = plate["y"] + plate["size"].y * 0.5
+		# The player can stand on ANY storey of the building; a lid for storey `fi`
+		# is a compact slab whose TOP face sits ON that storey's ceiling plane - the
+		# measured cap height, not a guessed floor height (the cap was emitted from
+		# the same `off` as every other box in the building, so it is terrain-proof).
+		# Platforms, landings and mezzanines sit BELOW the ceiling plane and are
+		# real architecture, not ceilings: the band stays tight on purpose.
+		# A roof deck lands on the ceiling plane of the top storey too, and the
+		# gate is asked with the same roof_floor (spec floors) the game passes.
+		for fi in p_n:
+			var c: Variant = cap_y.get("%s|%d" % [plate["tag"], fi], null)
+			if c == null:
+				continue
+			var ceil_y: float = float(c) + 0.05
+			if absf(top - ceil_y) > CEIL_BAND_M:
+				continue
+			# The gate the game itself calls: same predicate, same roof_floor
+			# (spec floors) and same measured ceiling plane.
+			if MeshBatcherScript.reveal_layer_hidden(plate["layer"], plate["tag"], fi, [],
+					p_n, Vector2.INF, p_centre):
+				continue
+			pl_in += 1
+			if plate_samples.size() < 5:
+				plate_samples.append("layer=%s size=(%.2f,%.2f,%.2f) c=(%.1f,%.1f,%.1f) col=%s roof=%s stand_f=%d top_vs_ceil=%.2f" % [
+					plate["layer"], plate["size"].x, plate["size"].y, plate["size"].z,
+					plate["c"].x, plate["y"], plate["c"].y, plate["col"], plate["roof"], fi,
+					top - ceil_y])
+			break
+	return {"caps": caps.size(), "outside": out_n, "drawn": drawn, "inside": ins,
+			"legacy": leg, "worst": worst, "sample": sample, "plates": pl_in,
+			"plate_samples": " || ".join(plate_samples), "plate_total": plates.size()}
+
+
+## A "plate" is wide, thin, horizontal geometry whose TOP face sits on the ceiling
+## plane of the storey its layer is tagged to - i.e. a slab that roofs that storey.
+## Ceiling caps are one family of plate; a storey slab emitted under the storey it
+## roofs is another, and that is what still hung over the user's rooms once the
+## caps were retired. Plate area and band are deliberately loose: the audit must
+## catch ANY emitter, not the ones we happen to know about. Who counts as a lid is
+## defined in _is_wide_slab: a COMPACT slab sitting ON a storey's ceiling plane.
+const PLATE_MIN_AREA := 6.0
+const LID_MIN_SIDE := 1.0
+const CEIL_BAND_M := 0.55
+
+
+## Hex of a spec entry's colour, so a plate sample names its emitter by palette.
+func _col_of(entry: Dictionary) -> String:
+	var c: Variant = entry.get("color", null)
+	if c is Color:
+		return (c as Color).to_html(false)
+	return "-"
+
+
+## A wide, thin, slab-like box: the shape that roofs a storey. Storey slabs, roof
+## decks and ceiling caps all match; the caller decides which storey's ceiling
+## plane the box actually sits on.
+##
+## A lid must be a COMPACT slab, not a long thin moulding: a cornice band running
+## 24 m along a wall passes the area test while covering no room at all. Both
+## horizontal dimensions must therefore clear LID_MIN_SIDE.
+func _is_wide_slab(tag: String, size: Vector3, pos: Vector3) -> bool:
+	if size.x * size.z < PLATE_MIN_AREA or size.y > 0.6:
+		return false
+	if minf(size.x, size.z) < LID_MIN_SIDE:
+		return false
+	var spec: Dictionary = _specs_by_id.get(tag, {})
+	if spec.is_empty():
+		return false
+	var fp: Rect2 = spec["rect"]
+	return fp.grow(0.75).has_point(Vector2(pos.x, pos.z))
+
+
+## Storey index carried by a cap layer key ("<tag>:f<fi>:ceilcut:<rect>").
+func _cap_floor(layer: String, tag: String) -> int:
+	var suffix := layer.substr(tag.length() + 1)
+	var head := suffix.split(":", true, 1)[0]
+	if not head.begins_with("f"):
+		return 0
+	return maxi(0, int(head.substr(1)))
+
+
+## The "x_z_w_h" plan rect a cap layer key carries, in footprint-local metres.
+func _cap_rect_key(layer: String) -> String:
+	var idx := layer.find(":" + MeshBatcherScript.CEIL_CUT_PREFIX)
+	if idx < 0:
+		return ""
+	return layer.substr(idx + MeshBatcherScript.CEIL_CUT_PREFIX.length() + 1)
 
 
 ## Distance from `p` to the rect `lo..hi`; 0.0 when p is inside it.
